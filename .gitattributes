@@ -31,5 +31,7 @@ LICENSE text eol=lf
 #   规范化，两种规则互相打架，最容易出的问题是「同一文件 CRLF/LF 混排 ⇒ 差异无法二分」。
 #   ⇒ 显式声明，不依赖 autocrlf 的隐式行为。
 README.md text eol=crlf
+README.zh-TW.md text eol=crlf
+README.en.md text eol=crlf
 docs/*.md  text eol=lf
 
