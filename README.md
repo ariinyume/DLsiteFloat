@@ -5,7 +5,7 @@
 > 一个 LSPosed / Xposed 模块，在 DLsiteSound（DLsite 音频 App）的**播放页**上挂一个与播放进度同步的**悬浮字幕窗**；同时支持将字幕镜像到**系统状态栏**（在 SystemUI 进程内注入）。
 
 - 当前版本：**2.3.1**（`DLsiteFloat-2.3.1-code1006-debug.apk`，包名 `io.github.ariinyume.dlsitesoundfloat`）
-- 📦 下载 APK：[Releases · v2.3.1](https://github.com/ariinyume/DLSiteSoundFloatingSubtitle/releases/tag/v2.3.1)
+- 📦 下载 APK：[Releases · v2.3.1](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.3.1)
 - 📝 开发进度：[DLsiteFloat插件开发进度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh)
 - ⭐ Xposed 仓库：[DLsiteFloat - DLSiteSound悬浮窗/状态栏字幕模块](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -126,7 +126,7 @@
 - **排查换轨 / 字幕抓取类问题时**：请在设置页「其他」里打开**调试日志**再复现一次（默认关闭，开久了会刷屏；复现完记得关掉）。
 - **液态玻璃效果类问题**：请先试「模糊强度调回 50~60」「通透度不要拉满」「按页面明暗调环境背景亮度」；仍异常请附LSPosed 日志（`DLsiteSoundFloat` 过滤），并说明**机型 / ROM**（不同 ROM 的合成器模糊支持度不同）。
 
-- 提交 Issue：<https://github.com/ariinyume/DLSiteSoundFloatingSubtitle/issues>
+- 提交 Issue：<https://github.com/ariinyume/DLsiteFloat/issues>
 
 
 ---

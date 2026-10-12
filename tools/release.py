@@ -36,7 +36,7 @@ import shutil
 import subprocess
 import sys
 
-SRC_REPO = "ariinyume/DLSiteSoundFloatingSubtitle"
+SRC_REPO = "ariinyume/DLsiteFloat"
 XP_REPO = "Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat"
 
 # Clash Verge 默认混合端口；MEM_release.md 记载「端口会变，先扫再用」

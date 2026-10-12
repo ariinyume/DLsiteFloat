@@ -102,4 +102,4 @@ gradlew.bat compileDebugJavaWithJavac --offline      # Windows
 ## 构建产物不入库
 
 `.gitignore` 已忽略 `*.apk` / `*.aab` / `**/build/`，发布走 GitHub Releases：
-<https://github.com/ariinyume/DLSiteSoundFloatingSubtitle/releases>
+<https://github.com/ariinyume/DLsiteFloat/releases>

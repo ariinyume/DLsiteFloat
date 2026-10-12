@@ -5,7 +5,7 @@
 > An LSPosed / Xposed module that pins a **floating subtitle window** synced with playback progress onto the **playback page** of DLsiteSound (the DLsite audio app), and can also mirror subtitles to the **system status bar** (injected inside the SystemUI process).
 
 - Current version: **2.3.1** (`DLsiteFloat-2.3.1-code1006-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
-- 📦 Download APK: [Releases · v2.3.1](https://github.com/ariinyume/DLSiteSoundFloatingSubtitle/releases/tag/v2.3.1)
+- 📦 Download APK: [Releases · v2.3.1](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.3.1)
 - 📝 Development progress: [DLsiteFloat 插件开发进度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh) (in Chinese)
 - ⭐ Xposed repository: [DLsiteFloat - DLsiteSound floating window / status bar subtitle module](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -126,7 +126,7 @@
 - **When troubleshooting track switching / subtitle capture problems**: turn on the **debug log** under "More" on the settings page and reproduce the issue once more (it is off by default and will flood the log if left on; remember to turn it back off afterwards).
 - **Liquid glass issues**: first try "setting blur strength back to 50–60", "not maxing out transparency" and "matching backdrop brightness to how bright the page is"; if it is still wrong, attach the LSPosed log (filtered by `DLsiteSoundFloat`) and state your **device model / ROM** (compositor blur support varies between ROMs).
 
-- File an issue: <https://github.com/ariinyume/DLSiteSoundFloatingSubtitle/issues>
+- File an issue: <https://github.com/ariinyume/DLsiteFloat/issues>
 
 
 ---

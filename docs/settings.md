@@ -3,7 +3,7 @@
 > 面向**使用者**的一页说明。设置项文案与默认值全部取自源码，不是设计意图：
 > 键名与范围 ← `config/SubtitleConfig.java` · 界面标签 ← `ui/Strings.java`（三语 enum）· 控件行为 ← `ui/SettingsActivity.java`
 > 对应版本：**v2.3.0（code 1003）**（液态玻璃部分自 code 1003 起有变更，见§3.1 标注）
-> 仓库：`ariinyume/DLSiteSoundFloatingSubtitle`
+> 仓库：`ariinyume/DLsiteFloat`
 
 ---
 
