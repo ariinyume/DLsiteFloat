@@ -147,7 +147,7 @@
 ## 特别感谢
 
 - 状态栏字幕效果参考：[ColorOS Mod](https://github.com/rikumi/coloros-mod)
-
+- 字幕设置项功能参考：[ColorOS-Live-Lyrics-Bridge](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge?tab=readme-ov-file)
 - UI 参考：[KernelSU](https://github.com/tiann/KernelSU)、[LSPosed](https://github.com/LSPosed/LSPosed)
 
 ---
