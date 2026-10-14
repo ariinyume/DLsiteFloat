@@ -219,9 +219,25 @@ public final class RemoteConfig {
         }
     }
 
+    /**
+     * 【code 1007】「字幕缓存」总闸是否开启（默认开）。
+     *
+     * <p>语义 = 「用户是否在设置页打开了『字幕缓存』」。开 ⇒ 在线抓到的字幕会落盘到宿主
+     * 私有目录（断网可读回）；关 ⇒ 不再落盘（已有缓存保留，由设置页的清理按钮清除）。
+     *
+     * <p>⚠️ 它与播放页那个「本地缓存字幕」**会话级**按钮是两层：本方法管「存不存」，
+     * 那个按钮管「本次用不用」。读配置出异常时回落 {@code true}（= 默认开），不影响主流程。
+     */
+    public static boolean subtitleCacheEnabled() {
+        try {
+            return get().subtitleCacheEnabled;
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
     /** 强制重读（收到配置变更广播时调用）。 */
-    public static void reload() {
-        synchronized (LOCK) {
+    public static void reload() {        synchronized (LOCK) {
             sCache = read();
             sRevision++;
         }

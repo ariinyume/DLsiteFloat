@@ -60,20 +60,28 @@ gradlew.bat compileDebugJavaWithJavac --offline      # Windows
 
 ## 版本规则（2.0.0 起）
 
-`app/build.gradle` 顶部有三个变量，**发版时三处必须同步**：
+`app/build.gradle` 顶部有四个版本变量，**发版时四处必须同步**：
 
 | 变量 | 例 | 说明 |
 | --- | --- | --- |
-| `appVersionTag` | `2.2.14` | 即 `versionName`，语义化版本 |
-| `appVersionCode` | `993` | 即 `versionCode`，**严格单调递增**的整数（早期取 MMDD，现在只保证单调、不与任何已发/已占号相撞） |
-| `appVersionCodeLabel` | `1008.14` | 可读标签 `MMDD.当日第几版`，只用于日志与人工辨识 |
+| `appVersionTag` | `2.3.2` | **决定 APK 文件名**（`DLsiteFloat-${tag}-code${code}-${buildType}.apk`）；与 `appVersionName` 保持一致 |
+| `appVersionName` | `2.3.2` | 即 `versionName`（清单里那个），语义化版本 |
+| `appVersionCode` | `1017` | 即 `versionCode`，**严格单调递增**的整数（早期取 MMDD，现已与日期脱钩、只保证单调、不与已占号相撞） |
+| `appVersionCodeLabel` | `1014.5` | 可读别名 **`构建当天MMDD.当日第几版`**（尾号跨日归 1）。**不进 APK**、无代码消费 ⇒ 改它不必重出包 |
+
+> ⚠️ **label 的日期段必须跟着构建当天走**（2026-10-14 修订）：尾号是「当日第几版」、
+> 跨日归 1。v29 里它自 `1008.6` 起日期段停更、到 code 1011 冻成 `1008.30`，属**执行漂移**；
+> 本次已把 10-14 那批回溯为 `1014.1`~`1014.5`，10-13 及更早**保留旧值**。
+>
+> ⚠️ **label 不进包**：全工程无 `buildConfigField` / `resValue` 消费它（dex 里也查不到），
+> 「版本号四处」里只有 **tag / code / name** 三处真正影响产物。
 
 > ⚠️ **版本履历去哪写**（code 993 起）：**不要**再往`app/build.gradle` 里堆履历。
 > 完整履历在仓库根 `CHANGELOG.md`，用 `python tools/extract_changelog.py` 可从 gradle 重新生成；
 > gradle 里只保留最近 3 条摘要。历史上这里曾堆到 617 行注释 / 38 条履历，
 > 独占code 981~992 十二轮的唯一副本，而 `docs/修复说明/` 只到 980 —— 一次重写就全丢。
 
-**第四处**：`DlsiteSoundSubtitleModule` 里的
+**另一处（真机可辨识）**：`DlsiteSoundSubtitleModule` 里的
 `==== BUILD <versionName> / code <versionCode> （<描述>）====` 横幅 ——
 真机日志里就靠这一行确认装的是哪一版。
 

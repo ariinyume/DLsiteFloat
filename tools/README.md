@@ -460,7 +460,7 @@ python tools/run_all_verify.py --list         # 只列清单不执行
 | 脚本 | 作用 |
 | --- | --- |
 | `extract_changelog.py` | 🔴 **已退役**（code 995 起）。它是 code 993 的一次性迁移工具：把 build.gradle 里 38 条履历搬进 CHANGELOG。迁移完成后 build.gradle 只留 5 条摘要 ⇒ 它的 `EXPECT_N=38` 断言**必然失败**。**现在加履历请直接编辑 `CHANGELOG.md`**，它是唯一真源 |
-| `version_code.py` | 版本号四处（`appVersionCode` / `appVersionName` / `appVersionCodeLabel` / `LogGate` 类头）的**一致性检查** |
+| `version_code.py` | 🔴 **已废弃**（2026-10-14 起**勿用 `--apply`**）：它按「当天 MMDD」算 code（2026-10-14 → 1014），而当前 code 已是 1017 ⇒ 会把 versionCode **改小**，装机直接 `INSTALL_FAILED_VERSION_DOWNGRADE`；且它生成的 label 是裸 `1014`，**缺 `.当日第几版` 尾号**（与 v29 修订口径不符）。保留仅供考古 |
 | `geom/` | 几何计算的辅助脚本目录 |
 
 > 🔴 **踩过的坑**：code 995 第一次跑 `extract_changelog.py` 时断言挂了

@@ -442,6 +442,34 @@
                     android:paddingBottom="6dp" />
             </com.google.android.material.card.MaterialCardView>
 
+
+            <!-- 【code 1015 / 2.3.2】「实验性功能」节标题（在卡片外）—— 未解锁时整块 GONE -->
+            <TextView
+                android:id="@+id/title_experimental"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="30dp"
+                android:layout_marginStart="4dp"
+                android:textAppearance="?attr/textAppearanceTitleSmall"
+                android:textColor="?attr/colorPrimary"
+                android:textStyle="bold" />
+
+            <!-- 【code 1015 / 2.3.2】实验性功能卡片：总开关 + 卡内子功能（当前是「字幕缓存」）。
+                 显隐由 SettingsActivity#applyExperimentalVisibility 控制（未解锁 ⇒ GONE）。 -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/card_experimental"
+                style="@style/Widget.DLsiteFloat.SettingsCard">
+
+                <LinearLayout
+                    android:id="@+id/group_experimental"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="16dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="16dp"
+                    android:paddingBottom="6dp" />
+            </com.google.android.material.card.MaterialCardView>
             <!-- 「其他」节标题（在卡片外） -->
             <TextView
                 android:id="@+id/title_misc"

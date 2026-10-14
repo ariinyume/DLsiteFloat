@@ -19,9 +19,13 @@
 package io.github.ariinyume.dlsitesoundfloat.data;
 
 import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.text.TextUtils;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -32,10 +36,12 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
+import io.github.ariinyume.dlsitesoundfloat.config.RemoteConfig;
+import io.github.ariinyume.dlsitesoundfloat.util.LineSource;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
 
-public class SubtitleRepository {
+public class SubtitleRepository implements LineSource {
     private static SubtitleRepository instance;
 
     /** 音轨切换时：距上次成功加载字幕 JSON 多久以内，视为「新音轨预加载的字幕」而保留。 */
@@ -375,6 +381,83 @@ public class SubtitleRepository {
      */
     private static final long WORK_CHANGE_CLAIM_MS = 15000L;
 
+    // ---- 【code 1007 / 1012】字幕磁盘缓存（云端优先、本地兜底）----
+    /**
+     * 【code 1012】待落盘的**云端字幕原文**（及其权威轨标签的暂存位）。
+     *
+     * <p>为什么不再「加载即落盘」：宿主取字幕的时机是**用户点击那一刻**，比
+     * {@code currentIndex} 更新更早（见 {@link PlaylistKey} 类注释）⇒ 加载那一刻读到的
+     * 选择键往往还是**上一轨**的，直接拿它当缓存键会把字幕整批标错轨
+     * （真机实证：盘上条目的 idx 与 duration 整体错位）。现在改成先暂存，等**权威轨标签**
+     * （换轨通知的目标选择键 / 兜底定时器）到了再落盘，见 {@link #flushStagedCache}。
+     */
+    private volatile String stagedCacheJson = null;
+    /** 暂存字幕的作品键（{@code null} = 这条加载路径拿不到 URL）。 */
+    private volatile String stagedCacheWorkKey = null;
+    /** 暂存字幕的 cue 条数（仅统计/日志）。 */
+    private volatile int stagedCacheCues = 0;
+    /** 暂存字幕的最大结束时间（秒）—— 落盘后供时长补盖的时间轴交叉校验。 */
+    private volatile double stagedCacheMaxEnd = 0d;
+    /** 暂存代数：每次新暂存自增，使上一轮的兜底定时器失效（= 天然幂等）。 */
+    private volatile long stagedCacheToken = 0L;
+    /** 【code 1013】暂存那份 JSON **自己的**轨标签（到达那刻盖的选择键印章）。
+     *  <p>兑现时必须用它，而不是兑现时刻的 {@code observedPlaylistSelection} —— 后者在
+     *  「暂存后 2.5s 内又换到别的轨」时会变成**另一轨**，把本轨字幕错标到别人头上。
+     *  判据见 {@link #onTrackChanged} 的说明：切轨时序号**立刻**翻、新轨 JSON 约 165ms
+     *  后才到，所以**到达时刻**的选择键才是权威值。0 = 未知（退回兑现时刻的读数）。 */
+    private volatile long stagedCacheSelection = 0L;
+    /**
+     * 【code 1019】上面那枚印章**是否已知陈旧** —— 在 **JSON 到达那一刻**冻结
+     * （{@code stageCacheToDisk}），兑现时**不重读**那几个可变旗标。
+     *
+     * <p>为真 = 这份 JSON 到达时，手上已经挂着「宿主为**别的作品**取回了字幕」
+     * （{@code workChangeKey}）或「播放列表正在重建」（{@code cuesArrivedDuringRebuild}）——
+     * 两者都说明**宿主的这次切换还没被报出来**，那一刻读到的选择键必然是旧轨/旧作品的。
+     *
+     * <p>真机 2026-10-14 15:03:26.718 / 15:04:12.577 实测：JSON 到手时选择键还是旧作品的，
+     * 82 毫秒后新列表才报出来。兑现时若照旧用印章，就会把这份字幕标到旧轨上
+     * —— 同一份 13086 字节的字幕被写到 tc=4 / tc=9 / tc=6 三个槽位，
+     * 之后断网读回 tc=9 那轨放的就是**别的作品的台词**（16:18:19 实测命中）。
+     *
+     * <p>为假时行为与本版之前**逐字节一致**：一律以到达印章为准（1013 定的规则）。
+     * 两条规则不冲突 —— 靠这枚**到达时刻冻结**的证据旗标分流，而不是靠时间先后猜。
+     */
+    private volatile boolean stagedCacheStampStale = false;
+    /** 本轨是否有可用的本地缓存 —— **诊断用**（落盘/换轨后刷新一次，只在翻转时打日志）。 */
+    private volatile boolean localCacheAvailable = false;
+    /**
+     * 【code 1014】本次换轨的**目标键**（身份 + 选择），裁决兜底读盘时用它。
+     *
+     * <p>为什么不用全局观测值：{@code observedPlaylistIdentity / …Selection} 是宿主最近一次
+     * 报出的读数 —— 列表重建、连续快切时它们可能已经指向**别的轨**，兜底就会查不到本轨缓存
+     * 而空手而归（真机 2026-10-14 10:25:22 那两次切轨即在此列）。换轨通知的入参才是这次切换的
+     * 目标。0 = 该入口给不出（兜底退回观测值）。
+     */
+    private volatile long pendingTrackIdentity = 0L;
+    private volatile long pendingTrackSelection = 0L;
+    /**
+     * 【code 1007 / Phase 3·URI 通道】最近一次拿到作品键的时刻。
+     *
+     * <p>只用来判「手上这个作品键还算不算**正证据**」（见 {@link #freshWorkKey()}）：
+     * 断网后它是陈旧值、不能拿来否定一次本地命中，否则正常命中会被误拒。
+     */
+    private volatile long lastSeenWorkKeyAtMs = 0L;
+    /** 作品键的新鲜窗口：这段内拿到的作品键才用于「拒绝跨作品命中」（防误伤的边界，见 freshWorkKey）。 */
+    private static final long WORK_KEY_FRESH_MS = 3 * 60 * 1000L;
+    /**
+     * 【code 1012】暂存字幕的**兜底落盘延时**：这么久还没等到权威换轨通知，就用当前观察到的
+     * 选择键落盘（那时 selection 早已稳定）。覆盖「首次加载 / 同轨重播」这类没有换轨通知的场景。
+     */
+    private static final long CACHE_FLUSH_FALLBACK_MS = 2500L;
+    /**
+     * 【code 1007】最近一次从 {@code loadFromJson(String,...)} 进来的**字幕 JSON 原文**。
+     *
+     * <p>为什么留一份原文：磁盘缓存要存的是「服务端下发的字节本身」（而不是重新序列化后的
+     * 结构），这样断网读回时与在线那份**逐字节一致**。{@link #loadFromJsonArray(JSONArray, String)}
+     * 那条入口没有原文（调用方直接给数组）⇒ 值为 null ⇒ 本次不落盘（少存一份，不影响功能）。
+     */
+    private volatile String lastCacheableJson = null;
+
     // ---- 播放结束 → 自动关窗（v29）----
     /** Media3 {@code Player} 的播放状态取值（与 App 内部常量对齐）。 */
     private static final int PSTATE_IDLE = 1;
@@ -405,6 +488,19 @@ public class SubtitleRepository {
     private final List<Runnable> observers = new ArrayList<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final SimpleDateFormat timeFormat;
+    /**
+     * 【code 1007】磁盘缓存的**串行写线程**。
+     *
+     * <p>为什么单线程：索引文件是「读改写」的，并发写会互相覆盖（且 {@link SubtitleCache}
+     * 内部虽有锁，但把它放到调用线程上会让重排/主线程承担 I/O）。单线程串行 = 天然互斥，
+     * 且调用方（可能是播放器的高频回调线程）零阻塞。
+     */
+    private final java.util.concurrent.ExecutorService cacheIo =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "dlfloat-cache-io");
+                t.setDaemon(true);
+                return t;
+            });
 
     private SubtitleRepository() {
         timeFormat = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US);
@@ -531,6 +627,19 @@ public class SubtitleRepository {
      *                （字节流通道）⇒ 不更新历史基线，也不参与「换作品」判定。
      */
     public void loadFromJson(String json, String workKey) {
+        loadFromJson(json, workKey, false);
+    }
+
+    /**
+     * 【code 1007】带「来源」的入口 —— 磁盘缓存命中时 {@code fromDisk=true}。
+     *
+     * <p>{@code fromDisk} 的唯一作用：**跳过回写缓存**（这份内容本来就是从缓存读出来的，
+     * 再写一遍既无意义、也会把 {@code used} 时间刷新成「刚用过」而干扰 LRU）。
+     *
+     * @param workKey 这份 JSON 的请求 URL 推出的作品键；{@code null} = 这条加载路径拿不到 URL
+     *                （字节流通道 / 磁盘缓存路径）⇒ 不更新历史基线，也不参与「换作品」判定。
+     */
+    public void loadFromJson(String json, String workKey, boolean fromDisk) {
         try {
             JSONObject root = new JSONObject(json);
             JSONObject data = root.optJSONObject("data");
@@ -561,9 +670,13 @@ public class SubtitleRepository {
                 XposedCompat.log("[DLsiteSoundFloat] loadFromJson: no subtitle array found");
                 return;
             }
-            loadFromJsonArrayInternal(webvtt, workKey);
+            if (!fromDisk) {
+                lastCacheableJson = json;      // 【code 1007】磁盘缓存要存的是原文
+            }
+            loadFromJsonArrayInternal(webvtt, workKey, fromDisk);
             XposedCompat.log("[DLsiteSoundFloat] Loaded " + getCues().size() + " cues from JSON"
-                    + (workKey != null ? "" : " (no work key on this path)"));
+                    + (fromDisk ? " (local disk cache)"
+                            : (workKey != null ? "" : " (no work key on this path)")));
         } catch (Throwable e) {
             XposedCompat.log("[DLsiteSoundFloat] loadFromJson error: " + e.getMessage());
         }
@@ -575,17 +688,20 @@ public class SubtitleRepository {
 
     public void loadFromJsonArray(JSONArray webvtt, String workKey) {
         try {
-            loadFromJsonArrayInternal(webvtt, workKey);
+            loadFromJsonArrayInternal(webvtt, workKey, false);
         } catch (Throwable e) {
             XposedCompat.log("[DLsiteSoundFloat] loadFromJsonArray error: " + e.getMessage());
         }
     }
 
-    private void loadFromJsonArrayInternal(JSONArray webvtt, String workKey) throws Exception {
+    private void loadFromJsonArrayInternal(JSONArray webvtt, String workKey, boolean fromDisk)
+            throws Exception {
         List<SubtitleCue> newCues = new ArrayList<>();
         // 【1.21.15 问题 1】假阴性取证用的暂存（-1 = 本次没有）
         long falseNegativeLagMs = -1L;
         int falseNegativeCueCount = 0;
+        // 【code 1007】字幕最大结束时间（秒）—— 磁盘缓存做「时长补盖」时的时间轴交叉校验用。
+        double maxEndSec = 0d;
         for (int i = 0; i < webvtt.length(); i++) {
             JSONObject cue = webvtt.getJSONObject(i);
             String start = cue.optString("start_time", "00:00:00.000");
@@ -597,7 +713,11 @@ public class SubtitleRepository {
                     lineList.add(lines.getString(j));
                 }
             }
-            newCues.add(new SubtitleCue(parseTime(start), parseTime(end), lineList));
+            double endSec = parseTime(end);
+            if (endSec > maxEndSec) {
+                maxEndSec = endSec;
+            }
+            newCues.add(new SubtitleCue(parseTime(start), endSec, lineList));
         }
         boolean reopened = false;
         // 【1.21.16 问题 1】本次是否撤销了「软裁决」降级显示
@@ -634,6 +754,9 @@ public class SubtitleRepository {
                 }
                 lastSeenWorkKey = workKey;
                 cuesWorkKey = workKey;
+                // 【code 1007】记下时刻：只有「刚拿到」的作品键才当正证据用于拒绝跨作品命中
+                //   （见 freshWorkKey）；断网后它是陈旧值，不能拿来否定一次正常命中。
+                lastSeenWorkKeyAtMs = SystemClock.uptimeMillis();
             }
             // 【code 1005】再记两件事，供「换作品（列表整体重建）」场景下的归属判定：
             //   ① 到达时刻 —— 给认领加时间上限，防陈旧印章被后来的无关换轨错误兑现；
@@ -727,6 +850,13 @@ public class SubtitleRepository {
             XposedCompat.log("[DLsiteSoundFloat] soft \"no subtitles\" verdict revoked"
                     + " -> subtitles arrived, cues were kept all along; restoring UI");
         }
+        // 【code 1007】落盘缓存（异步）：把这份「已在线抓到」的字幕原文持久化，断网时同轨可读回。
+        //   fromDisk=true（这份本来就从缓存读出来的）不回写 —— 既无意义，也会把 LRU 的
+        //   lastUsed 刷成「刚用过」而干扰淘汰。
+        if (!fromDisk) {
+            // 【code 1012】不再立刻落盘：先暂存，等权威轨标签到了再写（见 stageCacheToDisk）。
+            stageCacheToDisk(workKey, newCues.size(), maxEndSec);
+        }
         notifyObservers();
     }
 
@@ -811,9 +941,26 @@ public class SubtitleRepository {
                                long newSelection) {
         // 【980 / code 1004】先看这份 cues 是不是「切回的原轨」或「宿主早已为新轨取回的」
         // —— 是就直接恢复渲染，不进挂起/软裁决。
-        if (tryResumeFromCache(where, newIdentity, newSelection)) {
+        // 【code 1013】哪怕是「宿主复用自己 JSON 直接恢复」这条早退路径，也要先把待落盘的
+        //   字幕兑现掉 —— 否则那条暂存必被下一次暂存的代数令牌作废，永远丢一条缓存。
+        boolean resumedFromCache = tryResumeFromCache(where, newIdentity, newSelection);
+        // 【code 1012】权威换轨通知到达 —— 把暂存的云端字幕落盘
+        //   （轨标签口径见 {@link #flushStagedCache}，code 1013 起以到达印章为准）。
+        if (newSelection > 0L) {
+            flushStagedCache(newSelection);
+        }
+        if (resumedFromCache) {
             return;
         }
+        // 【code 1012】云端优先：在线时**不**主动读本地 —— 交给下面原流程等宿主的云端 JSON，
+        //   只有等不到（见 resolvePendingTrack 的兜底）才回退本地。仅当**已确认离线**时直接读，
+        //   免得飞行模式下干等一整个裁决窗（3~15s）才出字幕。
+        if (isOffline() && tryResumeFromDisk(where, newIdentity, newSelection)) {
+            return;
+        }
+        // 【code 1014】本轨盘上是否已有可用缓存 —— 决定「云端优先」等多久（见下面的 grace 分级）。
+        //   有本地垫背就不必为云端苦等长窗。纯内存索引查询，无磁盘 IO。
+        final boolean diskFallbackReady = hasDiskCacheFor(newIdentity, newSelection);
         long now = SystemClock.uptimeMillis();
         long token;
         boolean suspended;
@@ -827,6 +974,10 @@ public class SubtitleRepository {
             cueCount = cues.size();
             pendingToken++;                 // 作废上一次排队的判定
             token = pendingToken;
+            // 【code 1014】记下本次换轨的**目标键**：裁决兜底读盘要用它，而不是全局观测值
+            //   （宿主重建列表 / 连续快切时观测值可能已指向别的轨）。
+            pendingTrackIdentity = newIdentity;
+            pendingTrackSelection = newSelection;
             pendingIndexVerified = indexVerified;   // 【973】本次判定的来源
             lastScannedSecond = Integer.MIN_VALUE;
             // v29：窗口若是被「播放结束」自动关掉的，换轨说明又有新内容要播 → 恢复窗口
@@ -886,7 +1037,12 @@ public class SubtitleRepository {
                 suspended = true;
                 // 【1.21.15 问题 1】窗口分级：手上有缓存 cues = 这部作品有字幕，
                 // 大概率只是新音轨的 JSON 还在路上（冷请求实测能拖到 15s），多等一会儿。
-                grace = cueCount > 0 ? NO_SUBTITLE_GRACE_MS_CACHED : NO_SUBTITLE_GRACE_MS;
+                // 【code 1014】**但盘上已有本轨缓存时不必苦等**：云端拿不到还有本地兜底
+                //   （见 resolvePendingTrack 末尾），等一个标准窗口就够。
+                //   真机实证（2026-10-14 10:25:22，关代理后切轨）：手上握着上一轨的 148 条 cues
+                //   ⇒ 走 15000ms 长窗 ⇒ 盘上明明有本轨缓存却干等 15s，Ari 体感「本地字幕用不了」。
+                grace = (cueCount > 0 && !diskFallbackReady)
+                        ? NO_SUBTITLE_GRACE_MS_CACHED : NO_SUBTITLE_GRACE_MS;
             }
         }
         XposedCompat.log("[DLsiteSoundFloat] track changed via " + where
@@ -903,6 +1059,8 @@ public class SubtitleRepository {
         if (reopenedByTrack) {
             XposedCompat.log("[DLsiteSoundFloat] new track after playback end -> reopen floating window");
         }
+        // 【code 1007】换轨后刷新「本轨有无本地缓存」（按钮据此显隐）。
+        refreshLocalCacheAvailability(newIdentity);
         notifyObservers();
         if (suspended) {
             mainHandler.postDelayed(() -> resolvePendingTrack(token), grace);
@@ -946,6 +1104,21 @@ public class SubtitleRepository {
      */
     public void noteObservedPlaylistIdentity(long identity) {
         observedPlaylistIdentity = identity;
+        // 【code 1007】权威读数带时长 ⇒ 给「等待中的缓存条目」补盖身份（副键 → 主键），
+        //   它才可能被命中。补盖自带时间轴交叉校验（见 SubtitleCache#stampDuration）。
+        if (identity != 0L) {
+            long sel = PlaylistKey.makeSelection(
+                    PlaylistKey.identityTrackCount(identity), PlaylistKey.identityIndex(identity));
+            if (sel != 0L) {
+                try {
+                    SubtitleCache.get().stampDuration(identity, sel);
+                } catch (Throwable t) {
+                    // 缓存失败绝不影响主流程
+                }
+            }
+        }
+        // 【code 1007】顺带刷新「本轨有无本地缓存」（只在真的翻转时通知观察者）。
+        refreshLocalCacheAvailability(identity);
     }
 
     /**
@@ -1136,6 +1309,8 @@ public class SubtitleRepository {
         long posNow;
         boolean reopened = false;
         boolean wasBlocked;
+        // 【code 1019】本次认领是否顺手改签了暂存标签（仅诊断）。
+        boolean labelRewritten = false;
         synchronized (lock) {
             cueCount = cues.size();
             if (cueCount == 0) {
@@ -1178,19 +1353,313 @@ public class SubtitleRepository {
                 floatingWindowOpen = true;
                 reopened = true;
             }
+            // 【code 1019】认领即**改签**：这条路已经证明「手上的 cues 就是本次换轨目标那一轨的」
+            //   （四条认领判据之一成立）⇒ 到达那一刻盖的印章（`cuesOwnerSelection`）已被**证伪**，
+            //   必须改成认领到的目标键。
+            //   🔴 不改的后果（真机 2026-10-14 15:03:27 / 15:04:13 两例）：暂存落盘仍按**旧轨**
+            //      的标签写 —— 同一份 13086 字节的字幕被写到 tc=4 idx=0 / tc=9 idx=0 /
+            //      tc=6 idx=0 三个槽位；其中 tc=9 那个槽把**别的作品**的字幕写成了这一轨的，
+            //      16:18:19 断网读回就是别人家的台词。
+            //   ⚠️ 与 1013 的规则不冲突：1013 说「到达印章才是权威」，那是为了防「暂存之后又被
+            //      换轨带偏」；而本分支的结论是**正证据**（身份 / 选择 / 重建窗口 / 作品键四条
+            //      判据之一成立），比到达印章更硬 —— 是印章被证伪，不是推翻那条规则。
+            if (newSelection > 0L) {
+                cuesOwnerSelection = newSelection;
+                if (stagedCacheJson != null) {
+                    stagedCacheSelection = newSelection;
+                    stagedCacheStampStale = false;
+                    labelRewritten = true;
+                }
+            }
         }
         XposedCompat.log("[DLsiteSoundFloat] " + code + " track changed via " + where
                 + why
                 + " | cues=" + cueCount
                 + " | pos=" + (posNow < 0 ? "?" : posNow + "ms")
                 + " -> RESUME from cache (" + how + ")"
-                + (wasBlocked ? " [suspend/soft-verdict/quarantine revoked]" : ""));
+                + (wasBlocked ? " [suspend/soft-verdict/quarantine revoked]" : "")
+                + (labelRewritten ? " [cache label re-signed -> selection="
+                        + newSelection + "]" : ""));
         if (reopened) {
             XposedCompat.log("[DLsiteSoundFloat] " + code + " return to cached track"
                     + " -> reopen floating window (auto-closed earlier)");
         }
         notifyObservers();
         return true;
+    }
+
+    // ======================================================================
+    // 【code 1007 / 1012】字幕磁盘缓存 —— 云端优先、本地兜底（自动，无手动开关）
+    // ======================================================================
+
+    /** 缓存写/读的公共前置：只看配置里「字幕缓存」总闸（【code 1012】不再有会话级手动开关）。 */
+    private boolean cacheUsable() {
+        try {
+            return RemoteConfig.get().subtitleCacheEnabled;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 【code 1012】当前是否**没有可用网络** —— 「云端优先」策略的分支依据。
+     *
+     * <p>为什么需要它：离线（飞行模式）时宿主根本取不到云端字幕，若还照旧「挂起 → 等满
+     * 裁决窗」，用户要干等 3~15s 才看到本地字幕。明确离线时直接读盘，体验与在线一致。
+     *
+     * <p>宁可信「有网」：读不到状态（无 Context / 权限异常）一律返回 {@code false}
+     * ⇒ 走云端优先路径，行为与改动前一致，不会比现在更差。
+     */
+    private boolean isOffline() {
+        try {
+            Context ctx = appContext;
+            if (ctx == null) {
+                return false;
+            }
+            ConnectivityManager cm = (ConnectivityManager)
+                    ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) {
+                return false;
+            }
+            Network n = cm.getActiveNetwork();
+            if (n == null) {
+                return true;                    // 没有任何活动网络 ⇒ 离线
+            }
+            NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+            return caps == null
+                    || !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 【Phase 3·URI 通道】手上这个作品键还算不算**正证据**。
+     *
+     * <p>只有「刚刚拿到过」的作品键才能用来**拒绝**一次本地命中 —— 它证明「本次会话已经
+     * 在线加载过别的作品的字幕」。断网一段时间后它是陈旧值，此时若拿它去否定命中，只会把
+     * 正常命中误拒（宁可少一层保护，也不要假阴性）。窗口见 {@link #WORK_KEY_FRESH_MS}。
+     */
+    private String freshWorkKey() {
+        String k = lastSeenWorkKey;
+        long at = lastSeenWorkKeyAtMs;
+        if (k == null || at <= 0L) {
+            return null;
+        }
+        return (SystemClock.uptimeMillis() - at) <= WORK_KEY_FRESH_MS ? k : null;
+    }
+
+    /**
+     * 【code 1012】把这份「刚在线抓到」的字幕原文**暂存**起来，等**权威轨标签**到了再落盘。
+     *
+     * <h3>── 为什么不能像 code 1007 那样立刻落盘 ──</h3>
+     * code 1007 用「加载 JSON 那一刻」的 {@code observedPlaylistSelection} 当轨标签，但宿主
+     * **取字幕的时机是用户点击那一刻**（见 {@link PlaylistKey} 类注释），比 {@code currentIndex}
+     * 更新更早 ⇒ 那一刻读到的选择键往往还是**上一轨**的。
+     * 真机实证（2026-10-13 20:28 会话）：宿主自己的时长读数按序号是
+     * {@code [1252560, 353256, 1252560, 1103664, 658536]}ms，而盘上条目按序号记的是
+     * {@code [658536, 1103664, 1252560, 1698768]}ms —— 整体错位
+     * ⇒ 断网读回的是**别的音轨**的字幕。
+     *
+     * <p>权威标签有两个来源（谁先到用谁）：换轨通知的目标选择键（{@link #flushStagedCache}），
+     * 以及 {@link #CACHE_FLUSH_FALLBACK_MS} 后的兜底（那时 selection 早已稳定）。
+     */
+    private void stageCacheToDisk(String workKey, int cues, double maxEndSec) {
+        try {
+            if (!RemoteConfig.get().subtitleCacheEnabled) {
+                return;                     // 设置页「字幕缓存」总闸关 ⇒ 不写盘
+            }
+            final String text = lastCacheableJson;
+            if (text == null || text.isEmpty()) {
+                return;                     // 这次加载不是从 JSON 文本进来的（如数组入口）⇒ 无原文可存
+            }
+            stagedCacheJson = text;
+            stagedCacheWorkKey = workKey;
+            stagedCacheCues = cues;
+            stagedCacheMaxEnd = maxEndSec;
+            // 【code 1013】这份 JSON 到达那刻盖的印章 —— 兑现时的唯一权威轨标签。
+            stagedCacheSelection = cuesOwnerSelection;
+            // 【code 1019】与印章**同时**冻结「印章是否已知陈旧」：
+            //   到达这一刻的 `workChangeKey` / `cuesArrivedDuringRebuild` 就是「宿主的这次
+            //   切换还没被报出来」的两个正证据（它们都在本次 loadFromJsonArrayInternal 的
+            //   加锁段里刚写过，同一线程顺序可见）。
+            //   ⚠️ 刻意**不**在兑现时重读这两个旗标 ——「消费时读到的状态 ≠ 事件那一刻的状态」
+            //      （兑现前它们可能已被认领或平静加载清掉，读出来是另一回事）。
+            stagedCacheStampStale = workChangeKey != null || cuesArrivedDuringRebuild;
+            final long myToken = ++stagedCacheToken;
+            mainHandler.postDelayed(() -> {
+                // 代数变了（又抓到新的字幕）⇒ 本轮兜底作废，写盘交给新一轮。
+                if (stagedCacheToken == myToken && stagedCacheJson != null) {
+                    flushStagedCache(observedPlaylistSelection);
+                }
+            }, CACHE_FLUSH_FALLBACK_MS);
+        } catch (Throwable t) {
+            // 静默降级
+        }
+    }
+
+    /**
+     * 【code 1012】用**权威轨标签**把暂存的云端字幕落盘（幂等：兑现一次即清暂存）。
+     *
+     * @param authoritativeSelection 权威选择键（换轨通知的目标选择键；{@code <= 0} 时退回当前观察值）
+     */
+    private void flushStagedCache(long authoritativeSelection) {
+        try {
+            final String text = stagedCacheJson;
+            if (text == null || text.isEmpty()) {
+                return;                     // 没有待落盘的字幕（已兑现 / 压根没有）
+            }
+            // 【code 1013】以「这份 JSON 到达那刻的印章」为准；只有它未知才退回当前读数。
+            //   否则「暂存后 2.5s 内又换轨」会让兑现用上**另一轨**的标签（错配复发）。
+            // 【code 1019】印章**已知陈旧**时不能再用它：那时「到达时刻的读数」恰恰是错的
+            //   （见 stagedCacheStampStale），权威目标键 / 兑现时刻的读数才是对的。
+            //   印章可信时仍走 1013 的老规则（防「暂存后 2.5 秒内又换轨」把标签带偏）。
+            long sel;
+            if (stagedCacheStampStale) {
+                sel = authoritativeSelection > 0L
+                        ? authoritativeSelection : observedPlaylistSelection;
+            } else {
+                sel = stagedCacheSelection > 0L
+                        ? stagedCacheSelection
+                        : (authoritativeSelection > 0L
+                                ? authoritativeSelection : observedPlaylistSelection);
+            }
+            if (sel <= 0L) {
+                return;                     // 拿不到轨标签 ⇒ 先留着，等下一次权威读数
+            }
+            if (stagedCacheStampStale) {
+                XposedCompat.log("[DLsiteSoundFloat] [code 1019] staged label was STALE at"
+                        + " arrival (work change / playlist rebuild was pending) ->"
+                        + " flush with selection=" + sel + " instead of the arrival stamp");
+            }
+            int tc = PlaylistKey.selectionTrackCount(sel);
+            int idx = PlaylistKey.selectionIndex(sel);
+            if (tc < 0 || idx < 0) {
+                return;
+            }
+            final String wk = stagedCacheWorkKey;
+            final int fTc = tc;
+            final int fIdx = idx;
+            final int fCues = stagedCacheCues;
+            final double fMaxEnd = stagedCacheMaxEnd;
+            stagedCacheJson = null;         // 幂等：兑现一次即清
+            stagedCacheWorkKey = null;
+            stagedCacheCues = 0;
+            stagedCacheMaxEnd = 0d;
+            stagedCacheSelection = 0L;      // 【code 1013】与上面四件一起清
+            stagedCacheStampStale = false;  // 【code 1019】同上
+            cacheIo.execute(() -> {
+                try {
+                    SubtitleCache.get().put(wk, fTc, fIdx, 0L, text, fCues, fMaxEnd);
+                } catch (Throwable t) {
+                    // 缓存失败绝不影响播放
+                }
+            });
+            // 落盘是异步的 ⇒ 稍后再刷新一次「本轨有无本地缓存」（诊断）。
+            mainHandler.postDelayed(() -> refreshLocalCacheAvailability(observedPlaylistIdentity), 400L);
+        } catch (Throwable t) {
+            // 静默降级
+        }
+    }
+
+    /**
+     * 【code 1014】本轨盘上是否已有可用缓存（**纯内存索引查询**，不做磁盘 IO）。
+     *
+     * <p>用于换轨时决定「云端优先」等多久：有本地垫背 ⇒ 只等一个标准窗口。命中口径与
+     * {@link #tryResumeFromDisk} 一致（identity 主键 → selection 副键，见
+     * {@code SubtitleCache#has}）。任何异常一律按「没有」处理，绝不影响主流程。
+     */
+    private boolean hasDiskCacheFor(long identity, long selection) {
+        try {
+            if (!cacheUsable()) {
+                return false;
+            }
+            long sel = selection != 0L ? selection : observedPlaylistSelection;
+            return SubtitleCache.get().has(identity, sel);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 磁盘缓存的**读**接入 —— 排在 {@link #tryResumeFromCache}（内存版）之后。
+     *
+     * <p>命中就直接走 {@code loadFromJson(..., fromDisk=true)}：现有那套复位 / 撤销挂起 /
+     * 隔离上一轨的语义全部白嫖（见 {@code loadFromJsonArrayInternal}）。未命中则一字不改地
+     * 走原流程（挂起 → 等在线 JSON → 裁决），这正是需求「抓不到则显示无字幕」。
+     */
+    private boolean tryResumeFromDisk(String where, long newIdentity, long newSelection) {
+        if (!cacheUsable()) {
+            return false;
+        }
+        String text;
+        try {
+            text = SubtitleCache.get().lookup(newIdentity, newSelection, freshWorkKey());
+        } catch (Throwable t) {
+            return false;
+        }
+        if (text == null) {
+            return false;
+        }
+        XposedCompat.log("[DLsiteSoundFloat] [code 1007] disk cache HIT on track change via " + where
+                + " | identity=" + newIdentity + " selection=" + newSelection
+                + " -> resume from LOCAL subtitle");
+        loadFromJson(text, null, true);
+        return true;
+    }
+
+    /**
+     * 【code 1019】进程冷启动后「第一个作品的第一个音轨」的**只取缓存**入口。
+     *
+     * <h3>── 为什么必须有它 ──</h3>
+     * {@code PlayerSourceHook} 在「本进程首次观测到播放列表身份」时**刻意不发换轨通知**
+     * （只种基线，见那段注释），而数据层读缓存的三条路全挂在 {@code onTrackChanged} 之下
+     * ⇒ 重启 App 后打开的第一个作品的第一个音轨，只要云端那份 JSON 没到手，盘上就算有缓存
+     * 也永远没人去取（真机 2026-10-14 16:14:38
+     * {@code local cache availability -> true}，20 秒后仍 {@code lastJson=never | cues=0}）。
+     *
+     * <h3>── 为什么它比换轨路径更宽松 ──</h3>
+     * 换轨路径「在线不主动读本地」是为了**等云端**：先挂起、再裁决，读早了会把本地那份顶掉
+     * 云端。本入口没有等待决策 —— **不挂起、不裁决、不关窗、不动任何状态机**，只是把盘上那份
+     * 喂给渲染；云端 JSON 到达时 {@code loadFromJson} 照旧整份替换 cues ⇒ 读盘只可能让首轨
+     * 「早一点有字幕」，不可能让云端字幕「不出现」。
+     *
+     * <p>拿不到（总闸关 / 索引没就绪 / 盘上没这份 / 任何异常）一律静默返回、什么都不改 ——
+     * 与改动前的行为逐字节一致。
+     */
+    public void onSeededTrack(int idx, long identity, long selection, String where) {
+        try {
+            if (!cacheUsable()) {
+                return;
+            }
+            if (tryResumeFromDisk(where + " [seeded idx=" + idx + "]", identity, selection)) {
+                XposedCompat.log("[DLsiteSoundFloat] [code 1019] seeded first track ->"
+                        + " resumed from LOCAL cache (idx=" + idx
+                        + " selection=" + selection + ")");
+            }
+        } catch (Throwable t) {
+            // 缓存失败绝不影响播放
+        }
+    }
+
+    /** 刷新「本轨有无本地缓存」（仅在真的翻转时通知观察者，避免把高频身份读数变成抖动源）。 */
+    private void refreshLocalCacheAvailability(long identity) {
+        boolean avail;
+        try {
+            long sel = identity != 0L
+                    ? PlaylistKey.makeSelection(PlaylistKey.identityTrackCount(identity),
+                            PlaylistKey.identityIndex(identity))
+                    : observedPlaylistSelection;
+            avail = SubtitleCache.get().has(identity, sel);
+        } catch (Throwable t) {
+            avail = false;
+        }
+        if (avail != localCacheAvailable) {
+            localCacheAvailable = avail;
+            XposedCompat.log("[DLsiteSoundFloat] [code 1008] local cache availability -> " + avail
+                    + " (identity=" + identity + ")");
+            notifyObservers();
+        }
     }
 
     /**
@@ -1365,6 +1834,22 @@ public class SubtitleRepository {
                 reopenedAfterSpurious = true;
             }
         }
+        // 【code 1012】云端一直没给字幕 ⇒ 回退**本地磁盘缓存**（需求：云端优先、本地兜底）。
+        //   放在锁外执行：loadFromJson 会重入 lock 并重建 cues / 清软裁决 / 自动开窗，
+        //   语义与「云端 JSON 晚到」完全一致（正是它被设计成能自愈的那条路）。
+        //   【code 1014】优先用**本次换轨的目标键**：全局观测值在列表重建 / 连续快切时可能
+        //   已指向别的轨，拿它查盘会空手而归（这正是 Ari 10:25:22 那两次切轨的情形）。
+        if (noSubtitles && !spurious
+                && tryResumeFromDisk("no json in grace -> local fallback",
+                        pendingTrackIdentity != 0L ? pendingTrackIdentity
+                                : observedPlaylistIdentity,
+                        pendingTrackSelection != 0L ? pendingTrackSelection
+                                : observedPlaylistSelection)) {
+            XposedCompat.log("[DLsiteSoundFloat] [code 1012] cloud gave no subtitle within grace"
+                    + " -> resumed from LOCAL disk cache (cloud-first, local fallback)");
+            notifyObservers();
+            return;
+        }
         if (spurious) {
             LogGate.debug("[DLsiteSoundFloat] track decision: SPURIOUS track change"
                     + " (sawPositionReset=" + sawReset + ", samples=" + samples
@@ -1472,6 +1957,7 @@ public class SubtitleRepository {
     }
 
     /** true = 在播或状态未知（未知时按「在播」处理，保持宽容）。 */
+    @Override
     public boolean isPlayingOrUnknown() {
         return playingState != 0;
     }
@@ -1487,6 +1973,7 @@ public class SubtitleRepository {
      * 状态栏字幕的「单程滚动」用它当动画时长 —— 需求是「根据字幕的播放时长，缓慢而逐渐地
      * 从左播到右」，所以这里取的是 cue 的 endTime-startTime，而不是某个固定速度。
      */
+    @Override
     public long getCurrentCueDurationMs() {
         int idx;
         try {
@@ -1605,6 +2092,7 @@ public class SubtitleRepository {
      * 不要再各自拼 `!hasSubtitles() || isSuspended()` —— 那正是 1.21.16 之前
      * 「三处 UI 口径不一」和「底色提前 9.5 秒变暗」的来源。
      */
+    @Override
     public boolean shouldShowNoSubtitles() {
         synchronized (lock) {
             if (cues.isEmpty() || softNoSubtitles) {
@@ -1622,6 +2110,45 @@ public class SubtitleRepository {
                     || (pendingTrackDecision && !pendingSoftSuspend))
                     ? new ArrayList<>() : new ArrayList<>(currentSubtitles);
         }
+    }
+
+    /**
+     * 【code 1018 / 架构审查 2.3】当前该显示的字幕行（状态栏桥的数据源）。
+     *
+     * <p>逐行搬自 {@code StatusBarSubtitleBridge.computeCurrentLine}（含它的 {@code join}）——
+     * 那座桥不再直连数据层，改由本类实现 {@link LineSource}。
+     *
+     * <p><b>锁粒度与原来完全相同</b>：本方法自身<b>不加锁</b>，只是依次调用三个各自
+     * 加锁的读方法（与桥里原来的调用序列逐一对应，没有把三次读合成一把锁）。
+     * 本类的线程模型见 {@code docs/字段可见性约定.md}。
+     */
+    @Override
+    public String statusBarLine() {
+        List<SubtitleCue> cues = getCues();
+        int idx = findCurrentCueIndex();
+        if (cues != null && !cues.isEmpty() && idx >= 0 && idx < cues.size()) {
+            return joinCue(cues.get(idx));
+        }
+        List<String> cur = getCurrentSubtitles();
+        if (cur != null && !cur.isEmpty()) {
+            return TextUtils.join(" ", cur).toString();
+        }
+        return "";
+    }
+
+    /** 把一条 cue 的多条字幕用空格合并成单行（与 FloatingSubtitleView.joinSubtitles 等价）。 */
+    private static String joinCue(SubtitleCue cue) {
+        if (cue == null || cue.subtitles == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String s : cue.subtitles) {
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(s);
+        }
+        return sb.toString();
     }
 
     public List<SubtitleCue> getCues() {

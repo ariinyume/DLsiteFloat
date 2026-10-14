@@ -333,6 +333,18 @@ public class PlayerSourceHook {
             clearPendingIndex();
             XposedCompat.log(TAG + " seeded playlist identity " + desc + " from " + where
                     + " (first observation in this process, no change notification)");
+            // 【code 1019】种子路径补一条「**只取缓存、不挂起不裁决不关窗**」的入口。
+            //   🔴 970~1018 一直缺它：数据层读缓存的三条路（内存恢复 / 磁盘兜底 /
+            //      裁决兜底）**全部**挂在 `onTrackChanged` 之下，而本分支刻意不发换轨通知
+            //      ⇒ 进程重启后打开的第一个作品的第一个音轨，在「云端那份 JSON 没到手、
+            //      盘上却有缓存」时永远空白。
+            //      真机 2026-10-14 16:14:38 `local cache availability -> true`（盘上有），
+            //      20 秒后仍是 `lastJson=never | cues=0`（没人去取）。
+            //   为什么这里可以直接读盘（换轨路径却要「在线不主动读本地」）：那条规则是为了
+            //      **等云端** —— 先挂起、再裁决，读早了会把本地那份顶掉云端。本入口没有等待
+            //      决策，不挂起、不裁决、不关窗、不动任何状态机；云端 JSON 到达时
+            //      `loadFromJson` 照旧整份替换 cues ⇒ 读盘只可能让首轨「早一点有字幕」。
+            SubtitleRepository.getInstance().onSeededTrack(idx, identity, selection, where);
             return false;
         }
         if (identity == sLastIdentity) {
@@ -465,12 +477,12 @@ public class PlayerSourceHook {
      * {@code trackCount ≤ 1000}、{@code durationMs ≤ 10^7}、{@code idx ≤ 10^4} 时不会碰撞。
      * 无列表键（老宿主 / AudioPlayer）时 {@code tc=-1,dur=-1} 都归 0 ⇒ 身份退化为 {@code idx}，
      * 老行为（按序号换轨）自然保留。
+     *
+     * <p>【code 1007】算式本体已收拢到 {@link PlaylistKey#makeIdentity} —— 磁盘缓存必须用
+     * **同一口径**才能对上，两处各写一遍会漂移。本方法保留为转发壳（现有调用点一行不改）。
      */
     private static long makeIdentity(int trackCount, double durationSec, int idx) {
-        long tc = trackCount < 0 ? 0L : (long) trackCount;
-        long durMs = durationSec > 0 ? Math.round(durationSec * 1000.0) : 0L;
-        long i = idx < 0 ? 0L : (long) idx;
-        return tc * 1_000_000_000_000L + durMs * 1000L + i;
+        return PlaylistKey.makeIdentity(trackCount, durationSec, idx);
     }
 
     /** 【code 978】身份的可读描述（日志用）：{@code tc=6 dur=731832ms idx=0}。 */

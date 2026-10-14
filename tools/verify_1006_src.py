@@ -219,10 +219,14 @@ def main():
           re.search(r'public void loadFromJsonArray\(JSONArray webvtt\) \{ '
                     r'loadFromJsonArray\(webvtt, null\); \}', norm(repoc)) is not None
           and 'public void loadFromJsonArray(JSONArray webvtt, String workKey)' in repoc)
+    # 【code 1007 起放宽】内部实现新增第三参 fromDisk（本地缓存命中路径要区分「来自磁盘」
+    #   以便清掉 softNoSubtitles 的时机不同）⇒ 判据改成「workKey 仍是第二参、第三参可有可无」。
     check('④ 新入口把 workKey 传进内部实现（不是收了参数不用）',
-          'loadFromJsonArrayInternal(webvtt, workKey);' in norm(repoc))
+          re.search(r'loadFromJsonArrayInternal\(webvtt, workKey(?:, [^)]+)?\);',
+                    norm(repoc)) is not None)
     check('④ 内部实现的签名带第二参 workKey',
-          'private void loadFromJsonArrayInternal(JSONArray webvtt, String workKey)' in repoc)
+          re.search(r'private void loadFromJsonArrayInternal\(JSONArray webvtt, '
+                    r'String workKey(?:, boolean \w+)?\)', repoc) is not None)
     stamp = norm(repoc)
     check('④ 盖章条件：只有拿到非空 workKey 才动这三个字段（拿不到 URL 的路径不冲历史基线）',
           'if (workKey != null && !workKey.isEmpty()) {' in stamp)
@@ -394,17 +398,24 @@ def main():
     m_tag = re.search(r"def appVersionTag = '([\d.]+)'", gra)
     vcode = m_code.group(1) if m_code else '?'
     vname = m_name.group(1) if m_name else '?'
-    check('⑭ build.gradle: appVersionCode = 1006（Ari 本轮：只升 code、不升版本号）',
-          m_code is not None and vcode == '1006', 'code=%s' % vcode)
-    check('⑭ versionName / versionTag 仍是 2.3.1（本轮刻意不动）',
+    # 【code 1007 起放宽】版本号/横幅随轮次推进 ⇒ 改守「≥ 1006 + 三处自洽」，
+    #   与 1004_src / 1005_src 的口径一致（不钉死具体值，否则下一轮必假 FAIL）。
+    check('⑭ build.gradle: appVersionCode ≥ 1006（不钉死具体值，随轮次推进）',
+          m_code is not None and vcode.isdigit() and int(vcode) >= 1006, 'code=%s' % vcode)
+    # 【code 1015 修】原判据钉死 2.3.1（1006 那一轮的基线），版本号一升就假 FAIL。
+    #   历史脚本只能守「三处自洽」，具体值交给当轮脚本（1007_src 的 L12）。
+    check('⑭ versionName 与 versionTag 一致（随轮次推进，不钉死具体值）',
           m_name is not None and m_tag is not None
-          and m_name.group(1) == '2.3.1' and m_tag.group(1) == '2.3.1',
+          and m_name.group(1) == m_tag.group(1),
           'name=%s tag=%s' % (vname, m_tag.group(1) if m_tag else '?'))
-    check('⑭ appVersionCodeLabel 保持 1008.25 不动',
-          "def appVersionCodeLabel = '1008.25'" in gra)
-    keep = 'XposedCompat.log("[DLsiteSoundFloat] ==== BUILD %s / code 1006");' % vname
-    check('⑭ 常开横幅那一行是 code 1006、且 versionName 与 build.gradle 一致（装机前核这一行）',
-          keep in mod, 'expected: %s' % keep)
+    # 【code 1017】日期段随构建当天（1014.5 这种）⇒ 不再钉 1008 前缀。
+    check('⑭ appVersionCodeLabel 形如 MMDD.NN（日期段随构建当天，不钉死）',
+          re.search(r"def appVersionCodeLabel = '\d{4}\.\d+'", gra) is not None)
+    keep = 'XposedCompat.log("[DLsiteSoundFloat] ==== BUILD %s / code %s");' % (vname, vcode)
+    check('⑭ 常开横幅那一行用当前 code、且 versionName 与 build.gradle 一致（装机前核这一行）',
+          re.search(r'XposedCompat\.log\("\[DLsiteSoundFloat\] ==== BUILD %s / code %s"\);'
+                    % (re.escape(vname), vcode), mod) is not None,
+          'expected: %s' % keep)
     check('⑭ 常开横幅只有一行：code 1005 的常开行已被替换（不是两行并存）',
           not re.search(r'XposedCompat\.log\("\[DLsiteSoundFloat\] '
                         r'==== BUILD [\d.]+ / code 1005"\);', mod))
@@ -412,7 +423,9 @@ def main():
           all(ch not in keep for ch in
               ('AudioPlaylist', 'ExoPlayerImpl', 'Duration', 'workKeyOf',
                'cuesBelongToChangedWork', 'sLastTcByListId')))
-    seg = re.search(r'==== BUILD %s / code 1006 （([\s\S]*?)"\);' % re.escape(vname), mod)
+    # ⚠️ 【code 1015 修】历史段的 versionName 是**当年的** 2.3.1，不随轮次滚动。
+    #   原写法用 % vname 拼，版本号一升就取不到段 ⇒ 三条判据连锁假 FAIL。
+    seg = re.search(r'==== BUILD 2\.3\.1 / code 1006 （([\s\S]*?)"\);', mod)
     check('⑭ 调试段里的 code 1006 履历含四段（现象/根因/修法/连带）',
           seg is not None and all(k in seg.group(1) for k in ('①', '②', '③', '④')))
     check('⑭ 履历尾部写明「版本号 2.3.1 不变、code 1005 升 1006」',

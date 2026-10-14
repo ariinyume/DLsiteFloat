@@ -18,8 +18,10 @@
  */
 package io.github.ariinyume.dlsitesoundfloat.ui;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -68,6 +70,7 @@ import io.github.ariinyume.dlsitesoundfloat.R;
 import io.github.ariinyume.dlsitesoundfloat.config.ConfigBus;
 import io.github.ariinyume.dlsitesoundfloat.config.ConfigStore;
 import io.github.ariinyume.dlsitesoundfloat.config.SubtitleConfig;
+import io.github.ariinyume.dlsitesoundfloat.data.SubtitleCache;
 import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
 import io.github.ariinyume.dlsitesoundfloat.util.ScopeProbe;
 import io.github.ariinyume.dlsitesoundfloat.util.Utils;
@@ -138,6 +141,20 @@ import io.github.ariinyume.dlsitesoundfloat.view.SubtitleStyle;
 public class SettingsActivity extends AppCompatActivity {
 
     private static final String TAG = "DLsiteFloat:Settings";
+
+    /** 【code 1015 / 2.3.2】状态卡连点解锁：需要几次、相邻两次点击的最长间隔。 */
+    private static final int STATUS_TAP_REQUIRED = 5;
+    private static final long STATUS_TAP_WINDOW_MS = 3000L;
+
+    /**
+     * 【code 1016】「宿主作用域曾被确认授权」的持久化键（存在 {@link ConfigStore#UI_PREFS_NAME} 里）。
+     *
+     * <p>为什么要持久化：Ari 需求「在插件管理中给本插件授权了宿主 APP 即视为模块已激活」——
+     * 但插件进程**读不到** LSPosed 的作用域勾选状态（那是管理器自己的私有数据），
+     * 唯一的证据是「宿主的 PONG 回来过」。把这件事落一个键，就能让「已授权」这个事实
+     * 跨设置页重开、跨进程重启一直保留，而不是每次进页面都要重新握手一次。
+     */
+    private static final String PREF_HOST_SCOPE_SEEN = "host_scope_seen";
 
     /**
      * 悬浮窗面板顶部的预览不透明度（0–255）。
@@ -321,13 +338,27 @@ public class SettingsActivity extends AppCompatActivity {
     private LinearLayout mGroupTypo;
     /** 【code 1003】「液态玻璃效果调整」卡片（独立成卡，摆在「其他」之前）。 */
     private LinearLayout mGroupLiquidGlass;
+    /** 【code 1015 / 2.3.2】「实验性功能」组（独立成卡，摆在液态玻璃与「其他」之间）。 */
+    private LinearLayout mGroupExperimental;
     private LinearLayout mGroupMisc;
+
+    /** 【code 1015 / 2.3.2】实验性卡片容器（与它的节标题一起显隐）与卡内总开关行。 */
+    private View mCardExperimental;
+    private SwitchRow mRowExperimental;
+    /** 【code 1015 / 2.3.2】状态卡连点解锁的状态（时间窗内累计，见 onStatusCardClicked）。 */
+    private int mStatusTapCount = 0;
+    private long mStatusTapLastMs = 0L;
+    /** 【code 1016】「宿主作用域曾确认授权」的持久化镜像（见 {@link #PREF_HOST_SCOPE_SEEN}）。 */
+    private boolean mHostScopeSeen = false;
+
     /** 节标题（在卡片外，参考稿口径）—— 语言切换时随文案重刷。 */
     private TextView mTitlePreview;
     private TextView mTitleMain;
     private TextView mTitleInactive;
     private TextView mTitleTypo;
     private TextView mTitleLiquidGlass;
+    /** 【code 1015 / 2.3.2】「实验性功能」卡片标题（与其余节标题同源）。 */
+    private TextView mTitleExperimental;
     private TextView mTitleMisc;
 
     // ── 行控件（重建行后重新赋值；用于 syncWidgets 回灌）────────────────
@@ -344,6 +375,31 @@ public class SettingsActivity extends AppCompatActivity {
     private SwitchRow mRowStatusbar;
     /** 【2.2.7 / code 979】「其他」卡片里的「调试日志」开关行。 */
     private SwitchRow mRowDebugLog;
+    /** 【code 1007】「其他」卡片里的「字幕缓存功能」开关行（摆在「调试日志」下方）。 */
+    private SwitchRow mRowSubtitleCache;
+    /**
+     * 【code 1007】「字幕缓存」占用读数（{@code 已缓存 N 轨 · 占用 X MB / 256 MB}）。
+     *
+     * ⚠️ 它是**跨进程**读数：缓存落在宿主进程的私有目录，设置页读不到，只能由宿主
+     *    应答广播填充（见 {@link #mCacheStatsReceiver}）。因此宿主没在跑时它只能
+     *    显示「读不到」而不能显示 0（0 会被误读成「缓存是空的」）。
+     */
+    private TextView mCacheUsage;
+    /** 【code 1007】宿主 → 设置页的缓存统计接收器（onCreate 注册、onDestroy 注销）。 */
+    private BroadcastReceiver mCacheStatsReceiver;
+    /** 【code 1007】点过「清除」、等宿主回执：收到统计后弹一次「已清除」。 */
+    private boolean mPendingClearToast;
+    /**
+     * 【code 1007】最近一次宿主回执（{@code count < 0} = 还没收到过）。
+     *
+     * 为什么要留一份而不是「只写进 TextView」：切语言会 {@code buildRows()} 整页重建，
+     * 占用读数那行会被重新造一个 — 没有这份缓存，切一次语言读数就退回「读取中」，
+     * 直到下一拍宿主回执才恢复（用户会看到无意义的闪动）。
+     */
+    private int mCacheCount = -1;
+    private long mCacheBytes;
+    /** 【code 1007】宿主是否被探测到在运行（null = 还没探测出来）。 */
+    private Boolean mCacheHostAlive;
     /** 【2.2.9 / code 1003】「液态玻璃」开关行（液态玻璃卡首行）。 */
     private SwitchRow mRowLiquidGlass;
     /** 【2.2.11b】「模糊强度」滑条行（只在液态玻璃开启时显示）。 */
@@ -565,6 +621,9 @@ public class SettingsActivity extends AppCompatActivity {
         mDraft = mSaved.copy();
         mLang = UiLang.fromConfigValue(mDraft.uiLanguage);
 
+        // 【code 1016】进页面先把「曾确认授权」的持久化镜像读出来（激活判定要用）。
+        mHostScopeSeen = readHostScopeSeen();
+
         bindViews();
         refreshCardTints();
         buildRows();
@@ -585,6 +644,22 @@ public class SettingsActivity extends AppCompatActivity {
 
         renderStatusCard();
         startProbe();
+        // 【code 1007】先挂上「宿主 → 设置页」的缓存统计接收器，再让 onResume 去问占用
+        //   （顺序不能倒：广播回得快，接收器没挂上就丢了这一拍）。
+        registerCacheStatsReceiver();
+    }
+
+    @Override
+    protected void onDestroy() {
+        // 【code 1007】动态接收器必须成对注销，否则 Activity 泄漏 + 重复投递。
+        if (mCacheStatsReceiver != null) {
+            try {
+                unregisterReceiver(mCacheStatsReceiver);
+            } catch (Throwable ignored) {
+            }
+            mCacheStatsReceiver = null;
+        }
+        super.onDestroy();
     }
 
     /** 把只由滑块表达的浮点参数对齐到滑块的刻度。 */
@@ -626,6 +701,7 @@ public class SettingsActivity extends AppCompatActivity {
         setTitleSafe(mTitleInactive, Strings.GROUP_INACTIVE.get(mLang));
         setTitleSafe(mTitleTypo, Strings.GROUP_TYPO.get(mLang));
         setTitleSafe(mTitleLiquidGlass, Strings.GROUP_LIQUID_GLASS.get(mLang));
+        setTitleSafe(mTitleExperimental, Strings.GROUP_EXPERIMENTAL.get(mLang));
         setTitleSafe(mTitleMisc, Strings.GROUP_MISC.get(mLang));
 
         renderStatusCard();
@@ -660,6 +736,9 @@ public class SettingsActivity extends AppCompatActivity {
         tintCard(findViewById(R.id.card_inactive), cardBg);
         tintCard(findViewById(R.id.card_typo), cardBg);
         tintCard(findViewById(R.id.card_liquidglass), cardBg);
+        // 【code 1016】实验性卡片同样要染色 —— 原先是逐个白名单 tint，
+        //   新建的卡片漏在名单外，于是它顶着 style 的默认底色、跟其余卡片对不上。
+        tintCard(findViewById(R.id.card_experimental), cardBg);
         tintCard(findViewById(R.id.card_misc), cardBg);
         // 状态卡底色由 renderStatusCard() 按状态设，这里不动它（否则会盖掉状态色）
         applyPreviewPanel();
@@ -937,14 +1016,27 @@ public class SettingsActivity extends AppCompatActivity {
         mGroupInactive = findViewById(R.id.group_inactive);
         mGroupTypo = findViewById(R.id.group_typo);
         mGroupLiquidGlass = findViewById(R.id.group_liquidglass);
+        mGroupExperimental = findViewById(R.id.group_experimental);
         mGroupMisc = findViewById(R.id.group_misc);
+        mCardExperimental = findViewById(R.id.card_experimental);
         // 节标题在**卡片外**（参考稿口径），由 applyStaticTexts 刷文案
         mTitlePreview = findViewById(R.id.title_preview);
         mTitleMain = findViewById(R.id.title_main);
         mTitleInactive = findViewById(R.id.title_inactive);
         mTitleTypo = findViewById(R.id.title_typo);
         mTitleLiquidGlass = findViewById(R.id.title_liquidglass);
+        mTitleExperimental = findViewById(R.id.title_experimental);
         mTitleMisc = findViewById(R.id.title_misc);
+
+        // 【code 1015 / 2.3.2】状态卡是「实验性功能」的**隐藏**解锁入口：连续点击五次。
+        //   顺带把点击涟漪抹掉 —— 留一个可点反馈等于把「这里能点」直接递给普通用户，
+        //   与「不给显式入口」的初衷相悖。
+        mStatusCard.setOnClickListener(v -> onStatusCardClicked());
+        try {
+            mStatusCard.setRippleColor(android.content.res.ColorStateList.valueOf(0x00000000));
+        } catch (Throwable ignored) {
+            // 涟漪设置失败不影响解锁功能
+        }
 
         mLanguageButton.setOnClickListener(v -> showLanguageDialog());
         mSaveButton.setOnClickListener(v -> doSave());
@@ -969,12 +1061,49 @@ public class SettingsActivity extends AppCompatActivity {
     // FR-01 状态卡
     // ==================================================================
 
+    /**
+     * 【code 1016】读出「宿主作用域曾确认授权」的持久化镜像。
+     *
+     * <p>任何异常一律按「没见过」处理 —— 这个位只影响状态卡的**显示口径**，
+     * 读失败最多退回旧行为（要重新握手一次），绝不该影响页面可用性。
+     */
+    private boolean readHostScopeSeen() {
+        try {
+            return getSharedPreferences(ConfigStore.UI_PREFS_NAME, MODE_PRIVATE)
+                    .getBoolean(PREF_HOST_SCOPE_SEEN, false);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 【code 1016】宿主真的答过 PONG ⇒ 授权这件事**已被证实**，落盘记住。
+     *
+     * <p>先置内存位再写盘（写盘失败也不影响本次判定）；已经记过就不再重复写。
+     */
+    private void markHostScopeSeen() {
+        mHostSeenOnce = true;
+        if (mHostScopeSeen) {
+            return;
+        }
+        mHostScopeSeen = true;
+        try {
+            getSharedPreferences(ConfigStore.UI_PREFS_NAME, MODE_PRIVATE)
+                    .edit().putBoolean(PREF_HOST_SCOPE_SEEN, true).apply();
+        } catch (Throwable t) {
+            // 落盘失败不影响本次会话的判定（内存位已置），下次进页面重新握手即可
+        }
+    }
+
     private void startProbe() {
         ScopeProbe.probe(this, ScopeProbe.DEFAULT_WINDOW_MS, result -> {
             mProbe = result;
+            // 【code 1007】探测结果顺带决定缓存占用那行的「读不到」文案（没回执时才用它）。
+            mCacheHostAlive = result.hostAuthorized;
             if (result.hostAuthorized) {
                 // 【code 975】记下「本会话内确实见过宿主」——后续偶发超时不降级（见字段注释）。
-                mHostSeenOnce = true;
+                // 【code 1016】并把这件事实**落盘**：授权是可持久的事实，不该每次进页面重学。
+                markHostScopeSeen();
             }
             // 【code 995】诊断级 → 走 LogGate（探测每 3s 一轮，常开会刷屏）。
             LogGate.debug(TAG, "status probe -> " + result);
@@ -982,6 +1111,12 @@ public class SettingsActivity extends AppCompatActivity {
                 return;
             }
             renderStatusCard();
+            // 【code 1007】探测结果可能把缓存占用那行从「读取中」改写成「宿主未运行」。
+            renderCacheUsage();
+            if (result.hostAuthorized && mCacheCount < 0) {
+                // 探到宿主在跑、却还没收到占用回执 —— 补问一次（进页面那拍的广播可能丢了）。
+                ConfigBus.sendCacheStatsRequest(this);
+            }
             if (result.hostAuthorized) {
                 // 自愈补推：宿主进程现在活着，把**已保存**的配置再广播一次，
                 // 让宿主把 remote prefs 持久化补上（用户可能在宿主未运行时保存过）。
@@ -999,6 +1134,10 @@ public class SettingsActivity extends AppCompatActivity {
         if (mProbe != null) {
             startProbe();
         }
+        // 【code 1007】每次回到本页都刷新缓存占用：用户可能刚在宿主里播放了一批音轨，
+        //   缓存变了；宿主的缓存操作本来就是在「用户切到设置页、宿主在后台」时做的，
+        //   所以这条请求是**显式广播**（setPackage），不受后台隐式广播限制。
+        ConfigBus.sendCacheStatsRequest(this);
     }
 
     /**
@@ -1006,14 +1145,18 @@ public class SettingsActivity extends AppCompatActivity {
      *
      * 底色**只用 MD3 色槽**（禁止硬编码十六进制，PRD §15.2）：
      * 探测中 = {@code colorSurfaceVariant}，已激活 = {@code colorPrimaryContainer}，
-     * 未运行 = {@code colorTertiaryContainer}，未激活 = {@code colorErrorContainer}。
+     * 未激活 = {@code colorErrorContainer}。
      *
      * ─────────────────────────────────────────────────────────────────────
      * v1.4 返工（§16.2 BUG-01 / 用例 1.2）：「已激活」的判据不再只看授权位。
      * 旧的 Q-6 判别态用「SystemUI 有响应 + 宿主没响应」去猜「宿主没运行」，
      * 猜不准 —— 宿主被划掉后进程往往还在，PING 照样收到 PONG，于是 1.2 一直判成已激活。
-     * 现在宿主在 PONG 里直接回一个存活位（{@code ScopeProbe.Result#hostAlive}），
-     * 状态卡按它做三分支，判据见方法体里的 {@code active} / {@code hostNotRunning}。
+     * 于是加了宿主存活位（{@code ScopeProbe.Result#hostAlive}）做**三分支**。
+     *
+     * 【code 1016 收敛为两分支】Ari 要求「在插件管理中给本插件授权了宿主 APP 即视为已激活」
+     *   ⇒ 判据只看**授权位**，且「授权过」这件事一经确认就**持久化**
+     *   （见 {@code PREF_HOST_SCOPE_SEEN}）—— 「已授权但当前没在跑」那个中间态
+     *   （原「DLsiteSound 未运行」分支）**整条删除**，方法体里只剩 {@code active} 一枝。
      * ─────────────────────────────────────────────────────────────────────
      */
     private void renderStatusCard() {
@@ -1024,30 +1167,31 @@ public class SettingsActivity extends AppCompatActivity {
         // 【code 975】`|| mHostSeenOnce`：宿主在后台被降级时偶发不应答，不应把状态卡打回
         // 「模块未激活」（Ari 报的「经常检测不到程序在运行」）。本会话成功过一次即认账，
         // 重开本页会重置 ⇒ 真取消勾选仍能正确显示未激活。详见字段注释。
-        boolean hostAuthorized = !probing && (mProbe.hostAuthorized || mHostSeenOnce);
+        // 【code 1016】再加上持久化的「曾确认授权」位：授权过就一直是授权状态，
+        //   不再要求「本次进页面这几秒内恰好又握到手」。
+        boolean hostAuthorized = !probing
+                && (mProbe.hostAuthorized || mHostSeenOnce || mHostScopeSeen);
         /**
          * 宿主**当前真的在用**（播放页在前台 / 正在播放）。
          *
-         * ⚠️ 这个位与 {@code hostAuthorized} 是两件事，也是用例 1.2 的胜负手：
-         * 用户把 DLsiteSound 从后台划掉之后，宿主进程**可能还活着**，
-         * {@code installResponder(tag="host")} 照样会答 PONG，
-         * {@code hostAuthorized} 仍然是 true —— 只看授权位就会把「划掉了」显示成「已激活」。
-         * 存活位由宿主在 PONG 里带上来（见 {@code ConfigBus.EXTRA_HOST_ALIVE}），
-         * 缺省 {@code true}（老版本模块不带这个 extra，必须保持「已激活」，不能误降级）。
+         * <p>⚠️ 【code 1016 起本量**不再参与**激活判定】—— Ari 要求「授权即视为已激活」，
+         * 于是「已授权但宿主当前没在跑」这个中间态整条删除了，本量随之退居备用：
+         * 宿主依旧在 PONG 里带 {@code ConfigBus.EXTRA_HOST_ALIVE}，只是暂时没有消费方。
+         * 保留它（而不是连同读取一起删掉）是为了将来若要恢复「未运行」判别态时
+         * 只需把分支加回来，不必再动跨进程协议。
          */
         boolean hostAlive = !probing && mProbe.hostAlive;
         boolean sysUiActive = !probing && mProbe.systemUiAuthorized;
 
-        // ── 三分支（PRD §16.2 BUG-01）──────────────────────────────────
-        // ⚠️ 分支一必须先与 hostAuthorized 相与，不能单用 hostAlive：
-        //    hostAlive 在「宿主未授权」时**不会被写成 false**（它只在收到宿主 PONG 时才赋值，
-        //    字段缺省就是 true），单用 hostAlive 会让「DLsiteSound 作用域没勾」被判成「已激活」，
-        //    用例 1.4 反而退化。所以「已激活」= 已授权 **且** 存活。
-        //  · 分支一 active          = hostAuthorized && hostAlive
-        //  · 分支二 hostNotRunning  = hostAuthorized && !hostAlive
-        //  · 分支三（else）         = !hostAuthorized  ⇒ 未激活 / 未授权引导（1.4 靠这条）
-        boolean active = hostAuthorized && hostAlive;
-        boolean hostNotRunning = hostAuthorized && !hostAlive;
+        // ── 两分支（【code 1016】按 Ari 需求从三分支收成两分支）─────────────────
+        // 🔴 Ari 需求：「当检测到用户在插件管理中给本插件授权了宿主 APP 即视为模块已经激活」
+        //    ⇒ **只看授权位**，不再要求宿主此刻在跑。
+        //    原先的「分支二：已授权但不存活 ⇒ DLsiteSound 未运行」已删除 ——
+        //    用户勾了作用域就该看到「已激活」，宿主有没有开是另一件事
+        //    （配置照改照存，宿主启动后由 hook 侧的补推广播生效，这条不变）。
+        //  · 分支一 active         = hostAuthorized
+        //  · 分支二（else）        = !hostAuthorized ⇒ 未激活 / 未授权引导
+        boolean active = hostAuthorized;
 
         int bg;
         int on;
@@ -1061,13 +1205,6 @@ public class SettingsActivity extends AppCompatActivity {
             on = attr(com.google.android.material.R.attr.colorOnPrimaryContainer, 0xFF21005D);
             mStatusTitle.setText(Strings.MODULE_ON.get(mLang));
             mStatusIcon.setImageResource(R.drawable.ic_settings_status_on);
-        } else if (hostNotRunning) {
-            // 分支二：已授权但当前没在用 ⇒ 「DLsiteSound 未运行」。
-            // 用 tertiary 色（不是 error 色）—— 这不是故障，只是一个可恢复的中间态。
-            bg = attr(com.google.android.material.R.attr.colorTertiaryContainer, 0xFFFFD8E4);
-            on = attr(com.google.android.material.R.attr.colorOnTertiaryContainer, 0xFF31111D);
-            mStatusTitle.setText(Strings.HOST_NOT_RUNNING.get(mLang));
-            mStatusIcon.setImageResource(R.drawable.ic_settings_status_unknown);
         } else {
             bg = attr(com.google.android.material.R.attr.colorErrorContainer, 0xFFF9DEDC);
             on = attr(com.google.android.material.R.attr.colorOnErrorContainer, 0xFF410E0B);
@@ -1089,9 +1226,6 @@ public class SettingsActivity extends AppCompatActivity {
         // 可判别的引导，而不是笼统报一句「未激活」。
         if (probing) {
             mStatusGuide.setVisibility(View.GONE);
-        } else if (hostNotRunning) {
-            mStatusGuide.setText(Strings.HOST_NOT_RUNNING_HINT.get(mLang));
-            mStatusGuide.setVisibility(View.VISIBLE);
         } else if (!hostAuthorized) {
             mStatusGuide.setText((sysUiActive ? Strings.GUIDE_UNKNOWN : Strings.GUIDE_OFF).get(mLang)
                     + "\n" + Strings.MODULE_INACTIVE_HINT.get(mLang));
@@ -1277,12 +1411,22 @@ public class SettingsActivity extends AppCompatActivity {
             buildLiquidGlassGroup(mGroupLiquidGlass);
         }
 
+        // 【code 1015 / 2.3.2】「实验性功能」独立成卡，摆在「液态玻璃」与「其他」之间。
+        //   未解锁时整块（节标题 + 卡片）GONE —— 见 applyExperimentalVisibility。
+        if (mGroupExperimental != null) {
+            mGroupExperimental.removeAllViews();
+            buildExperimentalGroup(mGroupExperimental);
+        }
+
         if (mGroupMisc != null) {
             mGroupMisc.removeAllViews();
             buildMiscGroup(mGroupMisc);
             // 重建后要按最新探测结果重刷一次「状态栏字幕功能」的可用性
             applyStatusbarSwitchEnabled(mProbe != null && mProbe.systemUiAuthorized);
         }
+
+        // 【code 1015 / 2.3.2】实验卡显隐与卡内子开关可用性（依赖草稿 / 已保存两侧，故放最后）。
+        applyExperimentalVisibility();
     }
 
     /**
@@ -1489,6 +1633,9 @@ public class SettingsActivity extends AppCompatActivity {
         // pinCardLastBottom 钉为卡片最后一行，见本方法末尾）。
         buildDebugLogRow(parent);
 
+        // 【code 1015 / 2.3.2】「字幕缓存」整组已**搬进「实验性功能」卡片**
+        //   （Ari 需求：字幕缓存移入实验性功能卡片），本卡不再有这一行。
+
         // 【2.3.2 §1.1.3】备份与恢复：导出 / 导入两枚 **MD3 Tonal** 按钮，各自带方向小图标
         // （导出 = 向上箭头 + 托盘，导入 = 向下箭头 + 托盘）。
         // ⚠️ v1.5 的「导出 / 导入 位置一片空白」案例见 code961 录屏 —— 根因是
@@ -1643,6 +1790,327 @@ public class SettingsActivity extends AppCompatActivity {
     private void onDebugLogToggled(boolean enabled) {
         mDraft.debugLog = enabled;
         markDirty();
+    }
+
+    /**
+     * 【code 1015 / 2.3.2】「实验性功能」整组（独立成卡，摆在「液态玻璃」与「其他」之间）。
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * 结构（自上而下）：
+     *   ① 总开关「启用实验性功能」（配置键 {@code experimental_enabled}，默认**关**）；
+     *   ② 常驻说明小字（解锁方式 + 关闭代价）；
+     *   ③ 卡内子功能 —— 当前只有「字幕缓存」整组（见 {@link #buildSubtitleCacheRow}）。
+     *
+     * 🔴 解锁入口刻意**不做成开关**：它在状态卡上「连续点击五次」才打开
+     *    （见 {@link #onStatusCardClicked}）。理由是卡内放的是尚未定型的实验功能，
+     *    给普通用户一个显式入口只会徒增困惑。
+     *
+     * 🔴 关闭总闸的三件后果（Ari 需求原文）：① 卡内所有子功能关掉；② 子开关置灰；
+     *    ③ 相关缓存全部清除。前两条由 {@link #onExperimentalToggled} 与
+     *    {@link #applyExperimentalChildEnabled} 当场兑现，第三条走既有的
+     *    「清除所有字幕缓存」显式广播（宿主执行、回执统计）。卡片本身在**保存配置之后**
+     *    才消失 —— {@link #applyExperimentalVisibility} 按 {@code draft || saved} 判，
+     *    只看草稿会让「关掉总闸」的瞬间就把入口抹掉，用户再也打不开它。
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    private void buildExperimentalGroup(LinearLayout parent) {
+        mRowExperimental = addSwitchRow(parent, Strings.EXPERIMENTAL_MASTER,
+                this::onExperimentalToggled);
+
+        // 【code 1016】总开关下方原有一段说明小字，Ari 要求**整段删除**（需求 2）——
+        //   于是这里直接从开关行接到卡内子功能，中间不再有任何文字。
+        // 卡内子功能：「字幕缓存」整组（code 1007 起原本挂在「其他」卡片里）。
+        buildSubtitleCacheRow(parent);
+        // 本卡最后一行是「清除所有字幕缓存」按钮所在的那个容器 —— 与其余卡片同一套底部收敛。
+        if (parent.getChildCount() > 0) {
+            pinCardLastBottom(parent, parent.getChildAt(parent.getChildCount() - 1));
+        }
+    }
+
+    /**
+     * 实验性功能总开关被用户翻转（属于**草稿**改动，仍需保存，与其余配置行一致）。
+     *
+     * <p>关掉时**当场**兑现「下属功能关闭 + 开关置灰 + 缓存清除」；打开时只恢复可用性，
+     * 子开关的值保持原样（用户上一次的设置还在，不必重新点一遍）。
+     */
+    private void onExperimentalToggled(boolean enabled) {
+        mDraft.experimentalEnabled = enabled;
+        if (!enabled) {
+            // ① 卡内所有子功能关掉（配置层的不变式也在 clamp() 里兜一道，这里让 UI 同步）
+            mDraft.subtitleCacheEnabled = false;
+            // ③ 相关缓存全部清除（复用既有的显式广播 → 宿主执行 → 回执统计后弹提示）
+            mPendingClearToast = true;
+            ConfigBus.sendCacheClear(this);
+        }
+        applyExperimentalChildEnabled(enabled);
+        applyExperimentalVisibility();
+        markDirty();
+    }
+
+    /**
+     * 卡内子开关的可用性（Ari 需求：「总开关关闭时，下属所有功能关闭 + 开关置灰」）。
+     *
+     * <p>⚠️ 置灰只改 UI（{@code setEnabled} + 整行 alpha），**不写配置键** —— 配置层由
+     * {@link SubtitleConfig#clamp()} 的不变式保证，两边不会打架。
+     */
+    private void applyExperimentalChildEnabled(boolean enabled) {
+        if (mRowSubtitleCache == null) {
+            return;
+        }
+        mSyncing = true;
+        try {
+            if (!enabled) {
+                mRowSubtitleCache.sw.setChecked(false);
+            } else {
+                mRowSubtitleCache.sw.setChecked(mDraft.subtitleCacheEnabled);
+            }
+        } finally {
+            mSyncing = false;
+        }
+        mRowSubtitleCache.sw.setEnabled(enabled);
+        if (mRowSubtitleCache.root != null) {
+            mRowSubtitleCache.root.setAlpha(enabled ? 1f : 0.45f);
+        }
+    }
+
+    /**
+     * 实验性卡片（节标题 + 卡片）与卡内总开关的显隐 / 回灌。
+     *
+     * <p>显隐判据是 {@code draft || saved}，不是只看其中一个：
+     *   · 只在草稿里解锁（用户刚连点五次、还没保存）时卡片必须**立刻出现**，否则用户看不到反馈；
+     *   · 已保存为开启时当然要出现；
+     *   · 「关掉总闸并保存」之后两者都为假 ⇒ 卡片消失（这正是 Ari 需求里
+     *     「卡片在用户保存配置后不显示」那条）。
+     */
+    private void applyExperimentalVisibility() {
+        boolean show = mDraft.experimentalEnabled || mSaved.experimentalEnabled;
+        if (mTitleExperimental != null) {
+            mTitleExperimental.setVisibility(show ? View.VISIBLE : View.GONE);
+        }
+        if (mCardExperimental != null) {
+            mCardExperimental.setVisibility(show ? View.VISIBLE : View.GONE);
+        }
+        if (show) {
+            if (mRowExperimental != null) {
+                mSyncing = true;
+                try {
+                    mRowExperimental.sw.setChecked(mDraft.experimentalEnabled);
+                } finally {
+                    mSyncing = false;
+                }
+            }
+            applyExperimentalChildEnabled(mDraft.experimentalEnabled);
+        }
+    }
+
+    /**
+     * 【code 1015 / 2.3.2】状态卡的**隐藏**解锁入口：连续点击五次开启「实验性功能」。
+     *
+     * <p>时间窗 {@link #STATUS_TAP_WINDOW_MS}：五次点击必须落在「相邻两次间隔不超过 3 秒」的
+     * 连续序列里（中途停顿超过 3 秒即清零重数），免得把用户几个月里的偶然几次点击累计成解锁。
+     *
+     * <p>解锁只改**草稿**并立即把卡片显示出来，仍需用户点「保存设置」才写入配置 ——
+     * 与其余配置行完全一致，不给隐藏入口开特例。
+     */
+    private void onStatusCardClicked() {
+        // 【code 1016 / 需求 4】已经打开过实验性功能 ⇒ 这个手势已经没有用了，
+        //   直接给一条明确反馈，而不是静默不理（Ari：「弹消息条：你已经打开实验性功能，
+        //   无需进行此操作」）。连点计数一并清零，免得退出实验功能时残留旧计数。
+        if (mDraft.experimentalEnabled) {
+            mStatusTapCount = 0;
+            toast(Strings.EXPERIMENTAL_ALREADY_ON.get(mLang));
+            return;
+        }
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - mStatusTapLastMs > STATUS_TAP_WINDOW_MS) {
+            mStatusTapCount = 0;
+        }
+        mStatusTapLastMs = now;
+        mStatusTapCount++;
+        if (mStatusTapCount < STATUS_TAP_REQUIRED) {
+            return;
+        }
+        mStatusTapCount = 0;
+        if (mDraft.experimentalEnabled) {
+            return; // 已经是开的：五次点击不做事（避免无谓地标脏）
+        }
+        mDraft.experimentalEnabled = true;
+        // 打开总闸 ⇒ 子功能恢复可用（「字幕缓存」的值沿用用户上一次的设置）
+        applyExperimentalChildEnabled(true);
+        applyExperimentalVisibility();
+        markDirty();
+        toast(Strings.EXPERIMENTAL_UNLOCKED.get(mLang));
+    }
+
+    /**
+     * 【code 1007 / 1015】「字幕缓存」整组（**code 1015 起搬进「实验性功能」卡片**，
+     * 摆在总开关与说明小字下方）。
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * 三行结构（自上而下）：
+     *   ① 开关「字幕缓存功能」—— 持久化配置键 {@code subtitle_cache_enabled}（默认开），
+     *      是**能力总闸**：关 ⇒ 宿主不写新缓存、也不再从缓存恢复。
+     *   ② 常驻说明小字（写清「怎么来的 / 上限多少 / 满了先删谁」）。
+     *   ③ 占用读数 + 「清除所有字幕缓存」按钮。
+     *
+     * 🔴 占用读数是**跨进程**的：缓存文件在宿主进程的私有目录
+     *    （{@code Android/data/jp.co.eisys.dlsitesound/files/subtitle_cache/}），
+     *    设置页进程受 SELinux 限制读不到 ⇒ 只能广播问宿主（{@link ConfigBus} 的三条
+     *    cache action）。所以这一行有「读到」与「读不到」两种态，见
+     *    {@link Strings#CACHE_USAGE_OFF}。
+     *
+     * ⚠️ 【code 1015】搬进实验卡后本组成了**该卡的最后一行**，故由
+     *    {@link #buildExperimentalGroup} 末尾的 {@code pinCardLastBottom} 收口；
+     *    「其他」卡的视觉底边仍是备份恢复那排按钮（见 {@link #buildMiscGroup} 末尾）。
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    private void buildSubtitleCacheRow(LinearLayout parent) {
+        beginRow(parent);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+
+        mRowSubtitleCache = addSwitchRow(root, Strings.SUBTITLE_CACHE,
+                this::onSubtitleCacheToggled);
+
+        TextView hint = new TextView(this);
+        hint.setText(Strings.SUBTITLE_CACHE_HINT.get(mLang));
+        hint.setTextAppearance(R.style.TextAppearance_DLsiteFloat_Hint);
+        hint.setTextColor(attr(com.google.android.material.R.attr.colorOnSurfaceVariant, Color.GRAY));
+        hint.setPadding(0, 0, 0, dp(6));
+        root.addView(hint);
+
+        // 占用读数：首帧先显示「正在读取…」，宿主应答复广播到达后换成真实数字。
+        mCacheUsage = new TextView(this);
+        mCacheUsage.setTextAppearance(R.style.TextAppearance_DLsiteFloat_Hint);
+        mCacheUsage.setTextColor(attr(com.google.android.material.R.attr.colorOnSurfaceVariant, Color.GRAY));
+        mCacheUsage.setPadding(0, 0, 0, dp(8));
+        root.addView(mCacheUsage);
+        // 整页重建（切语言）后按**已有**的读数直接回填，避免闪一下「读取中」。
+        renderCacheUsage();
+
+        // 清除按钮：整行宽的 Tonal 按钮（与导出/导入同一套视觉语言；不配图标 ——
+        // 本工程没有「清除」图标资源，而为它新加一张矢量图会引入 pathData 的编译期
+        // 盲区，得不偿失，见项目铁律「矢量图 pathData 无编译期校验」）。
+        MaterialButton clear = makeTonalButton(null);
+        clear.setText(Strings.CACHE_CLEAR.get(mLang));
+        clear.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        clear.setOnClickListener(v -> onClearCacheClicked());
+        root.addView(clear);
+
+        parent.addView(root);
+    }
+
+    /** 「字幕缓存功能」被用户翻转（属于**草稿**改动，仍需保存，与其余配置行一致）。 */
+    private void onSubtitleCacheToggled(boolean enabled) {
+        mDraft.subtitleCacheEnabled = enabled;
+        markDirty();
+    }
+
+    /**
+     * 「清除所有字幕缓存」。
+     *
+     * 先二次确认（删掉的是用户已经攒下来的离线字幕，且**不可逆**），确认后把清理请求
+     * 显式广播给宿主；宿主清完会回一条统计（0 条 / 0 字节）。
+     *
+     * ⚠️ 成功提示**不在这里弹**：设置页自己并不知道宿主到底清没清（宿主可能压根没在跑）。
+     *    这里只置一个待弹标志，等宿主回执到了再由 {@link #applyCacheStats} 弹出
+     *    —— 宿主不在就什么也不弹，占用读数保持「读不到」，不撒谎。
+     */
+    private void onClearCacheClicked() {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(Strings.CACHE_CLEAR_CONFIRM_TITLE.get(mLang))
+                .setMessage(Strings.CACHE_CLEAR_CONFIRM_MSG.get(mLang))
+                .setNegativeButton(Strings.CANCEL.get(mLang), null)
+                .setPositiveButton(Strings.OK.get(mLang), (dlg, which) -> {
+                    mPendingClearToast = true;
+                    ConfigBus.sendCacheClear(this);
+                })
+                .show();
+    }
+
+    /**
+     * 注册「宿主 → 设置页」的缓存统计接收器（幂等；onCreate 调一次）。
+     *
+     * 【code 1007】Android 13+ 动态注册必须显式声明可见性：宿主是**别的 UID**，
+     * 只能用 {@code RECEIVER_EXPORTED}（与 {@code util.ScopeProbe} 收 PONG 同一口径）。
+     */
+    private void registerCacheStatsReceiver() {
+        if (mCacheStatsReceiver != null) {
+            return;
+        }
+        IntentFilter f = new IntentFilter();
+        f.addAction(ConfigBus.ACTION_SUBTITLE_CACHE_STATS);
+        BroadcastReceiver r = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context c, Intent i) {
+                if (i == null) {
+                    return;
+                }
+                applyCacheStats(i.getIntExtra(ConfigBus.EXTRA_CACHE_COUNT, 0),
+                        i.getLongExtra(ConfigBus.EXTRA_CACHE_BYTES, 0L));
+            }
+        };
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(r, f, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(r, f);
+            }
+            mCacheStatsReceiver = r;
+        } catch (Throwable t) {
+            Log.w(TAG, "register cache stats receiver failed: " + t);
+        }
+    }
+
+    /** 收到宿主回执后刷新占用读数（并兑现「清除成功」提示）。 */
+    private void applyCacheStats(int count, long bytes) {
+        mCacheCount = Math.max(0, count);
+        mCacheBytes = Math.max(0L, bytes);
+        renderCacheUsage();
+        if (mPendingClearToast) {
+            mPendingClearToast = false;
+            toast(Strings.CACHE_CLEAR_DONE.get(mLang));
+        }
+    }
+
+    /**
+     * 按「已知读数」重绘占用那一行（三态：有读数 / 宿主未运行 / 读取中）。
+     *
+     * 优先级：**有回执就信回执** —— 即便探测器这一拍没探到宿主，也不把已知读数改写成
+     * 「读不到」（探测本就是概率性的，见 {@code ScopeProbe} 的多轮重发）。
+     */
+    private void renderCacheUsage() {
+        if (mCacheUsage == null) {
+            return;
+        }
+        if (mCacheCount >= 0) {
+            mCacheUsage.setText(Strings.CACHE_USAGE.format(mLang, mCacheCount,
+                    fmtBytes(mCacheBytes), fmtBytes(SubtitleCache.LIMIT_BYTES_DEF)));
+        } else if (Boolean.FALSE.equals(mCacheHostAlive)) {
+            mCacheUsage.setText(Strings.CACHE_USAGE_OFF.get(mLang));
+        } else {
+            mCacheUsage.setText(Strings.CACHE_USAGE_LOADING.get(mLang));
+        }
+    }
+
+    /**
+     * 【code 1007】字节数 → 人类可读串（缓存占用显示用）。
+     *
+     * 口径：{@code ≥1MB} 走 MB（{@code ≥100MB} 省掉小数，免得「256.0 MB」看着别扭）、
+     * {@code ≥1KB} 走 KB、再小直接 B。整数化一律 {@link Locale#ROOT}，避免某些地区
+     * 把小数点渲染成逗号（与 {@link #fmtOneDecimal} 同因）。
+     */
+    private static String fmtBytes(long bytes) {
+        long b = Math.max(0L, bytes);
+        if (b >= 1024L * 1024L) {
+            double mb = b / (1024.0 * 1024.0);
+            return String.format(Locale.ROOT, mb >= 100 ? "%.0f MB" : "%.1f MB", mb);
+        }
+        if (b >= 1024L) {
+            return String.format(Locale.ROOT, "%.0f KB", b / 1024.0);
+        }
+        return b + " B";
     }
 
     /**
@@ -2564,6 +3032,9 @@ public class SettingsActivity extends AppCompatActivity {
             setSwitch(mRowStatusbar, mDraft.statusbarSubtitleEnabled);
             // 【2.2.7 / code 979】调试日志开关（纯日志闸门，不影响功能行为）
             setSwitch(mRowDebugLog, mDraft.debugLog);
+            // 【code 1007】字幕缓存功能开关（持久化配置；缓存占用读数不在这里回灌 ——
+            //   它来自宿主广播，由 applyCacheStats 单独负责）
+            setSwitch(mRowSubtitleCache, mDraft.subtitleCacheEnabled);
             // 【2.2.9】液态玻璃开关
             setSwitch(mRowLiquidGlass, mDraft.liquidGlass);
             // 【2.2.11b】模糊强度（0–100）

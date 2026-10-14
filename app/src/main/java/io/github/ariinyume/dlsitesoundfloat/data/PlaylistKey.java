@@ -153,6 +153,35 @@ public final class PlaylistKey {
     }
 
     /**
+     * 【code 1007】身份键里的 {@code durationMs}；{@code 0} = 未知/未就绪。
+     *
+     * <p>与 {@code PlayerSourceHook#makeIdentity} 的 {@code tc×10^12 + durMs×10^3 + idx}
+     * 对齐：先砍掉 {@code trackCount} 那一段（取模 10^12），再砍掉 {@code idx}（整除 10^3）。
+     * 供磁盘缓存做「时长补盖」与「命中日志」用（见 {@code SubtitleCache}）。
+     */
+    public static long identityDurationMs(long identity) {
+        if (identity <= 0L) {
+            return 0L;
+        }
+        return (identity % IDENTITY_TC_SCALE) / IDENTITY_IDX_SCALE;
+    }
+
+    /**
+     * 【code 1007】把 {@code (trackCount, durationSec, currentIndex)} 打包成**身份键** ——
+     * 与 {@code PlayerSourceHook#makeIdentity} **同一算式**的公开版本。
+     *
+     * <p>为什么收拢到这里：磁盘缓存必须用**与换轨判据完全一致**的口径才能对得上，
+     * 两处各写一遍算式迟早漂移（本项目反复踩过的「两套口径并存」坑）。
+     * 变量名与权重见 {@link #IDENTITY_TC_SCALE} / {@link #IDENTITY_IDX_SCALE}。
+     */
+    public static long makeIdentity(int trackCount, double durationSec, int idx) {
+        long tc = trackCount < 0 ? 0L : (long) trackCount;
+        long durMs = durationSec > 0 ? Math.round(durationSec * 1000.0) : 0L;
+        long i = idx < 0 ? 0L : (long) idx;
+        return tc * IDENTITY_TC_SCALE + durMs * IDENTITY_IDX_SCALE + i;
+    }
+
+    /**
      * 「宿主的选择已经跑在身份前面了吗」—— 在**加载字幕 JSON 的那一刻**用它判断这份 JSON
      * 的归属。
      *

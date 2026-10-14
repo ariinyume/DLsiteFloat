@@ -1763,3 +1763,1163 @@ https://play.dl.dlsite.com/content/work/doujin/RJ01127000/RJ01126292/optimized/4
 sha256 `a3e5c48c87a71f8c7ed2ec5ea7053c2e4681722ead1f363674814a37e59f0136`
 versionName 保持 **2.3.1**；code 1005 → 1006；label 保持 `1008.25`
 （Ari 本轮指令：**只升 code，不升版本号**）
+
+## [2.3.1 / code 1007] — 新功能：字幕离线缓存（飞行模式 / 不挂代理也能显示）（2026-10-13）
+
+### 【需求】
+
+宿主的字幕是**每次播放音轨时在线抓取**的 —— 飞行模式（或不挂代理）下 App 自己也不显示字幕。
+本轮把「已经在线抓到过的音轨字幕」缓存到本地，断网时照常显示。Ari 六条口径：
+
+1. 飞行模式下兜底：本地有缓存就显示；
+2. 缓存范围默认「全部在线播过的轨」，自动 LRU；
+3. 设置页「其它」加「字幕缓存功能」开关 + 「清除所有字幕缓存」按钮；
+4. 播放页右上角加一枚按键提示，**锚在官方字幕（CC）开关按钮的左边**、**默认关**；
+   点击开时才用本地缓存字幕；按钮关着时照旧抓在线字幕，抓不到就显示无字幕；
+5. 上限 **256MB**（文档旧稿的 128MB 已废），达到上限时清除**最早缓存进来**的音轨；
+6. 身份认 `(trackCount, durationMs, currentIndex)` 指纹，并投入 Phase 3 的
+   标题 / 媒体源 URI 确认通道使其更稳。
+
+按钮位置口径（追问后细化）：**CC 按钮显示时挂在它左边；CC 不显示时占它原来的位置**。
+按钮状态：**会话级，默认关**。
+
+### 【数据层】新增 `SubtitleCache`
+
+落盘在**宿主 App 的私有目录**（`Android/data/<宿主包名>/files/subtitle_cache/`）：
+
+```
+subtitle_cache/
+  index.json      <- 索引（原子写）：每条目一行元数据
+  <md5>.json      <- 单轨字幕原文（与在线抓到的字节完全一致）
+```
+
+- `put(workKey, tc, idx, durMs, json, cues, maxEndSec)`：在线 JSON 装载成功后落盘；
+  文件名 = md5(作品键 + 轨标签) ⇒ 同作品同轨重写即自愈；
+- **原子写**：临时文件 + `renameTo`（与 `ConfigStore.writeJsonAtomic` 同口径）；
+- **LRU 淘汰**：按 `used`（最后一次命中时刻）由旧到新删，直到降回 `LIMIT_BYTES_DEF`（256MiB）之下；
+- 防护栈（防张冠李戴）：
+  ① **时长补盖 + 时间轴交叉校验** —— 条目记着字幕最大结束时间，补盖时长时若超出
+     `durMs + 2s`（`TIMELINE_TOLERANCE_SEC`）⇒ 拒绝补盖，此后永远是「无身份的孤儿」，永不命中；
+  ② **内容哈希去重** —— 同作品下正文哈希相同而序号/时长不同 ⇒ 后写删前；
+  ③ **作品键正向校验** —— 命中时手上作品键与条目不同 ⇒ 拒绝命中；
+  ④ **全量日志** —— 命中 / 补盖 / 淘汰各一行，可事后抽验。
+
+### 【身份口径】三元组指纹 + Phase 3 作品键通道
+
+- 主键 = 身份三元组 `(trackCount, durationMs, currentIndex)`（`PlaylistKey.makeIdentity`，本轮由私有升 public）；
+- 副键 = 选择键 `(trackCount, currentIndex)`（`PlaylistKey.makeSelection`）—— 宿主切换音源那一刻就有值，
+  比身份键早（身份键要等 `duration` 就绪）；
+- **标签竞态**：字幕 JSON 常比「带时长的权威读数」先到（真机实测提前 165ms~7.8s，见 code 1006 履历），
+  落盘时只能先按副键挂成「时长=0 的孤儿」，等权威读数到达后由 `stampDuration` 补盖 ——
+  补盖前过 ① 时间轴交叉校验；
+- **Phase 3 作品键**：`lookup` 接收 `currentWorkKey`，两侧都有且不同 ⇒ 拒绝命中（跨作品冒充的唯一正证据）；
+  仓库侧用 `freshWorkKey()` 加 **3 分钟新鲜窗口**（`WORK_KEY_FRESH_MS = 180000`），
+  窗口外的陈旧作品键不参与否定（防断网后误拒一次正常命中）。
+
+### 【仓库接线】`SubtitleRepository`
+
+- 新增会话级字段 `localCacheMode`（volatile，默认 false）、`localCacheAvailable`、
+  `lastSeenWorkKeyAtMs`、`lastCacheableJson`、`cacheIo`（盘 IO 线程池）；
+- 公开 API：`isLocalCacheMode()` / `hasLocalCacheForCurrentTrack()` / `setLocalCacheMode(boolean)`；
+- 读盘两条路：
+  - `tryResumeFromDisk(where, identity, selection)` —— **换轨自动兜底**（在线路径接不上时才走）；
+  - `tryResumeFromDiskNow()` —— **按钮点击后立即读盘**；
+- 写盘：`maybeCacheToDisk(...)` 丢进 `cacheIo`，`lambda$maybeCacheToDisk$N` 里调 `SubtitleCache.put`；
+- 可用性门：`cacheUsable() = localCacheMode && RemoteConfig.get().subtitleCacheEnabled`。
+
+### 【设置页】「其它」卡片
+
+- 新配置键 `K_SUBTITLE_CACHE_ENABLED = "subtitle_cache_enabled"`（`SubtitleConfig` 七处同步，默认 `true`）；
+- 新增三语 9 条文案（开关名 / 常驻说明 / 占用读数 / 载入中 / 宿主未运行 / 按钮 / 二次确认标题与正文 / 完成提示）；
+- 行：开关 + 占用小字（`已缓存 %1$d 轨 · 占用 %2$s / %3$s`）+ 「清除所有字幕缓存」按钮；
+- 🔴 缓存目录在**宿主进程私有空间**，设置页受 SELinux 限制读不到 ⇒ 占用查询与清理都**经显式广播
+  交给宿主执行、结果再广播回来**（协议新增三条 action，`PROTOCOL_VERSION` 1 -> 2）；
+- 「清除」必经 `MaterialAlertDialogBuilder` 二次确认；成功提示由**宿主回执**触发
+  （`mPendingClearToast`），不是点下按钮就报成功；`onDestroy` 注销接收器。
+
+### 【播放页】右上角胶囊
+
+- 新视图 `CACHE_BUTTON_ID = 0x7F999004`（避开宿主 id 段），独立粒 + 独立落位代码；
+- **三档锚点阶梯**：
+  ① `scan.ccRect`（本轮扫到的 CC 按钮矩形）；
+  ② `sLastCcRect`（上一轮扫到的 CC 矩形，记忆；**只在顶栏收起键在场时**才敢用 —— 它是「确实站在播放页」的硬闸门）；
+  ③ `trailingClusterRect`（由常驻的顶栏收起键推出右侧按钮簇：上溯到顶栏行，取最后一个可见子下潜到宽度
+     <= 收起键宽 × `CLUSTER_W_RATIO(3.0f)`，层数上限 `CLUSTER_MAX_DEPTH(8)`）；
+  三档都拿不到 ⇒ `hideCacheButton`（不猜坐标）；
+- **视图树探测**：`probeOfficialToolbar` 用 **`View.getTag()` 读普通 tag** 拿 testID，
+  `contains` 判定后缀串 `SUBTITLE_BUTTON` / `FULL_PLAYER_CLOSE_BUTTON`
+  （宿主 `BaseViewManager.setTestId` 同时写 `R.id.react_test_id` 与普通 tag ⇒ 本模块**不必**知道宿主的 R.id）；
+- **拖动跟随**：拖动期间 `detectAndLayout` 被主动跳过（不重扫锚点）⇒ 胶囊在 `applyFollowOffset` 里
+  跟同一个 `translationY`（1:1），创建时用 `sFollowAppliedY` 初始化防复位被短路；
+- **显隐门**：`hasLocalCacheForCurrentTrack() && RemoteConfig.subtitleCacheEnabled()`；
+  仓库观察者触发 `applyCacheButtonState` 刷新；
+- 落位死区 `CACHE_PLACE_DEADZONE_PX = 2`（防抖）。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py`（新增）**108/108**
+- dex 层 `tools/verify_1007.py`（新增，对照 code 1006 包）**147/147，110 个有区分力锚**
+  - 常量层（`dexdump` 字段 `value :`）：`LIMIT_BYTES_DEF = 268435456`、`WORK_KEY_FRESH_MS = 180000`、
+    `INDEX_SCHEMA = 1`、`TIMELINE_TOLERANCE_SEC = 2`、`CACHE_BUTTON_ID = 0x7F999004`、
+    `CLUSTER_W_RATIO = 3`、`CLUSTER_MAX_DEPTH = 8`、`PROTOCOL_VERSION` 1 -> 2；
+    既有 PlaylistKey 三个权重与仓库三个时限一字未动
+  - 负向锚：1006 包里 `SubtitleCache` 类 / `makeIdentity` / `subtitle_cache_enabled` / `[code 1007]` /
+    `SUBTITLE_CACHE_CLEAR` 全部不存在；1006 的**常开横幅行**在 1007 包里消失（零终止精确匹配，
+    履历段保留不算）
+- 协议层 `tools/verify_protocol_src.py` 10 -> **11/11**（12 action / 12 extra / `PROTOCOL_VERSION == 2`）
+- 一键全链 `tools/run_all_verify.py` **21/21 全绿 + 1 SKIP**（verify_998.py 缺对照包）
+
+### 【连带修复】
+
+- `tools/verify_1006_src.py`：**5 条断言随本轮演进更新**（项数保持 87）——
+  - ④ 内部实现 `loadFromJsonArrayInternal` 本轮新增第三参 `fromDisk`（本地缓存命中路径要区分来源）
+    ⇒ 判据改为「workKey 仍是第二参、第三参可有可无」；
+  - ⑭ 版本号三条由「钉死 1006 / 1008.25」改为「>= 1006 / 形如 1008.NN / 横幅 code 与 gradle 自洽」
+    （口径与 1004_src / 1005_src 一致；不钉死具体值，否则下一轮必假 FAIL）。
+- 🔴 **本轮 dex 层首跑红了 10 条，全是判据自身写错**（记在这里别再犯）：
+  - **编译期常量永不进指令行**（`LIMIT_BYTES_DEF` / `WORK_KEY_FRESH_MS` / `CLUSTER_*` /
+    `CACHE_BUTTON_ID` / action 串）⇒ 判「字段存在」必须走**字段段**（`name :` / `type :` 分行），
+    判「用了它」要钉**内联后的立即数**（如 `// #2bf20` / `// #10000000` / `// #000000e8d4a51000`）；
+  - **lambda / 匿名类会搬家**：`put` 落在 `lambda$maybeCacheToDisk$N`、
+    发广播落在 `lambda$onClearCacheClicked$N`、接收器落在 `SettingsActivity$N`
+    ⇒ **不要钉 `$N` 的数字**，要用正则或「遍历该类的所有内部类找目标方法」；
+  - `SubtitleViewHook$ScanResult` 的字段**只在字段段**，读写指令在 `SubtitleViewHook` 里
+    ⇒ 在 ScanResult 段里找 `.ccFound:Z` 必然假 FAIL；
+  - `Intent.setPackage(String)` 在 compileSdk 34 上**返回 Intent 而非 void**
+    ⇒ 描述符是 `(Ljava/lang/String;)Landroid/content/Intent;`；
+  - 「常开横幅行」判据必须**零终止**（`… / code 1007` + NUL）—— 履历段保留了同一前缀，
+    只找前缀两版都命中、失去区分力。
+
+### 产物
+
+`DLsiteFloat-2.3.1-code1007-debug.apk`，5,597,668 B
+sha256 `792a7c3bc295750b5385bf5f9630915320f4639f198cc74a76ab457b6eb43a7b`
+versionName 保持 **2.3.1**；code 1006 -> 1007；label 1008.25 -> `1008.26`
+（沿用 code 1006 轮口径：**只升 code，不升版本号**）
+
+## [2.3.1 / code 1008] — 真机复测：缓存胶囊不出现 + 飞行模式读不出本地字幕（2026-10-13）
+
+### 【现象】Ari，附截屏 `Screenshot_2026-10-13-17-51-05-29` 等两张 + 日志 `LSPosed_20261013_175047`
+
+code 1007 装机后两条反馈：
+
+1. **飞行模式下同一音轨读不出本地字幕**（点不开、读不出）；
+2. **播放页右上角那枚本地缓存字幕胶囊一直没出现** —— 而设置页里「字幕缓存功能」开关是**开的**、
+   占用读数也**正常**（已缓存五轨）。
+
+### 【取证】数据层全对；胶囊那套代码**一行日志都没打**
+
+日志 `log/modules_2026-10-13T17_01_36.742617.log`（2.4MB / 6059 条）里 code 1007 生效段（17:48:05 起）：
+
+```
+[code 1007] put work=optimized tc=5 idx=0 dur=0 cues=110 …
+[code 1007] stamp duration: tc=5 idx=0 dur=658536ms -> identity=5000658536000 (now matchable)
+[code 1007] index loaded: 5 entr(ies), 129491 bytes
+[code 1007] [host] cache stats sent: 5 entr(ies), 129491 bytes
+[code 1007] cache skip: track label unknown (no selection key at load time)     ← 只 1 条
+```
+
+- **落盘 5 轨、时长补盖全部成功、索引载入 5 条、占用读数与宿主一致** ⇒ 数据层 0 问题；
+- 而**胶囊那套代码命中 0 行**：`cache capsule` / `cacheButton` / `probeOfficialToolbar` /
+  `ccRect` / `ccFound` 全部 0；但 `detectAndLayout` 确实在跑
+  （`[几何6] capsule re-placed by geometry` 12 行、`verdict=PLAYER` 6 行、`activity onResume -> ensureButton` 8 行）；
+- `detectAndLayout error` **0 条** ⇒ 不是被吞异常；
+- 配置侧排除：`config applied from broadcast: … subtitleCache=true`（总闸确实开）。
+
+> 问题就在这：**「门控不过」与「三档锚点全丢」这两条路在上一版里都是静默的**，
+> 现有日志**分不出是哪一条**。所以本轮第一步不是改行为，而是把根因**变成读数**。
+
+### 【静态取证】testID 判定机制本身是对的
+
+- 宿主 `BaseViewManager.setTestId` 反汇编为**两句**：写 `R.id.react_test_id` **加**写普通 tag
+  ⇒ **普通 tag 就能读到 testID 字符串，本模块不必知道宿主 R.id**；
+- Hermes 串表（`work/strings_all.txt`）里 `SUBTITLE_BUTTON`(#32943) 与
+  `FULL_PLAYER_CLOSE_BUTTON`(#27754) **各只一条**，邻居是同组按钮
+  （`SLEEP_TIMER_BUTTON` / `SPEED_BUTTON` / `FULL_PLAYER`，Hermes 去重）
+  ⇒ 字面量就是它本身，`contains` 判定成立；
+- ⚠️ 干扰项已识别：`subtitle-button`(#14738，紧邻图标名 `subtitles-slash` / `rectangle-pro`)
+  **不是 testID**，不要拿它判定；
+- 顶栏结构（`PlayerHeader` 反汇编 id=58597）：最左常驻关闭键 `FULL_PLAYER_CLOSE_BUTTON`；
+  最右 `rightContainer → headerButtons → [CC(testID = SUBTITLE_BUTTON)（**仅 hasSubtitles 为真才渲染**）, 菜单键]`。
+
+### 【修法】只加读数、不改判定（造一组**可区分**的诊断件）
+
+1. **门控四要素快照**（`ActivityButtonHook.layoutCacheButton` 头部）——
+   把「为什么没出现」拆成四个可直接回答的开关：`wanted`（是否该出现）/ `avail`（仓库层是否有本轨缓存）/
+   `cfg`（总闸）/ `cc`·`mem`·`close`·`cluster`（三档锚点各自在不在），**只在快照变化时**打一行
+   `[code 1008] cache gate …`；
+2. **tag 普查件**（`SubtitleViewHook.censusTag`）—— 对视图树上真实可读的 tag 做**一次性普查**
+   （≤10 行 / ≤24 样本 / ≥3s 间隔），把「官方顶栏那两个控件的 testID 到底长什么样」抄进日志；
+   **CC 是自定义组件，它到底转不转发 testID 只有真机能回答**；同时记 `nonStringTag`（普通 tag 非字符串的情形）；
+3. **`react_test_id` 兜底通道**（`SubtitleViewHook.reactTestIdRes`）—— 普通 tag 不是字符串时，
+   按名字 `getIdentifier("react_test_id", "id", HOST_PKG)` 查到宿主资源再读第二个槽；
+   编译期拿不到对方的 R ⇒ 只能按名字查（查到即缓存，查不到置 0 不再重查，打一行 `res id = N`）；
+4. **仓库层可用性翻转**（`SubtitleRepository.refreshLocalCacheAvailability`）——
+   `localCacheAvailable` 一变就打 `[code 1008] local cache availability -> true/false (identity=…)`；
+   因为真机日志里存在**多个播放列表实例交替读数**，怀疑可用性被非活跃实例覆盖成 false，这条读数专治它。
+
+### 【安全边界】
+
+上述改动**只加日志 + 一条兜底**，不改任何既有判定；兜底读不到时行为与上一版**完全一致**。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py` 108 → **118/118**（新增 N 段取证件 8 条 + L10/L11 版本口径 2 条）
+- dex 层 `tools/verify_1007.py` 147 → **158/158，119 个有区分力锚**（主验 1008 / 对照 1006；新增 `148★`~`158★`）
+- 一键全链 `tools/run_all_verify.py` **21/21 全绿 + 1 SKIP**（verify_998.py 缺对照包）
+- 履历段 `==== BUILD 2.3.1 / code 1008` 六段：①现象 ②取证 ③改动一 ④改动二 ⑤改动三 ⑥安全边界
+
+### 【连带修复】
+
+- `tools/run_all_verify.py`（**CRLF 文件**）：`NEEDS_APK` 改 `'verify_1007.py': (1008, 1006)`，索引表说明同步；
+  ⚠️ 补丁脚本读入后**必须先 `replace('\r\n','\n')` 再替换、写回时还原 CRLF**，
+  否则整批替换会**静默不落盘**（本轮踩过一次）。
+- `tools/verify_1005_src.py` ⑧ 判红：它要求**当前 code** 的履历段含 ①②③④ **且含「版本号」收尾句**。
+  ⇒ **修实现、不修判据**：给 1008 履历段补 `版本号 2.3.1 不变、code 1007 升 1008。`，
+  并在 `verify_1007_src.py` 新增 `L11` 把这条**跨轮约定**锁住。
+- `verify_1007_src.py` 的 J3 / J6 两条按新设计语义重写：
+  J3 由「不许出现 `react_test_id`」改为「**普通 tag 优先、R.id 槽只作兜底**」；
+  J6 的短路条件加上 `sTagCensusDone`。
+
+### 【后续】
+
+本轮交付的是**取证件**，需要 Ari 装机复测后回传日志才能定位确切根因，重点看四类行：
+
+- `[code 1008] cache gate wanted=… avail=… cfg=… cc=… mem=… close=… cluster=…`
+- `[code 1008] tag census #N (M): […]`
+- `[code 1007] CC/CLOSE button FOUND tag="…"`
+- `[code 1008] local cache availability -> …`
+
+飞行模式侧看 `[code 1007] disk cache HIT on track change via …` 或
+`local cache mode ON but no cache for this track yet`。
+
+### 产物
+
+`DLsiteFloat-2.3.1-code1008-debug.apk`，5,599,792 B
+sha256 `a26b0120c13f8fd457621f9b6bb763280c3ed8ac54e3b67b8fb2da0dc59e7ada`
+versionName 保持 **2.3.1**；code 1007 -> 1008；label 1008.26 -> `1008.27`
+（沿用 code 1006 轮口径：**只升 code，不升版本号**）
+
+## [2.3.1 / code 1009] — 修：缓存字幕胶囊不出现（根因：官方顶栏 testID 认错了形态）（2026-10-13）
+
+### 【现象】Ari code 1008 装机复测，附日志 `LSPosed_20261013_183252`
+
+两条反馈依旧：**本地缓存字幕胶囊不出现**、**飞行模式读不出本地字幕**
+（设置页里「字幕缓存功能」开关是开的、占用读数正常）。
+
+### 【取证】code 1008 的取证件一次就把根因钉死
+
+日志 `modules_2026-10-13T18_31_08.100158.log`（宿主进程跑了 **两个会话**，18:31 与 18:32）：
+
+```
+[code 1008] cache gate wanted=true avail=true cfg=true cc=false mem=false close=false cluster=false
+[code 1008] tag census #8 (24): [home-top-loading, recent-purchase-see-all, tab-home, tab-library,
+             tab-playlist, tab-setting, …, work-menu-button, folder-item-0, track-row-0,
+             track-item-0, …] | nonStringTag=[]
+18:32:33.280 [几何6] capsule re-placed by geometry -> … verdict=PLAYER | main=1153x54 y=1799 …
+CC button FOUND     -> 0 条
+CLOSE button FOUND  -> 0 条
+```
+
+三个开关**全过**（该出现 / 本轨有缓存 / 总闸开），三档锚点**全丢**；而 tag 普查抄回来的真实 tag
+全是**短横线**命名（`work-menu-button` / `tab-home` / `track-item-0` …）—— 判定依据写的却是
+**大写下划线**的 `SUBTITLE_BUTTON` / `FULL_PLAYER_CLOSE_BUTTON`，两趟真机、三个会话，**FOUND 零条**。
+
+### 【根因】拿「属性名」去比「属性值」
+
+`work/f_header.txt` 反汇编（`PlayerHeader`）：
+
+```
+r17 = _env_r25_slot6.TEST_IDS.PLAYER.FULL_PLAYER_CLOSE_BUTTON;   // 取的是**属性**
+r10['testID'] = r17;                                             // 落进视图的是**值**
+```
+
+宿主 `TEST_IDS` 表里 `SUBTITLE_BUTTON` / `FULL_PLAYER_CLOSE_BUTTON` 是**属性名**，
+其**取值**是短横线形态 `subtitle-button` / `full-player-close-button`。code 1007 / 1008
+直接拿属性名去 `contains` ⇒ **永远不中** ⇒ `ccRect` / `closeFound` / `trailingClusterRect`
+三档全空 ⇒ `layoutCacheButton` 走 `hideCacheButton`（胶囊从未被创建）。
+
+判别性证据（宿主 Hermes 串表 `work/strings_all.txt` 交叉验证）：
+
+| 按钮 | 大写下划线**标识符** | 短横线**字面量** |
+|---|---|---|
+| `WORK_MENU_BUTTON`（工作菜单键，内联 testID） | **0** | `work-menu-button` = 1 |
+| `TRACK_ROW`（曲目行，内联 testID） | **0** | `track-row-` = 1 |
+| `SUBTITLE_BUTTON` | **1** | `subtitle-button` = 1 |
+| `FULL_PLAYER_CLOSE_BUTTON` | **1** | `full-player-close-button` = 1 |
+| `PLAYER`（`TEST_IDS.PLAYER` 的属性名） | **1** | `full-player` = 1 |
+
+内联写 testID 的按钮**只有**短横线形态；官方顶栏那两枚则是「标识符 + 短横线取值」**成对**存在
+—— 与反汇编里 `TEST_IDS.PLAYER.X` 的取属性链完全吻合。
+
+**飞行模式那条是它的下游**：会话开关只由那枚胶囊点亮（默认关），胶囊不出现就永远打不开本地缓存
+—— 日志里 `local cache mode` **0 次**、`disk cache HIT` **0 次**，而数据层一切正常
+（`index loaded: 5 entr(ies)`、`local cache availability -> true`）。
+
+### 【修法】
+
+1. **比对前先归一化**：新增 `SubtitleViewHook.normalizeTag`（整体大写 + 短横线/空格折下划线），
+   再与常量对齐 ⇒ 宿主将来换回下划线形态也照样认；
+2. **判定改后缀匹配**（`key.endsWith(...)`，原为 `contains`）：容忍前缀、顺手排除
+   「图标名恰好同前缀」一类干扰，门槛不放松；
+3. **顶栏专属小预算**：新增 `logToolbarIshTag`（自己的上限，**不吃普查名额**）——
+   code 1008 的普查样本在首页 / 作品页就被吃光，进播放页时普查已停，最关键的一问落了空；
+4. **普查预算抬高**：`TAG_CENSUS_MAX` 24 -> 48、`TAG_CENSUS_LOG_MAX` 10 -> 14。
+
+### 【安全边界】
+
+归一化与新增日志**只影响这两个附加控件的识别**，不改页面判定、不改落位口径；
+认不到时行为与上一版完全一致。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py` 118 -> **123/123**（新增 O 段 5 条 + J4 改口径）
+- dex 层 `tools/verify_1007.py` 158 -> **165/165，124 个有区分力锚**（主验 1009 / 对照 1006；新增 `159★`~`165★`）
+- 一键全链 `tools/run_all_verify.py` **21/21 全绿 + 1 SKIP**
+- 履历段 `==== BUILD 2.3.1 / code 1009` 六段：①根因 ②取证 ③修法一 ④修法二 ⑤诊断保留 ⑥安全边界
+
+### 产物
+
+`DLsiteFloat-2.3.1-code1009-debug.apk`，5,601,020 B
+sha256 `a6518f3009f42c68d2b7e243ad1ee8e46db60591f1c6aa3fc543f28c3ffc89c9`
+versionName 保持 **2.3.1**；code 1008 -> 1009；label 1008.27 -> `1008.28`
+（沿用 code 1006 轮口径：**只升 code，不升版本号**）
+
+## [2.3.1 / code 1010] — 修：普查在进播放页之前就停摆（胶囊仍不出现的第二个根因）（2026-10-13）
+
+### 【现象】Ari code 1008 装机复测，附日志 `LSPosed_20261013_185439`
+
+本地缓存字幕胶囊**仍不出现**。门控三个开关全过、三档锚点全丢：
+
+```
+[code 1008] cache gate wanted=true avail=true cfg=true cc=false mem=false close=false cluster=false
+```
+
+⚠️ 该日志横幅实证为 `==== BUILD 2.3.1 / code 1008`（`code 1009` 零命中）——
+即 code 1009 的形态修复**尚未跑过真机**，本轮先把日志暴露的第二个 bug 修掉。
+
+### 【取证】普查在进播放页**之前**就永久停摆
+
+- `18:52:36` ~ `18:53:01` 打出 `tag census #2` ~ `#10`（样本仅 14 个）；
+- 进入播放页是 `18:53:47`，相隔 46 秒；
+- 播放页顶栏那两枚控件的 **testID 一次都没被抄到**。
+
+### 【根因】把「打印上限」当成了「普查终止」
+
+`SubtitleViewHook.censusTag` 里：
+
+```
+if (full || sTagCensusLogs >= TAG_CENSUS_LOG_MAX) {
+    sTagCensusDone = true;
+}
+```
+
+日志条数一满就永久置 `done`，于是热路径上 `if (!sTagCensusDone) censusTag(...)`
+把后续所有 View 的普查统统挡掉。用户在首页 / 作品页就把名额用光，进播放页时普查已死。
+
+### 【修法】
+
+1. **解耦「打印上限」与「普查终止」**：只有样本集收满（48 条不同 tag）才置 `done`；
+   日志条数仅控制打印（上限 14 条、每 3 秒最多一条）。
+2. **「像顶栏」独立预算放宽**：关键词补 `CLOSE` / `HEADER`，上限 8 升 12。
+3. **新增 `dumpTagSamples(why)`**：按钮层在门控判定「锚点全丢」的那一刻，
+   把窗口内普查到的**全部** tag 样本原样抄一条 —— 最贴近现场的唯一读数。
+
+### 【安全边界】
+
+- 只动诊断与比对层：不改判定口径、不改胶囊的落位阶梯与状态机；
+- `dumpTagSamples` 受门控快照节流，同一现场只打一次；
+- 所有新增逻辑包在 `try` 里，绝不因认控件把整趟扫描带崩。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py` 123 -> **128/128**（新增 P 段 5 条）
+- dex 层 `tools/verify_1007.py` 165 -> **170/170，127 个有区分力锚**（主验 1010 / 对照 1006；新增 `166★`~`170★`）
+- 一键全链 `tools/run_all_verify.py` **21/21 全绿 + 1 SKIP**
+- 履历段 `==== BUILD 2.3.1 / code 1010` 六段：①现象 ②取证 ③修法一 ④修法二 ⑤安全边界 ⑥结论
+
+### 产物
+
+`DLsiteFloat-2.3.1-code1010-debug.apk`，5,602,260 B
+sha256 `9762f7fe75d5eed75972beaf17c8f1e95dfb62f2671bc5c360cb2173056fb638`
+versionName 保持 **2.3.1**；code 1009 -> 1010；label 1008.28 -> `1008.29`
+（沿用 code 1006 轮口径：**只升 code，不升版本号**）
+
+## [2.3.1 / code 1011] — 修：缓存胶囊不出现（簇推断被全屏手势层挡住）+ 日志精简（2026-10-13）
+
+### 【现象】Ari 第三次复测，附日志 `LSPosed_20261013_200425`（首次真正跑上 code 1010）
+
+门控读数 `[code 1008] cache gate`：
+
+```
+wanted=true avail=true cfg=true cc=false mem=false close=true cluster=false
+```
+
+- 三个开关**全过**（该出现 ✓ 本轨有缓存 ✓ 总闸开 ✓）；
+- **收起键已认到** —— `CLOSE button FOUND tag="full-player-close-button"` 单次会话 **81 条**，
+  说明 code 1009 的 testID 归一化修复**确实生效了**；
+- 但**第三档按钮簇仍是 `false`** ⇒ 三档锚点仍全丢 ⇒ 胶囊仍被隐藏。
+
+同一份日志里，播放页的 testID 普查终于抄全了（44 个，含 `full-player-close-button`、
+`player-gesture-area`、`seek-slider`、`speed-button`、`sleep-timer-button` …）。
+
+### 【取证】两条
+
+1. **播放页顶栏结构的关键一环**：`full-player-close-button` 之后紧跟的全是
+   `player-gesture-area`（**自 x=0 起的全屏手势层**）、`player-thumbnail`、`track-title` …
+2. **左右内边距实测对称**：收起键 rect `[60,141,202,284]`（左边距 60、键宽 142）；
+   同页主滑条 `x=60 宽 1153`（屏宽 1272）⇒ 右端 1213、**右边距 59**。
+   60 / 59 对称（差 1px 是取整）—— 这条成了兜底档的几何依据。
+
+### 【根因】`trailingToolbarClusterRect` 上溯时用错了判据
+
+旧代码要求父容器的「**最后一个**可见子」位于收起键右侧。而播放页顶栏之后还挂着
+**全屏手势层**（`player-gesture-area`），它恰好就是那个「最后一个可见子」——
+左边界 `x=0` < 收起键右边 `202` ⇒ 判据**永不成立** ⇒ `row == null` ⇒ 按钮簇恒为 `null`。
+
+这也解释了为什么前两轮「改了 testID 判定」仍然看不到胶囊：判定确实通了
+（`close=true`），但**簇推断这一环自己坏着**。
+
+### 【修法】三处
+
+1. **簇推断重写**（`SubtitleViewHook`）
+   - 上溯判据由「最后一个可见子在收起键右侧」改成「**存在**可见子整体位于收起键右侧」——
+     手势层因左边界落在收起键左边，自然被排除；
+   - 右侧按钮簇改由「右侧可见子的**外接矩形**」给出（对「中间隔着几层 RN 包裹视图」天然免疫），
+     外接矩形过宽才下潜收敛；
+   - 上溯层数上限由写死的 `4` 放宽到 `CLUSTER_ASCEND_MAX = 6`（RN 包裹层数不稳定）；
+   - 旧的 `lastVisibleChild` 整方法删除。
+2. **新增第四档「对称几何」兜底**（`SubtitleViewHook.symmetricCcRect`）
+   结构推断（cc / mem / struct）三档**全失败**时，把收起键的**尺寸与纵向中线镜像到屏幕右端**
+   （依据即取证 2 的 60 / 59 对称实测）。真机上「锚得略偏」远好于「按钮根本不出现」——
+   那枚胶囊是本地缓存模式**唯一**的开关，它不出现等于整个离线字幕功能不可用。
+   按钮层新增 `src = "sym"` 档，排在 `struct` 之后，**不抢精确档**。
+3. **日志精简**（用户本轮第二条要求，见下节）
+
+### 【日志体积】先把读数摆出来
+
+量了 `modules_2026-10-13T19_38_18`（939 KB / 3,690 行）：
+
+| 归属 | 体量 | 占比 |
+|---|---|---|
+| **本插件** | 360 行 / **101 KB** | **11%** |
+| 另一个 Xposed 模块（`com.tencent.mm` 的 `com.codex.wxlocal`，在刷 `[WxLocal] 主页布局`） | 其余 | **89%** |
+
+⇒ 大头不在本插件（那部分不受我们控制）。但仍有两点要改：
+
+- **`debugLog=true`**（设置页「其他 → 调试日志」）是**开着**的 —— 关掉它，插件日志立刻再降一大截；
+- 即使开着，仍有 3 类是**设计缺陷级的重复刷屏**，本轮已修：
+  - `[code 1007] CLOSE button FOUND`：单次会话 52 秒里**自重打 81 遍**。根因是
+    「本趟已认到」这个守卫拦不住下一趟的新 `ScanResult`，而短路条件里还挂着
+    **永不置真的普查完成位**。→ 加**整进程去重**：首次认到走常开作里程碑，之后一律 `LogGate.debug`；
+  - `[code 1008] tag census` 与 `[code 1009] toolbar-ish tag`：**降为诊断级**（不再占常开通道）；
+  - 普查补一条 **60 秒时间窗**收口 —— 原来「样本收满才停」在真机上等于**永不停**
+    （单次会话最多只收到 44 个样本），于是 `probeOfficialToolbar` 的每 View 短路永不生效。
+
+### 【安全边界】
+
+- 只改「胶囊锚点从哪来」与「打多少日志」：页面判定、三档原有锚点的**优先级**、
+  本地缓存口径与仓库层**一字未动**；
+- 对称兜底排在 `cc / mem / struct` **之后**，拿不到收起键时行为与上一版完全一致；
+- 四档共用同一个 `targetRight - gap` 落位口径，只是 anchor 来源不同 —— 不会出现两套坐标。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py` 128 -> **138/138**（新增 Q 段 10 条）
+- dex 层 `tools/verify_1007.py` 170 -> **179/179，134 个有区分力锚**
+  （主验 1011 / 对照 1006；新增 `171★` ~ `179★`）
+- 一键全链 `tools/run_all_verify.py` **21/21 全绿 + 1 SKIP**
+- 履历段 `==== BUILD 2.3.1 / code 1011` 六段：①现象 ②取证 ③改动一（簇推断）
+  ④改动二（对称兜底）⑤改动三（日志精简）⑥安全边界
+
+### 产物
+
+`DLsiteFloat-2.3.1-code1011-debug.apk`，5,604,416 B
+sha256 `d6ce608c107e47951c5249cbf227b470f4cb62503ac314bc8c47ea7cfbcf4995`
+versionName 保持 **2.3.1**；code 1010 -> 1011；label 1008.29 -> `1008.30`
+（沿用 code 1006 轮口径：**只升 code，不升版本号**）
+
+## [2.3.1 / code 1012] — 删「缓存开关」胶囊 + 云端优先/本地兜底 + 修「字幕与音轨对不上」（2026-10-13）
+
+code 1010 装机后的第三条反馈（含截图 + 日志包 `LSPosed_20261013_203055`）。
+
+### 【现象】三条
+
+1. **本地字幕能显示了，但显示的不是当前音轨的字幕**（文案与正在播的那轨对不上）；
+2. **「缓存 开」胶囊跑到屏幕左下方**（截图实证：紧贴快退键左侧）；
+3. **新需求**：删掉这枚手动开关；改成「云端拿得到就用云端、拿不到再回退本地」。
+
+### 【取证】
+
+日志 `modules_2026-10-13T20_28_48.041689.log`（581,382 B）：
+
+- 版本标记 `[code 1007]`×553 / `1008`×20 / `1009`×12 / `1010`×2 / **`1011`×0**
+  ⇒ 跑的是 **code 1010 包**（code 1011 从未上机）；
+- 胶囊跑偏的直接读数：`cache capsule shown (anchor=struct, rightMargin=945, top=2181, on=false)`
+  —— 屏高 2772，`top=2181` 已在屏下方，锚点来源是**结构推断档**；
+- **同一个播放序号出现两个时长标签**（撕裂的「序号 + 时长」，身份键解算口径
+  `tc×10¹² + durMs×10³ + idx`）：
+
+```
+[code 1008] local cache availability -> true (identity=5001252560002)          → tc=5, dur=1252560ms, idx=2
+[code 1007] disk cache HIT … -> tc=5 dur=1698768ms idx=2 | identity=5001698768002 → tc=5, dur=1698768ms, idx=2
+```
+
+  两条**序号同为 2、时长不同** ⇒ 写盘那一刻读到的 `(idx, duration)` 是**撕裂的一对**；
+- **宿主 `duration` 读数本就滞后**（整份日志里 `currentIndex=3` 的采样有 **1826 次**把
+  `duration` 报成 `1698.768`，而那是 `idx=2` 的时长；`currentIndex=2` 有 14 次报成 `1252.56`）。
+
+### 【根因】
+
+宿主**取字幕的时机是「用户点下音轨那一刻」**，比播放列表的 `currentIndex` / `duration`
+更新更早。code 1007 的落盘轨标签取自「**加载 JSON 那一刻**」的选择键 ⇒ 那一刻读到的是
+一张撕裂/过期的标签，于是盘上条目的 `idx ↔ duration` 配对错掉，离线读回命中的是
+**别的音轨**的字幕。修复不能只靠「换个时机读」——必须**换标签来源**。
+
+### 【修法】三件套
+
+1. **删 UI**：播放页「字幕缓存」胶囊整套移除 —— 视图 id 常量、六个静态字段、显隐门
+   （`cacheButtonWanted`）、建按钮（`ensureCacheButton`）、落位与四档锚点阶梯
+   （`layoutCacheButton`）、隐藏（`hideCacheButton`）、观察者（`applyCacheButtonState`）、
+   拖动跟随（`applyFollowOffset` 里的 `setTranslationY`）、门控快照（`sLastCacheGateDiag`）
+   与 detach 清理。状态栏与悬浮窗两枚胶囊**不受影响**。
+2. **落盘改为「先暂存、等权威标签」**：抓到新轨 JSON 先 `stageCacheToDisk()` 暂存（不落盘），
+   等**换轨通知**（`onTrackChanged(…, newSelection)` —— 唯一可靠的轨标签来源）到达再
+   `flushStagedCache()` 兑现；另加 **2.5s**（`CACHE_FLUSH_FALLBACK_MS`）兜底定时器，
+   配「暂存代数令牌」保证幂等（新暂存使上一轮定时器自然失效）。
+3. **`SubtitleCache.INDEX_SCHEMA` 1 → 2**：`loadIndex` 见到 schema 不符即「rebuild as empty」，
+   把已被标错的旧条目**整批作废**，按正确标签重新积累。
+
+### 【来源策略】云端优先、本地兜底（不再需要手动开关）
+
+- 仓库层不再有会话级开关：`localCacheMode` 字段、`setLocalCacheMode` / `isLocalCacheMode` /
+  `hasLocalCacheForCurrentTrack` 三件套、`tryResumeFromDiskNow` 一并删除；
+  `cacheUsable()` 只剩「配置总闸」一个条件；
+- 换轨时**不**主动读本地：在线照旧走原流程等云端 JSON；
+- 仅 `isOffline()`（无活动网络 / 无 INTERNET 能力）时直接读盘，免得飞行模式干等一整窗
+  （3~15s）；读数失败一律按「有网」处理 ⇒ 行为不会比改动前更差；
+- 裁决判「无字幕」时（`resolvePendingTrack` 内**锁外**）回退本地磁盘缓存，
+  语义与「云端 JSON 晚到」完全一致（正是它被设计成能自愈的那条路）。
+
+### 【安全边界】
+
+- 只删「胶囊 UI」与「会话级开关」，**不动**离线缓存的数据层口径：`SubtitleCache` 的
+  落盘 / 补盖 / 命中 / 淘汰 / 作品键校验**一字未改**，只加了索引 schema 号；
+- 两枚原有胶囊（状态栏 / 悬浮窗）共用 `capsuleTextPx` 的量宽样本**故意保留**两枚缓存文案，
+  免得连带改到它们的字号；
+- 页面判定与三档锚点阶梯一概未动 —— 删掉的只是消费端。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py` 138 -> **143/143**（I 段 16 条改负向、新增 R 段 10 条）
+- dex 层 `tools/verify_1007.py` 179 -> **197/197，143 个有区分力锚**
+  —— 主验 1012 / 对照 1006 / **新增第三参 = 反向对照 1011**：删除类符号是 1007/1011 引进、
+  1012 删掉的，1006 两版都没有，拿它当对照只会判「无区分力」⇒ 新增 `Checker.add_gone()`
+  与「上一版包」通道（`tools/run_all_verify.py` 的 `NEEDS_APK` 同步支持三元组）
+- 一键全链 `tools/run_all_verify.py` 全绿
+- 履历段 `==== BUILD 2.3.1 / code 1012` 九段（①现象 ②取证一（胶囊错位）
+  ③取证二（撕裂标签 + duration 滞后）④根因 ⑤删按钮 ⑥云端优先/本地兜底 ⑦落盘标签修正
+  ⑧schema 清毒 ⑨安全边界）
+
+### 产物
+
+`DLsiteFloat-2.3.1-code1012-debug.apk`，5,603,264 B
+sha256 `a656e06a96c7d8cff61d597179b5ded262ef1b83fd6b24622b4c84f8d0bba605`
+versionName 保持 **2.3.1**；code 1011 -> 1012；label 保持 `1008.30`
+（沿用 code 1006 轮口径：**只升 code，不升版本号**）
+
+---
+
+## [2.3.1 / code 1013] — 落盘轨标签改用「JSON 到达那刻的印章」（快速换轨不再错标）（2026-10-14）
+
+code 1012 装机复测（挂代理）后的收尾修复。
+
+### 【现象 / 上一版结论】
+
+Ari 复测：**挂代理时字幕正常显示、切换音轨也跟得上**（在线链路全绿）。
+但复查日志时发现落盘机制还有一处**时序缝隙**，会在离线读回时重新制造
+「字幕与音轨对不上」——也就是她最初反馈的那个 bug。
+
+### 【取证】
+
+日志 `log/modules_2026-10-14T09_45_35.529496.log`（3.66 MB）+ `dlsitefloat_net.log`：
+
+- 云端链路全绿：`Loaded 73 / 190 / 256 / 174 cues from JSON`，
+  `>> parsed subtitle JSON via=build.peek cues=…` 共 9 次；
+- **在线全程零读本地**（`disk cache HIT` / `resume from LOCAL` 各 0 条）
+  ⇒ 上一版的「云端优先」策略在真机生效；
+- 落盘配对**逐条正确**：`idx0 <- 73 cues`、`idx1 <- 190`、`idx2 <- 256`、
+  `idx3 <- 174`，四条 `local cache availability` 都是「先 false 后 true」
+  （先没有 → 写入后有了）⇒ 上一版的「先暂存、等权威轨标签」也生效了；
+- **但**：暂存后 2.5 s 内若又换轨，兜底兑现读的是**当时**的当前选择键，
+  也就是**另一轨** ⇒ 会把一条音轨的字幕标到另一条音轨头上。
+  本场没炸只是因为紧接着到达的新 JSON 把上一份暂存按代数令牌**作废**了（等于没写），
+  是运气不是修复。
+
+### 【根因】
+
+判据来自换轨入口自己的说明与真机实测：宿主切音轨时**序号立刻翻**，而带时长的身份键
+要等新音源装载完才有值 —— 新轨的字幕 JSON 恰恰落在中间（约 165 ms 后到达）
+⇒ **JSON 到达那一刻盖的选择键印章才是权威轨标签**，「兑现那一刻的当前读数」不是。
+
+### 【改动】
+
+- `SubtitleRepository` 新增字段 `stagedCacheSelection`（volatile long）：
+  `stageCacheToDisk` 时记下那份 JSON 到达那刻的 `cuesOwnerSelection`；
+- `flushStagedCache` **优先用印章**，只有印章未知（读不到）才退回当前读数
+  —— 旧行为完整保留为兜底，行为不回退；
+- `onTrackChanged` 里「宿主复用自己 JSON 直接恢复」这条**早退分支**也补上兑现
+  （原先它直接 `return`，那条暂存必被下一次暂存作废、永久丢一条缓存）；
+- 兑现时与另外四件一起清空印章（幂等）。
+
+### 【安全边界】
+
+- 只动「缓存条目的轨标签从哪取」；页面判定、三档锚点阶梯、云端优先与离线兜底策略、
+  状态栏与悬浮窗渲染**一字未动**；
+- **索引 schema 不再加一**：本轮只改标签来源、不改条目形态，且上一版起写入的条目
+  在本场实测中配对正确，无需再清一轮缓存（避免又清空她刚积累的缓存）。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py` 143 -> **151/151**（新增 S 段 8 条）
+- dex 层 `tools/verify_1007.py` 197 -> **200/200，143 个有区分力锚**
+  （主验 1013 / 对照 1006 / 反向对照 1011）
+- 一键全链 `tools/run_all_verify.py` 全绿
+- 履历段 `==== BUILD 2.3.1 / code 1013` 九段（①取证 ②时序缝隙 ③被躲过去 ④判据来源
+  ⑤标签来源 ⑥早退分支 ⑦安全边界 ⑧索引不动 ⑨未发版）
+
+### 产物
+
+`DLsiteFloat-2.3.1-code1013-debug.apk`，5,604,108 B
+sha256 `19de38b23f213f2e42d2afe473bd1b44a602c3d5c8ea84a2a1e9f235bf41166a`
+versionName 保持 **2.3.1**；code 1012 -> 1013；label `1008.30` -> `1014.1`
+（沿用 code 1006 轮口径：**只升 code，不升版本号**）
+
+## [2.3.1 / code 1014] — 云端优先的窗口分级漏了「本地有垫背」+ 兜底读盘用错钥匙（2026-10-14）
+
+code 1013 装机复测（**关掉代理**后重开宿主）后的修复。
+
+### 【现象】
+
+Ari：「10:24:30 关掉代理，重新打开宿主 APP 还是没办法用本地缓存的字幕」。
+附日志包 `LSPosed_20261014_102530.zip`（最新一场 `modules_2026-10-14T10_10_15`，3.0 MB）。
+
+### 【取证】真机时间线（RJ01609334，五条音轨，全部已在前一场挂代理时落过盘）
+
+| 时刻 | 换轨 | 换轨瞬间手上的状态 | 等待窗 | 结果 |
+|---|---|---|---|---|
+| 10:25:07 | 序号零 → 一 | `lastJson=never`、`cues=0` | **3000 ms** | 10:25:10 `disk cache HIT` → 本地字幕出来了 ✅ |
+| 10:25:22 | 序号一 → 二 | `lastJson=11164ms ago`、`cues=148` | **15000 ms** | 盘上有本轨缓存却**干等** ❌ |
+| 10:25:25 | 序号二 → 三 | `lastJson=14539ms ago`、`cues=148` | **15000 ms** | 同上 ❌ |
+
+（日志 10:25:30 导出，两次裁决点 10:25:37 / 10:25:40 尚未到 —— 但两次 `wait 15000ms`
+已经把根因写在脸上：**手上有上一轨的 cues 就必然走长窗**，而盘上明明有这两轨的缓存。）
+
+### 【根因】两个破口
+
+**破口一 —— 窗口分级漏了「盘上有无本轨缓存」这一档。**
+`grace` 只看「手上有无 cues」：有 ⇒ 15000 ms（原意是「这部作品已被证明有字幕，
+多等一会儿云端」），无 ⇒ 3000 ms。但**本地已有该轨字幕**时这个理由不成立 ——
+云端拿不到就地落本地，等一个标准窗口足够。
+
+**破口二 —— 兜底读盘用错了钥匙。**
+`resolvePendingTrack` 的兜底读盘传的是**全局观测键**
+（`observedPlaylistIdentity` / `observedPlaylistSelection`，宿主最近一次报出的读数），
+而宿主**重建列表 / 连续快切**时它可能已指向别的轨 ⇒ 查不到本轨缓存而空手而归。
+
+### 【改动】（全在 `SubtitleRepository`）
+
+- 新增 `hasDiskCacheFor(identity, selection)`：纯内存索引查询（无磁盘 IO），
+  命中口径与 `tryResumeFromDisk` 完全一致（身份主键 → 选择副键）；
+- 换轨入口在挂起前先探一次盘，得 `diskFallbackReady`；
+  `grace` 改为 **只有「手上有 cues **且**盘上无本轨缓存」才用 15000 ms**；
+- 新增两个字段 `pendingTrackIdentity` / `pendingTrackSelection`：
+  换轨入口记下本次**目标键**（与 `pendingToken` 同处赋值）；
+- 兜底读盘**优先用目标键**，全局观测键只作退路。
+
+### 【端到端语义】
+
+切轨 → 立刻清屏（软挂起、上一轨 cues 隔离）→ 3 s 内云端 JSON 到了就用云端；
+没到就地读本地（`loadFromJsonArrayInternal` 自动撤销软裁决并把窗口开回来）—— 两路都不丢。
+
+### 【安全边界】
+
+- **云端优先不变**（依旧先等云端），改动只在「等多久」与「兜底查哪把钥匙」两处；
+- 页面判定、三档锚点阶梯、悬浮窗与状态栏渲染**一字未动**；
+- **索引 schema 维持 2、不再清毒**：本轮只改标签来源与等待时长，条目形态未变，
+  上一版起积累的缓存继续可用（避免重演 10-14 早间那次「缓存看着空了」）。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py` 151 -> **161/161**（新增 T 段 10 条）
+- dex 层 `tools/verify_1007.py` 200 -> **206/206，146 个有区分力锚**
+  （主验 1014 / 对照 1006 / 反向对照 1011 —— 第三参保持 1011，1012 的删除类锚要靠它的区分力）
+- 一键全链 `tools/run_all_verify.py` 全绿
+- 履历段 `==== BUILD 2.3.1 / code 1014` 九段（①真机回归 ②破口一 ③破口二 ④新探测方法
+  ⑤端到端语义 ⑥安全边界 ⑦索引不清毒 ⑧验证 ⑨未发版）
+
+### 产物
+
+`DLsiteFloat-2.3.1-code1014-debug.apk`，5,605,568 B
+sha256 `70fb736c8840ec18b11b9e1b3685d8a7b4bad3ee5059079432b7bd34a68b353d`
+versionName 保持 **2.3.1**；code 1013 -> 1014；label `1014.1` -> `1014.2`
+（沿用 code 1006 轮口径：**只升 code，不升版本号**）
+
+## [2.3.2 / code 1015] — 新增「实验性功能」卡片（隐藏解锁 + 总开关 + 字幕缓存迁入）（2026-10-14）
+
+### 【现象 / 背景】
+
+上一版（code 1014）的本地兜底在真机上验证通过：关掉代理后切轨，
+每次都在三秒内命中磁盘缓存（`disk cache HIT … resume from LOCAL subtitle` +
+`[code 1012] cloud gave no subtitle within grace -> resumed from LOCAL disk cache`），
+不再出现「盘上有缓存却干等十五秒」。Ari 确认「本地字幕可以使用了」。
+
+本轮是**功能整理**：把还没定型的「字幕缓存」收进一张隐藏的实验性卡片，
+并把版本号升到 2.3.2。
+
+### 【改动】
+
+**① 新增「实验性功能」卡片（独立成卡，摆在「液态玻璃效果调整」与「其他」之间）**
+
+- 配置键 `experimental_enabled`（默认**关**），随既有配置链路走
+  （标准配置 JSON + 本地偏好两条都写）⇒ **覆盖安装升级后仍然保持**，
+  直到用户自己把总闸关掉；
+- 未开启时**整块不显示**（节标题与卡片一起 GONE）。
+
+**② 隐藏解锁入口：在状态卡上连续点击五次**
+
+- 时间窗 3 秒：五次点击必须落在「相邻两次间隔不超过 3 秒」的连续序列里，
+  中途停顿超过 3 秒即清零重数（免得把几个月里的偶然点击累计成解锁）；
+- 同时把状态卡的点击涟漪抹掉 —— 留一个可点反馈等于把「这里能点」直接递给普通用户；
+- 解锁只改**草稿**并立即把卡片显示出来，仍需点「保存设置」才写入配置，
+  与其余配置行完全一致，不给隐藏入口开特例。
+
+**③ 「字幕缓存」整组迁入卡片，并改名**
+
+- 原「其他」卡片里的「字幕缓存功能」整组（开关 + 说明 + 占用读数 + 清除按钮）
+  整体搬进实验卡，改名「字幕缓存」（繁中「字幕快取」）；
+- 搬过去后它成了该卡最后一行，纳入与其余卡片同一套底部收敛
+  （「其他」卡的最后一行仍是备份恢复那排按钮）。
+
+**④ 卡内总开关（关闭时的三件后果）**
+
+1. 卡内所有子功能关掉（草稿当场置假）；
+2. 子开关置灰（只改界面：`setEnabled(false)` + 整行 alpha 0.45，**不写配置键**）；
+3. 相关缓存全部清除（复用既有的「清除所有字幕缓存」显式广播 → 宿主执行 → 回执统计后弹提示）。
+
+卡片本身在**保存配置之后**才消失 —— 显隐判据是「草稿 **或** 已保存为开启」，
+只看草稿会让「关掉总闸」的瞬间就把入口抹掉，用户再也打不开它。
+
+**⑤ 配置层不变式（防错位的第二道闸）**
+
+`SubtitleConfig.clamp()` 补一条：**总闸关 ⇒ 卡内子功能一律关**。
+这样任何读配置的路径都遵守同一条规则 —— 包括手工编辑过的配置 JSON、
+旧版本导出的配置，以及宿主进程自己读配置的那一侧。界面侧的置灰与它口径一致、互不打架。
+
+> ⚠️ **升级须知**：实验性功能默认关闭 ⇒ 升级到本版后「字幕缓存」会被自动关掉。
+> 要用的话，在设置页**连续点击状态卡 5 次**解锁卡片，再把总闸打开。
+
+**⑥ 版本号升为 2.3.2**（`appVersionTag` / `appVersionCode` / `appVersionName` 三处同步）。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py` 161 -> **181/181**（新增 U 段 19 条 + L12 四处版本号一致）
+- dex 层 `tools/verify_1007.py` 206 -> **217/217，155 个有区分力锚**
+  （主验 1015 / 对照 1006 / 反向对照 1011）
+- 一键全链 `tools/run_all_verify.py` 全绿
+- 履历段 `==== BUILD 2.3.2 / code 1015` 九段
+
+### 【本轮踩到的两个坑（都已修）】
+
+1. **`appVersionTag` 是「版本号四处」里最容易漏的那一处** —— 它决定 APK 文件名。
+   本轮只改了 Code / Name / CodeLabel，产出的包**内容**是 2.3.2 而**文件名**还是 2.3.1。
+   已补判据 `L12`：`appVersionTag` 必须与 `appVersionName` 一致。
+2. **改文案名之后，dex 判据必须改用零终止匹配** —— 「字幕缓存」是「字幕缓存功能」的
+   **子串**，裸串在两版都命中、判据会假装两版一样。
+   同一轮还发现裸搜 `Experimental` 会被 kotlinx 的
+   `require-ExperimentalCoroutineDispatcher` 污染（旧包里也是 True ⇒ 无区分力）。
+
+### 产物
+
+`DLsiteFloat-2.3.2-code1015-debug.apk`，5,608,968 B
+sha256 `005a5d6600a5dcd2472209c14188fcc636bcc48ea9200ef4b230364aace3c20e`
+versionName **2.3.1 -> 2.3.2**；code 1014 -> 1015；label `1014.2` -> `1014.3`
+
+## [2.3.2 / code 1016] — 设置页细化：实验卡配色与文案、状态卡提示、激活口径改「授权即激活」（2026-10-14）
+
+### 【需求（Ari 五条）】
+
+1. 实验性功能卡片底色改为和其他卡片颜色一致；
+2. 「启用实验性功能」下方小字全部删除；
+3. 「字幕缓存」下方小字改为：
+   「播放过的音轨字幕会自动缓存，超出储存上限后按最早缓存顺序自动清除」；
+4. 检测到已经打开实验性功能之后再点击状态卡时，
+   弹消息条「你已经打开实验性功能，无需进行此操作」；
+5. 模块激活逻辑修改：在插件管理中给本插件授权了宿主 APP 即视为模块已激活。
+
+### 【改动】
+
+**① 卡片底色（需求 1 的根因）**
+`refreshCardTints()` 是一份**逐个 tint 的白名单**（挨个给 `card_main` / `card_inactive` /
+`card_typo` / `card_liquidglass` / `card_misc` 上底色），code 1015 新建的
+`card_experimental` **没被加进这份名单** ⇒ 它顶着样式的默认底色，跟其余卡片对不上。
+本轮把它补进名单，六张卡走同一个底色源。
+
+**② 总开关下方小字整段删除（需求 2）**
+连文案枚举 `EXPERIMENTAL_MASTER_HINT` 一起摘掉（不留死代码）。总开关行之后**直接**接
+卡内子功能，中间不再有任何文字。
+
+**③ 缓存说明改口径（需求 3）**
+去掉「断网 / 飞行模式下也能显示」的旧说法与写死的 `256MB` —— 上限本来由配置决定，
+文案不再替它背书；改成陈述「超出储存上限后按最早缓存顺序自动清除」。三语同步。
+
+**④ 已开启时点状态卡给提示（需求 4）**
+连点五次是**未解锁时**的入口；一旦开着，这个手势就失去意义了。原先静默返回会让用户
+以为「点了没反应 / 是不是坏了」，现在改为直接弹一条消息条说明无需此操作，
+并把连点计数清零（免得退出实验功能时残留旧计数）。
+
+**⑤ 激活口径改为「授权即激活」（需求 5）**
+
+> 🔴 **实现边界（重要）**：插件进程**读不到** LSPosed 的作用域勾选状态 —— 那是管理器
+> 自己的私有数据。唯一的证据是「**宿主的 PONG 回来过**」。
+> 所以本轮把「曾经确认过授权」这件事**落盘**（界面偏好里的新键 `host_scope_seen`）：
+> 此后即使没启动宿主、甚至重启手机，也一直视为「已激活」；
+> 从未握手成功过的（新装、或没勾作用域）仍显示「未激活」并给出授权引导。
+
+判定从三分支收成两分支：只看授权位，「已授权但宿主当前没在跑」（原「DLsiteSound 未运行」）
+这个中间态**整条删除**。页面可编辑性与保存按钮本来就只看授权位，这条没变。
+
+### 【安全边界】
+
+只动设置页的显示与提示、以及状态卡的激活口径；探测机制、配置链路、卡片内容与顺序、
+播放页与悬浮窗渲染**一字未动**。`ScopeProbe.Result#hostAlive` 仍由宿主上报，
+只是暂时没有消费方（保留读取，便于将来恢复判别态）。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py` 181 -> **191/191**（新增 V 段 10 条）
+- dex 层 `tools/verify_1007.py` 217 -> **223/223，157 个有区分力锚**
+  （主验 1016 / 对照 1006 / 反向对照 1011）
+- 一键全链 `tools/run_all_verify.py` 全绿
+- 履历段 `==== BUILD 2.3.2 / code 1016` 九段
+
+### 产物
+
+`DLsiteFloat-2.3.2-code1016-debug.apk`，5,610,096 B
+sha256 `b58818e21197b2b763db17c268057de92c11c88e3f93addbd047a2b658611c6b`
+versionName 保持 **2.3.2**；code 1015 -> 1016；label `1014.3` -> `1014.4`
+
+## [2.3.2 / code 1017] — 修：索引作废后盘上旧轨道文件成永久孤儿（缓存目录只增不减）（2026-10-14）
+
+### 【起因与定案】
+
+Ari 反馈「更新到最新版后，之前缓存的 26 轨字幕没了」。用 2026-10-14 14:34 导出的
+LSPosed 日志还原时间线（已按「时间戳 + 进程 + 正文」去重）：
+
+- `11:21:35` `index loaded: 26 entr(ies), 432782 bytes` —— 26 轨被索引读回
+- `11:51:58` 仍在向设置页报数 26 条
+- `11:52:13` `cleared: removed 26 entries (432782 bytes)`
+- `11:52:13` `subtitle cache cleared by settings page` —— **真凶**
+- `14:22:59` `module build=2.3.2 (code 1016)` —— 装 1016
+
+清空发生在 **11:52:13**，那一场手机上跑的是 **code 1014**（早于装 1016 约两个半小时）
+⇒ **与版本升级无关**。把 code 1014 的 dex 抽出来反查：全包 `ConfigBus.sendCacheClear`
+**只有一个调用点** —— 设置页「清空缓存」按钮（带二次确认弹窗）；
+「实验性功能总开关」那条路径是 code 1015 才引入的，1014 里压根不存在。
+与 Ari 自述「没碰过总开关」一致。本轮**不动**那条链路。
+
+### 【顺手挖出的真问题】
+
+翻缓存目录时发现：`loadIndexLocked()` 在 `schema != INDEX_SCHEMA` 时
+**只把内存索引丢空就 return，盘上的单轨文件一个都没删**。
+
+后果 —— 条目没了、文件还在；`totalBytes` 从 0 重算，而缓存上限淘汰（按总字节数挑最旧的）
+**永远选不中这批孤儿** ⇒ 永久占空间，只有同作品同轨重新缓存
+（文件名 `md5(workKey|tc|idx)`，覆盖写同名文件）才会回收。
+code 1012 把 `INDEX_SCHEMA` 1→2 之后，那一批旧文件就一直躺在用户盘里，缓存目录只增不减。
+
+### 【改动】
+
+**① 作废即清扫** —— 索引结构版本不匹配时不再空手返回，改走新增的
+`discardIndexAndSweepLocked()`：**先清孤儿、再立刻重写一份空索引**
+（否则下次开进程还要再判一次不匹配）。
+
+**② 新增 `sweepOrphansLocked()`（返回删除文件数）** —— 列缓存目录 →
+只删扩展名为 `json` 的普通文件 → 白名单是「索引文件本身 + 当前内存索引引用的每个文件名」
+⇒ 索引正常时**一个都不会误删**，也不可能删到任何可命中的缓存；
+不递归删目录、不碰别的文件、正在写入的临时文件一律不碰。
+
+**③ 开机顺手扫一次** —— `init()` 读完索引后补一次 `sweepOrphansLocked()`，
+把历史上各处遗留一并回收（例如「写完文件、落索引之前崩溃」留下的半成品）。
+
+**④ 顺序与自愈** —— 先删文件、再落索引，与既有整库清空同一顺序；
+万一中途崩溃，残局是「索引引用着已不存在的文件」，而读索引对单文件缺失本来就是
+丢条目不报错 ⇒ 两个中断点都能自愈。
+
+**⑤ 常量文档加警示** —— `INDEX_SCHEMA` 的注释写清：
+**推进这个版本号 = 旧索引整批丢弃 + 盘上单轨文件一并清掉**，别为了顺手升一版而改它。
+
+### 【安全边界】
+
+只动缓存索引的失配分支与进程初始化路径。缓存命中 / 写入 / 落盘标签、
+上限淘汰（LRU）、设置页显示与清空链路、抓取链路、云端优先与离线兜底策略、
+悬浮窗渲染 —— **一字未动**。
+
+### 【验证】
+
+- 源码层 `tools/verify_1007_src.py` 191 -> **201/201**（新增 W 段 10 条）
+- dex 层 `tools/verify_1007.py` 223 -> **233/233，163 个有区分力锚**
+  （主验 1017 / 对照 1006 / 反向对照 1011）
+- 一键全链 `tools/run_all_verify.py` 全绿 **21/21**（另有 1 个跳过：verify_998.py）
+- 履历段 `==== BUILD 2.3.2 / code 1017` 九段
+
+> ⚠️ 本轮验证脚本**自身**修掉两处判据 bug（都是「判据写错」而非实现问题）：
+> ① W7 拿**剥注释后**的文本去查注释 ⇒ 必然假 FAIL，改用原始源码；
+> ② 219★ / 223★ 把 `sweepOrphansLocked` 的描述符写成 `()V`，实际返回 `int` ⇒ `()I`。
+
+### 产物
+
+`DLsiteFloat-2.3.2-code1017-debug.apk`，5,611,560 B
+sha256 `7f9b506e04846dd3c89e85c39987451a1afe90833cb6cf8dfa0bab08762a0239`
+versionName 保持 **2.3.2**；code 1016 -> 1017；label `1014.4` -> `1014.5`
+
+### 【附：label 规则修订（v29 修订）】
+
+本轮把 `appVersionCodeLabel` 的口径**收回到规则本身**：**日期段 = 构建当天 MMDD、
+尾号 = 当日第几版（跨日归 1）**。
+
+v29 里这个字段自 `1008.6` 起就把日期段停更在 `1008`，到 code 1011 冻结成 `1008.30` ——
+字面读作「10 月 8 日第 30 版」，实际语义早已是「1008 批次第 30 个可辨识版本」。
+本次**回溯归一 10-14 整批**：1013→`1014.1`、1014→`1014.2`、1015→`1014.3`、
+1016→`1014.4`、1017→`1014.5`；**10-13 及更早的条目保留旧值**（历史记录不回改）。
+
+另注：本字段**不进 APK** —— 全工程无 `buildConfigField` / `resValue` 消费它，
+9 个 dex 里搜不到；`aapt2 dump badging` 也只有 `versionCode` / `versionName`。
+⇒ 「版本号四处」里只有 tag / code / name 三处真正影响产物，**本次修订不改动任何交付包的字节**。
+
+## [2.3.2 / code 1018] — 架构审查三项：检测前的两道闸抽成纯判定层、切断 util 包到数据层的反向依赖、三处 dp 转 px 合并归口（2026-10-14）
+
+### 【起因】
+
+第二轮架构审查（`架构审查报告-20261014.md`，HEAD `9e5539d` + WIP code 1017）指出三处结构性欠账。
+Ari 指令：三项一次做完，**版本号先不变、code 升一个**。
+
+### 【改动】
+
+**2.2 检测前置闸抽成纯判定层**
+
+`hook/ActivityButtonHook.detectAndLayout` 是 404 行、要碰 6 组静态字段的方法，头两段却是纯前置闸：
+输入只有 `now` / `lastDetectMs` / `forceNext` / `following` / `lastPageMotionMs`，输出只有「过 / 不过」。
+现在抽成新增的 `hook/DetectGatePolicy.decide(...)` —— 零状态纯函数（不读任何字段、不持任何阈值常量，
+阈值一律由调用方传入），返回 `PROCEED` / `SKIP_THROTTLE` / `SKIP_FOLLOWING`。
+
+- **判据顺序与阈值一字未改**：①节流闸（`!forceNext && now - lastDetectMs < minIntervalMs`）
+  先于②跟手闸（`following && lastPageMotionMs != 0 && now - lastPageMotionMs < pageMotionHoldMs`）。
+- **副作用全部留在原处**：`sForceNextDetect` 清零 / `sLastDetectMs` 记时刻 / 跳过计数自增 /
+  跳过期心跳节奏，都还在调用点里；且「推进状态先于跟手分支」这一处顺序敏感点原样保留。
+- 与同包的 `CapsuleGeometry` / `PageFollowPolicy` / `AnchorDeadPolicy` 同构。收益是这段判据从此可以
+  喂真实采样节奏**离线对照** —— 而它决定的正是主线程掉不掉帧。
+
+**2.3 切断 `util → data` 的反向依赖**
+
+`util` 是全项目的公共底座，按约定应当是叶子包，实际却反向依赖数据层：
+
+| 反向边 | 原形态 | 现形态 |
+| --- | --- | --- |
+| `util/StatusBarSubtitleBridge → data.SubtitleRepository` / `data.SubtitleCue` | 桥直接引用仓库与 cue 类型 | 只依赖新增的 `util/LineSource` 接口 |
+| `util/NetLogFile → data.SubtitleRepository` | 拿不到上下文时回读 `repo.getAppContext()` | 改读新增的 `util/AppEnv`（attach 钩子注入） |
+
+- **新增 `util/LineSource`**：只吐**算好的结果**（`isPlayingOrUnknown` / `statusBarLine` /
+  `getCurrentCueDurationMs` / `shouldShowNoSubtitles`），不暴露任何数据层类型 ——
+  否则反向依赖会换个形式长回来。
+- **`SubtitleRepository implements LineSource`**：桥的五个签名由 `SubtitleRepository` 换成 `LineSource`，
+  而传进去的**还是同一个仓库对象** ⇒ **调用点零改动**（5 处调用点一个字都没动）。
+  桥是跨进程字幕链路的唯一通道，改错就是整条不显示，所以刻意选了零调用点改动的做法。
+- **`statusBarLine()` 逐行搬自桥里的 `computeCurrentLine`（含它的 `join`）**，`join` 在数据层更名 `joinCue`。
+  **锁粒度与原来完全相同**：`statusBarLine()` 自身**不加锁**，只是依次调用三个各自加锁的读方法 ——
+  与桥里原来的调用序列逐一对应，没有顺手把三次读合成一把锁。
+- 🔴 **包级硬判据**：整个 `util` 包不再出现 `import …data.`（源码层脚本里判死为 FAIL）。
+
+**2.6 三处 dp 转 px 合并归口**
+
+三个自绘视图（`CloseButtonView` / `GripIndicatorView` / `NotificationBadgeView`）各写了一遍 dp 换算。
+逐处打开后确认**三者语义完全相同**（`TypedValue.applyDimension` 的 `COMPLEX_UNIT_DIP` 分支实现就是
+`v * metrics.density`；其中 `NotificationBadgeView` 写的就是 `v * density`），现在统一转发新增的
+`Utils.dip2pxF(DisplayMetrics, float)`。
+
+- ⚠️ **刻意不用**返回 `int` 的 `dip2px` / `applyDimensionDip`：这三处的入参出参都是**几何中间量**
+  （描边宽度、三角形边长、内缩量），取整会丢精度。
+- ⚠️ 审查报告 §2.6 表格里「前两个是 `TypedValue` 截断」的说法**不成立** —— 逐处打开后看到那两个方法
+  的返回类型声明是 `float`，走的是 `applyDimension` 的 float 返回值，从来没截断过；
+  真正截断的是 `Utils.applyDimensionDip` 里那个 `(int)` 强制转换。
+- `dip2pxF` 由调用方直接传 `getResources().getDisplayMetrics()`，与原来三处取的是**同一个对象**
+  ⇒ 行为逐字节等价。
+
+### 【安全边界】
+
+不动抓取链路、字幕缓存策略、云端优先与离线兜底、设置页与悬浮窗渲染、状态栏接收端。
+改动集中在「判定层抽取」「依赖方向」「数值口径归口」三处。
+
+> ⚠️ 本轮只断了 `util → data` 的两条边。`util → config` 的两条（`LogGate → RemoteConfig`、
+> `ScopeProbe → ConfigBus`）**留待下一轮** —— 它们是闸门与探测件，接口注入一旦没装上会**静默失效**
+> （日志要么全开、要么全静默），需要单独一轮真机验证，不塞进本次改动。
+
+### 【验证】
+
+- 源码层 `tools/verify_1018_src.py` → **101/101 PASS**（含「旧形态绝迹」与「包级依赖方向」两组新判据）
+- dex 层 `tools/verify_1018.py` → **46/46 PASS**，有区分力锚 **38 条**
+  （主验 1018 / 对照 1017 / 反向对照 1011）
+- 一键全链 `tools/run_all_verify.py` → **PASS**（24 个脚本全量回归）
+- 履历段 `==== BUILD 2.3.2 / code 1018` 九段
+- 改前的工作区在 `app/build` 里的产物与上一版交付包**逐字节相同**（sha256 `7f9b506e…2a0239`）
+  ⇒ 工作区状态 == 上一版交付态，本条即双闭环的 revert 基线
+
+### 顺带修掉的工具债
+
+全链首跑时 `tools/verify_1007_src.py` 红了 4 条（`L10` / `U18` / `W9` / `W10`），
+**全是判据本身的问题，不是产物问题**：它们把上一轮的版本号与要点词**钉死**在工作区上。
+
+- `U18` / `W9` 写死 `appVersionCode = 1017`；`L10` / `W10` 要求「本轮履历段含
+  **孤儿 / 清扫 / 作废**」——那是 code 1017 轮的要点词。
+- 源码层脚本读的是**会往前滚的工作区**，钉死即必假 FAIL（铁律 82：本轮判据的
+  钉死版本与要点词每轮都要收回泛化）。对照：`tools/verify_1007.py`（dex 层）
+  的主验对象是**固定的 code 1017 包**，钉住反而正确，本轮 233/233 全绿。
+- 处置：版本号那条改**下界**（口径同既有的 `>= 1007`，防倒退且不设过期日）；
+  履历那条改判「履历段自报的 `【code NNNN】` == 横幅 code」——
+  「只升了横幅、履历段抄上一轮」照样被抓，且今后不必再改。
+- 另修一条真 bug：新增的 dex 层脚本里，`has_field` 硬要求字段有 `value :` 行，
+  把非编译期常量字段（`private static volatile Context sAppContext`）一律判成
+  「不存在」； Interfaces 段的正则漏了 `#N : ` 前缀 ⇒ 两条**假 FAIL**。
+
+### 产物
+
+`DLsiteFloat-2.3.2-code1018-debug.apk`，5,613,564 B
+sha256 `11aaf780fa10c1957b46214b7819311e69eef2f53db9c1fcda33ea403a34bb02`
+versionName 保持 **2.3.2**；code 1017 -> 1018；label `1014.5` -> `1014.6`
+
+## [2.3.2 / code 1019] — 冷启动首轨字幕错误：种子路径补「只取缓存」入口 + 认领即改签 + 副键命中守卫（2026-10-14）
+
+### 【起因】
+
+Ari 真机日志包 `LSPosed_20261014_162310.zip`：
+
+> 重新启动 APP 之后打开播放的**每个作品的第一个音轨**加载字幕不太对，
+> 但是跳转到其他音轨（第 2-其他轨）之后就正常了。
+
+Ari 指令：**改吧，不升版本号** ⇒ versionName 保持 2.3.2，只把 `appVersionCode` 1018 -> 1019。
+
+### 【根因】一个系统里同时坏了两处
+
+**失效 1 —— 冷启动的首轨从头到尾没去读缓存。**
+
+`PlayerSourceHook` 的种子分支（`sIdentitySeen == false` 那一段）只负责把基线身份立起来，
+**刻意不发换轨通知**（设计如此，避免开局误判换轨）。可数据层里读缓存的三条路
+——内存恢复 `tryResumeFromCache` / 磁盘兜底 `tryResumeFromDisk` / 裁决兜底 ——
+**全部挂在 `onTrackChanged` 之下**。于是「进程重启后打开的第一个作品的第一个音轨」，
+在「云端那份 JSON 还没到手、盘上却已经有缓存」这个窗口里，三条路一条都进不去，字幕只能空白。
+
+取证（同一次会话）：
+
+```
+16:14:38.162 [code 1008] local cache availability -> true (identity=6000385560000)
+16:14:58.169 lastJson=never | cues=0              <-- 首轨 20 秒过去仍是 0
+16:16:06.854 HIT (identity): tc=6 idx=0 dur=385560ms cues=71 bytes=13086
+                                                  <-- 数据一直在盘上
+```
+
+**失效 2 —— 认领成功了，但暂存用的标签没改签。**
+
+`stageCacheToDisk` 打的是「JSON 到达那一刻」的 `cuesOwnerSelection`；
+`tryResumeFromCache` 后来**已经认出**这份 JSON 属于另一个作品（`[code 1006] subtitle json came from ANOTHER work`），
+却没有把**认领到的目标键写回**暂存印章。于是 `flushStagedCache` 照旧用那个陈旧键落盘：
+
+```
+15:03:26.718 [code 1006] subtitle json came from ANOTHER work
+15:03:27.758 put tc=4 idx=0 cues=71 bytes=13086
+```
+
+同一份 13086 B / 71 条的字幕，随后又被写到 `tc=9 idx=0`（15:04:13）与 `tc=6 idx=0`（15:04:51）；
+而它的 `maxEnd=383.733s` 只配得上那条 385.56 s 的音轨 —— 明显的跨作品错标。
+
+**放大器 —— 读侧拦不住。**
+
+`stamp REFUSED (timeline mismatch) idx=0 maxEnd=383.733s > dur=208.08s + 2.0s` 这条**响了 416 次**，
+但被拒的是「补盖」；那条孤儿条目**仍留在副键 `bySelection` 里**，而 `lookup()` 的副键兜底不做时长校验：
+
+```
+16:18:19.578 HIT (selection-only): tc=9 idx=0 dur=0ms cues=71 bytes=13086
+```
+
+⇒ 把别的作品的台词渲染了出来。本会话 `freshWorkKey()` 全程为 null，
+唯一的跨作品防线（作品键正向校验）从头到尾没生效。
+
+### 【改动】
+
+**① 种子路径补一条「只取缓存、不挂起不裁决不关窗」的入口**（`SubtitleRepository.onSeededTrack`）
+
+新增公开入口，只走 `tryResumeFromDisk(...)`，受 `cacheUsable()` 门控；
+**不碰** `pendingTrackDecision` / `pendingSoftSuspend` / `floatingWindowOpen` / `pendingToken`，
+也**不调** `onTrackChanged`。云端 JSON 到达时 `loadFromJson` 照旧整份替换 cues。
+
+> 为什么换轨路径要「在线不主动读本地」、这里却可以直接读盘：那条规则的目的
+> **是等云端**，而本入口没有等待决策 —— 不挂起、不裁决、不关窗、不动任何状态机。
+
+**② 认领即改签**（`tryResumeFromCache` 内）
+
+认出 JSON 属于别的工作后，把 `cuesOwnerSelection` 与 `stagedCacheSelection` **一并写回认领到的目标键**，
+受 `newSelection > 0` 门控；`RESUME` 日志追加 `[cache label re-signed -> selection=N]`。
+
+**③ 到达印章陈旧旗标 `stagedCacheStampStale`（正交裁决两条规则）**
+
+1013 那条「**到达时刻才是权威**」的规则与「认领结果是证据」本来是**两条互相冲突**的口径。
+本轮**不让它们靠时间先后比大小**，而是**在到达那一刻把「印章已知陈旧」冻成一个旗标**：
+
+- 到达时冻结：`stagedCacheStampStale = workChangeKey != null || cuesArrivedDuringRebuild`；
+- 兑现时（`flushStagedCache`）**只读旗标、不重读** `workChangeKey` / `cuesArrivedDuringRebuild`
+  （这两个字段在窗口内可变，重读就是「用消费时的状态冒充事件那一刻的状态」）；
+- 旗标为真 ⇒ 用权威键；为假 ⇒ 维持 1013 的到达印章优先。
+- 改签订阅处同步把旗标归零；`clear` 处一并与其余印章字段一起清。
+
+**④ 补盖与副键命中共用同一把尺子 `timelineFits(Entry, long identity)`**
+
+把原本只写在 `stampDuration` 里的时长校验抽成**零状态纯判定**，`lookup` 的副键兜底也用它；
+副键命中的条目若时长对不上 ⇒ **自愈删除**（`removeEntryLocked + persistIndexLocked`）后返回 null，
+而不是像以前那样放行。
+
+**⑤ `INDEX_SCHEMA` 2 -> 3** —— 结构性作废已经错标在盘上的历史条目，让它们下次重建。
+另把 `shortKey` 改成取路径**末两段**（原来每个作品都打印 `work=optimized`，跨作品比对在日志里根本看不出区别）。
+
+### 【安全边界】
+
+不动抓取链路、云端优先与离线兜底的整体时序、设置页与悬浮窗渲染、状态栏接收端。
+新增的种子入口是**只读盘、不裁决**的一条窄路；其余改动集中在「暂存标签的权威来源」与「副键命中的准入」两处。
+
+### 【验证】
+
+- 源码层 `tools/verify_1019_src.py` → **84/84 PASS**
+- dex 层 `tools/verify_1019.py` → **73/73 PASS**，有区分力锚 **53 条**，无区分力（同一性）**17 条**
+  （主验 1019 / 对照 1018 / 反向对照 1011）
+- 一键全链 `tools/run_all_verify.py` → **PASS**
+- 履历段 `==== BUILD 2.3.2 / code 1019` 九段
+- **双闭环**：`--revert` + clean 构建 → sha256 `11aaf780…a34bb02`（== code 1018 交付包）；
+  `--apply` + clean 构建 → sha256 `c834bb9b…429e85c`（== 本轮交付包）
+  ⇒ 本轮改动 = 两个包之间的**唯一差异源**
+
+### 顺带修掉的工具债
+
+`tools/verify_1018_src.py` 把上一轮的版本号与横幅**钉死**在工作区上
+（`appVersionCode = 1018` / `'1014.6'` / `banners == ['1018']` / 收尾句 `code 1017 升 1018`），
+工作区一升到 1019 就**必然假 FAIL 5 条** —— 与 1018 轮修 `verify_1007_src.py` 是同一个坑（铁律 82）。
+
+处置：版本号判**下界 `>= 1018`**；label 判 `MMDD.N` 形态；横幅判「唯一且 `>= 1018`」；
+履历段改判「**自报 `【code NNNN` == 横幅 code**」（只升横幅、履历段抄上一轮照样被抓，且今后不必再改）；
+收尾句按模板判「`code (b-1) 升 b`」。改后 `verify_1018_src.py` → **101/101 PASS**。
+
+### 产物
+
+`DLsiteFloat-2.3.2-code1019-debug.apk`，5,616,276 B
+sha256 `c834bb9ba0c3d00e8c91a70f2d4af64af1f367956bfa2d667b5247ee6429e85c`
+versionName 保持 **2.3.2**；code 1018 -> 1019；label `1014.6` -> `1014.7`
+
+> ⚠️ 升级前请确认已装版本的 code **严格小于 1019**：Android 只允许 `versionCode` 单调递增，
+> 覆盖安装失败时请先卸载旧版。

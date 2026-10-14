@@ -29,6 +29,41 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 脚本 → (类别, 一句话说明它验什么)
 # ⚠️ 说明必须与脚本内部判据一致；改判据时同步改这里，否则索引表本身就会骗人。
 SCRIPTS = [
+    ('verify_1019_src.py', '源码层',
+     'code 1019 首轨字幕修复：种子路径补 onSeededTrack（只取缓存、不挂起不裁决，'
+     '体内不出现 pending*/floatingWindowOpen/onTrackChanged）+ 认领即改签'
+     '（cuesOwnerSelection/stagedCacheSelection 写回目标键，受 newSelection>0 门控）+ '
+     '到达印章陈旧旗标 stagedCacheStampStale（到达时刻冻结、兑现时不重读可变旗标）+ '
+     'timelineFits 同一把尺子（补盖与副键命中共用）+ 副键命中自愈删除 + INDEX_SCHEMA 2→3 + '
+     'shortKey 取末两段 + 版本/横幅纪律（84 项）'),
+    ('verify_1019.py', 'dex 字节码层',
+     'code 1019：onSeededTrack:(IJJLjava/lang/String;)V 与钩子调用点、'
+     'tryResumeFromCache 内新写 cuesOwnerSelection/stagedCacheSelection/stagedCacheStampStale、'
+     'stageCacheToDisk 冻结旗标 / flushStagedCache 分流且不重读可变旗标、'
+     'timelineFits:(Entry;J)Z 与 lookup/stampDuration 两处调用、shortKey 双 lastIndexOf、'
+     'INDEX_SCHEMA=3、aapt2 versionCode=1019（73 项 / 53 有区分力锚）'),
+    ('verify_1018_src.py', '源码层',
+     'code 1018 架构批次 B 三项：2.2 检测前置闸 DetectGatePolicy（零状态纯判定类，'
+     'PROCEED/SKIP_THROTTLE/SKIP_FOLLOWING 三档 + detectAndLayout 方法体切片：旧内联闸绝迹、'
+     '副作用顺序保留）+ 2.3 依赖倒置（util/LineSource 接口 + util/AppEnv，'
+     '**util 包级不再 import data.**，桥五签名换 LineSource，statusBarLine 不带锁）+ '
+     '2.6 dp 归口（Utils.dip2pxF float 口径，三视图转发，旧 int 口径保留）+ 版本/横幅纪律（101 项）'),
+    ('verify_1018.py', 'dex 字节码层',
+     'code 1018：DetectGatePolicy 三常量 0/1/2 与 decide:(JJZZJJJ)I 及 ActivityButtonHook 调用点、'
+     'util/LineSource 接口（方法形态 + INTERFACE 标志）与 util/AppEnv 是否编进包、'
+     'SubtitleRepository 的 Interfaces 段含 LineSource、桥新签名与旧 computeCurrentLine/join 绝迹、'
+     'Utils.dip2pxF:(DisplayMetrics;F)F 与三视图转发、aapt2 versionCode=1018（46 项 / 38 有区分力锚）'),
+    ('verify_1007_src.py', '源码层',
+     'code 1007 字幕离线缓存（新功能）+ code 1008 真机取证件：SubtitleCache 数据层 + 仓库接线 + '
+     '配置总闸 + 设置页开关/清除/占用 + 播放页胶囊（三档锚点阶梯、会话级默认关）+ '
+     '视图树 testID 探测（普通 tag 优先 + react_test_id 兜底）+ tag 普查 + 门控四要素快照 + '
+     '协议三 action + 版本/横幅纪律；**判据随轮次推广到 code 1018**（本轮判据不再钉死上一轮：'
+     '版本号改下界、履历段改判「自报 code == 横幅 code」）（201 项）'),
+    ('verify_1007.py', 'dex 字节码层',
+     'code 1007 新功能 + code 1008 取证件：SubtitleCache/Entry/11 方法/6 字段是否编进包、'
+     '常量 256MB 与 3min 与 0x7F999004、原子写/LRU/补盖校正/作品键校验调用链、'
+     '匿名类与 lambda 里的落点、零终止横幅精确匹配、[code 1008] 取证件三串 + 三字段 + '
+     '三方法、负向锚（158 项 / 119 有区分力锚）'),
     ('verify_1006_src.py', '源码层',
      'code 1006 作品键正证据（workKeyOf 两步纯解析 + cuesBelongToChangedWork 五参判定）+ '
      '第四条认领路径 + 按实例 id 记账的真边沿 + 权威读数关窗 + 静默例外扩到四处 + '
@@ -70,19 +105,28 @@ SCRIPTS = [
     ('verify_995.py', 'dex 字节码层',
      'code 995 六项改动是否真编进 APK（28 项，22 个有区分力锚）'),
     ('verify_protocol_src.py', '源码层',
-     'Protocol 单点真源：action/extra 字面量仅存在于 Protocol，转发壳完好（10 项）'),
+     'Protocol 单点真源：12 个 action / 12 个 extra 字面量仅存在于 Protocol，'
+     '转发壳完好，PROTOCOL_VERSION == 2（11 项）'),
     ('verify_994.py', 'dex 字节码层',
      'code 994 的 PageFollowPolicy 是否真编进 APK（6 个区分力锚）'),
     ('verify_994_log_window.py', '日志层',
      '994 真机日志窗口归一化脚本（防止跨窗口比条数出假回归）'),
 ]
 
-# 每个 dex 脚本期望的 code 号：(主验 code, 对照 code 或 None)
+# 每个 dex 脚本期望的 code 号：(主验 code, 对照 code 或 None[, 反向对照 code])
 # ⚠️ 不能「按文件名取最新两个」—— 那样会把 995 当成 993 的对照，判据必假失败。
 #   必须是脚本自己声明期望的 code，再精确匹配。
+# ⚠️ 第三项（可选）= **删除类锚的反向对照包**：code 1012 是删除类轮次，
+#   那些符号是 1007/1011 引进、1012 删掉的，只有**上一版**曾经有 ⇒
+#   拿 1006 当对照必然判「无区分力」。脚本用 add_gone() 消费它。
 # ⚠️ 只有**真正解析 APK/dex** 的脚本才登记在这里。
 #   不接包的脚本（如源码层校验、真机日志校验）不要登记，否则会被误判成「缺参数」。
 NEEDS_APK = {
+    'verify_1007.py': (1017, 1006, 1011),
+    'verify_1019.py': (1019, 1018, 1011),   # <apk_1019> <apk_1018 上一版> <apk_1011 反向固定>
+    'verify_1018.py': (1018, 1017, 1011),   # <apk_1018> <apk_1017 上一版> <apk_1011 反向固定>
+    # <apk_主验> <apk_对照> <apk_上一版>（1007 新功能 + 1011 簇推断根修 +
+    # 1012 删胶囊/自动来源 + 1013 落盘轨标签改用到达印章）
     'verify_1006.py': (1006, 1005),   # <apk_1006> <apk_1005>
     'verify_1005.py': (1005, 1004),   # <apk_1005> <apk_1004>
     'verify_1004.py': (1004, 1003),   # <apk_1004> <apk_1003>
@@ -144,11 +188,14 @@ def build_argv(name, repo):
       · 不接包参数的脚本 → `([], [])`   **空列表，不是 None**
       · 缺主验包→ `([], [code])`
       · 缺对照包   → `([主验包], [对照code])`
+      · 声明了第三参且对照包也在 → `([主验], [对照], [反向对照])`
     ⚠️ 必须用空列表当「不接参数」的信号。若返回 None，会被调用方当成「缺包」⇒ 误报 SKIP。
     """
     if name not in NEEDS_APK:
         return [], []
-    want_main, want_old = NEEDS_APK[name]
+    spec = NEEDS_APK[name]
+    want_main, want_old = spec[0], spec[1]
+    want_prev = spec[2] if len(spec) > 2 else None
     cands = find_apks(repo)
     missing = []
     args = []
@@ -158,11 +205,20 @@ def build_argv(name, repo):
         #   （实测：code 998 的包被后续 clean 构建清掉后，verify_998 就这样假 FAIL。）
         return [], [want_main]
     args.append(cands[want_main])
+    old_ok = True
     if want_old is not None:
         if want_old in cands:
             args.append(cands[want_old])
         else:
             missing.append(want_old)
+            old_ok = False
+    # 第三参（可选）：删除类锚的反向对照包。⚠️ 只有对照包也凑齐才追加 ——
+    #   否则它会**顶替**对照包的位置，脚本把上一版当 1006 用，判据静默错位。
+    if want_prev is not None and old_ok:
+        if want_prev in cands:
+            args.append(cands[want_prev])
+        else:
+            missing.append(want_prev)
     return args, missing
 
 

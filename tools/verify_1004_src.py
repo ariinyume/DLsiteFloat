@@ -172,7 +172,11 @@ def main():
     check('★ 零状态：类内字段恰为三个 private static final long 常量',
           sorted(consts) == ['IDENTITY_IDX_SCALE', 'IDENTITY_TC_SCALE', 'SELECTION_TC_SCALE']
           and len(fields) == len(consts), '字段=%s 常量=%s' % (fields, consts))
-    check('选择键与**时长无关**（剥注释后不出现 duration）', 'duration' not in keyc)
+    # 【code 1007 起收窄到 makeSelection】身份键 makeIdentity(int, double, int) 本轮升为 public，
+    #   它的形参就是 durationSec ⇒ 全文件查 'duration' 必然假 FAIL。原意是「**选择键**与时长无关」，
+    #   故改为只查 makeSelection 的方法体。
+    check('选择键与**时长无关**（makeSelection 体内不出现 duration；身份键本轮起合法含 durationSec）',
+          'duration' not in method_body(keyc, 'static long makeSelection('))
 
     for name, val, why in (
         ('SELECTION_TC_SCALE', '100000L', '选择键里 trackCount 的权重'),
@@ -411,8 +415,9 @@ def main():
           and int(m_ver.group(1)) >= 1004 and m_ver.group(1) == m_ban.group(1),
           'gradle=%s banner=%s' % (m_ver.group(1) if m_ver else '?',
                                    m_ban.group(1) if m_ban else '?'))
-    check("appVersionCodeLabel = '1008.25'",
-          re.search(r"def appVersionCodeLabel = '1008\.25'", gradle) is not None)
+    # 【code 1007 起放宽；code 1017 起日期段随构建当天】只守形态，不钉死具体值。
+    check("appVersionCodeLabel 形如 'MMDD.NN'（日期段随构建当天，不钉死）",
+          re.search(r"def appVersionCodeLabel = '\d{4}\.\d+'", gradle) is not None)
     # 【随轮次推进】versionName 由 Ari 按需升（如 2.3.0 → 2.3.1），因此**不钉死字面量**，
     #   改为守「三处同值」：gradle 的 name / tag + 常开横幅里的 versionName（拆两条，项数不变）。
     m_name = re.search(r"def appVersionName = '([\d.]+)'", gradle)

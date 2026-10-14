@@ -37,6 +37,7 @@ import java.util.Locale;
  * <pre>
  *   状态栏 开/关  →  狀態欄 開/關  →  Status ON / Status OFF
  *   悬浮窗 开/关  →  懸浮窗 開/關  →  Popup ON / Popup OFF
+ *   缓存 开/关    →  快取 開/關    →  Cache ON / Cache OFF   （【code 1007】新增）
  *   无字幕（按钮）→  無字幕        →  No Sub
  *   无字幕（悬浮窗占位）→ 無字幕   →  No Subtitles
  * </pre>
@@ -163,6 +164,15 @@ public final class I18n {
     /** 按钮里的「无字幕」（三态之一）。 */
     public static String noSub() {
         return en() ? "No Sub" : (hant() ? "無字幕" : "无字幕");
+    }
+
+    // ── 【code 1007】字幕缓存开关（播放页右上角、锚在官方字幕按钮左边那枚胶囊）────
+    public static String cacheOn() {
+        return en() ? "Cache ON" : (hant() ? "快取 開" : "缓存 开");
+    }
+
+    public static String cacheOff() {
+        return en() ? "Cache OFF" : (hant() ? "快取 關" : "缓存 关");
     }
 
     /** 悬浮窗面板里的「无字幕」占位。 */

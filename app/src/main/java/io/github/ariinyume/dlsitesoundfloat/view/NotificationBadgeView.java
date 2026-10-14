@@ -29,6 +29,7 @@ import android.widget.TextView;
 
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
+import io.github.ariinyume.dlsitesoundfloat.util.Utils;
 
 /**
  * 状态栏左侧的「通知数徽标」—— 圆底 + **镂空数字**。
@@ -202,7 +203,17 @@ public class NotificationBadgeView extends TextView {
         }
     }
 
+    /**
+     * dp → px，**float 口径（不取整）**。
+     *
+     * <p>【code 1018 / 架构审查 2.6】转发到 {@code Utils.dip2pxF}：原先这里裸写 {@code v * density}，
+     * 与同包另外两个自绘视图里的同名方法各写一遍。三处语义本来**完全相同**
+     * （{@code TypedValue.applyDimension} 的 DIP 分支实现就是 {@code v * metrics.density}）。
+     *
+     * <p>⚠️ 不能用 {@code Utils.dip2px} / {@code Utils.applyDimensionDip} —— 它们返回
+     * {@code int}，而本类的入参出参都是<b>几何中间量</b>，取整会丢精度。
+     */
     private float dp(float v) {
-        return v * getResources().getDisplayMetrics().density;
+        return Utils.dip2pxF(getResources().getDisplayMetrics(), v);
     }
 }

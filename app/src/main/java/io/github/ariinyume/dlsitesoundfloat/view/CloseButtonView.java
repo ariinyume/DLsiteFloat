@@ -27,8 +27,8 @@ import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.Shader;
 import android.os.Build;
-import android.util.TypedValue;
 import android.view.View;
+import io.github.ariinyume.dlsitesoundfloat.util.Utils;
 
 /**
  * 右上角「关闭」按钮（v14 新增，替代原先的 TextView "✕"）。
@@ -203,8 +203,17 @@ public class CloseButtonView extends View {
                 Shader.TileMode.CLAMP));
     }
 
+    /**
+     * dp → px，**float 口径（不取整）**。
+     *
+     * <p>【code 1018 / 架构审查 2.6】转发到 {@code Utils.dip2pxF}：原先这里裸写 {@code TypedValue.applyDimension}，
+     * 与同包另外两个自绘视图里的同名方法各写一遍。三处语义本来**完全相同**
+     * （{@code TypedValue.applyDimension} 的 DIP 分支实现就是 {@code v * metrics.density}）。
+     *
+     * <p>⚠️ 不能用 {@code Utils.dip2px} / {@code Utils.applyDimensionDip} —— 它们返回
+     * {@code int}，而本类的入参出参都是<b>几何中间量</b>，取整会丢精度。
+     */
     private float dp(float v) {
-        return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
-                getResources().getDisplayMetrics());
+        return Utils.dip2pxF(getResources().getDisplayMetrics(), v);
     }
 }

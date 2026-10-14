@@ -21,8 +21,6 @@ package io.github.ariinyume.dlsitesoundfloat.util;
 import android.content.Context;
 import android.os.Environment;
 
-import io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository;
-
 import java.io.File;
 import java.io.FileWriter;
 import java.text.SimpleDateFormat;
@@ -33,7 +31,7 @@ import java.util.Locale;
  * 把关键网络诊断写到文件，便于二次定位真实请求路径。
  *
  * v5 修复「文件根本不存在」的原因：本类原先在 NetworkHook.hook() 时 init(ctx)，
- * 但那一刻 Application.attach 还没跑，repo.getAppContext() 仍是 null →
+ * 但那一刻 Application.attach 还没跑，宿主上下文仍是 null →
  * 退回到 /sdcard/Download（Android 11+ 无权限静默失败）→ FILE 是个写不进去的路径，
  * 且之后再也不会重新初始化，于是整个会话一条都没落盘。
  *
@@ -57,7 +55,11 @@ public class NetLogFile {
 
     private static void ensureFile(Context ctx) {
         if (ctx == null) {
-            ctx = SubtitleRepository.getInstance().getAppContext();
+            // 【code 1018 / 架构审查 2.3】原先这里读
+            //   SubtitleRepository.getInstance().getAppContext() —— 那是 util → data 的
+            //   又一条反向依赖（util 按约定是叶子包）。改为读 util 自己的 {@link AppEnv}
+            //   （由 Application#attach 钩子注入）。语义不变：都是「拿宿主 Application 上下文」。
+            ctx = AppEnv.app();
         }
         if (ctx == null) {
             return; // 还没有上下文，下次再试

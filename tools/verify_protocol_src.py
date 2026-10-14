@@ -5,7 +5,7 @@
 
 为什么要有这个脚本
 ------------------
-`verify_995.py`（dex 层）能证明「Protocol 类编进包了、9 个 action 字面量齐全」，
+`verify_995.py`（dex 层）能证明「Protocol 类编进包了、action 字面量齐全」，
 但**证明不了**「旧两处已不再各自写一份字面量」——
 因为 `public static final String X = Protocol.ACTION_X;` 会被 **javac 编译期常量内联**，
 dex 里每个类的常量池都各自留了一份，字节码层看不到转发关系（实测两版都查不到 Protocol 引用）。
@@ -21,8 +21,8 @@ dex 里每个类的常量池都各自留了一份，字节码层看不到转发�
 ------
 1. 全仓（除 Protocol.java）**不再出现**任何 `io.github.ariinyume.dlsitesoundfloat.action.` 字面量
 2. 全仓（除 Protocol.java）**不再出现**宿主/SystemUI 包名字面量
-3. Protocol.java 里 9 个 action **齐全**且都在（防「搬走时漏了一个」）
-4. Protocol.java 里 extra key 与两个 tag 值齐全
+3. Protocol.java 里全部 action（含 code 1007 新增三条）**齐全**且都在（防「搬走时漏了一个」）
+4. Protocol.java 里 extra key（含 code 1007 新增两个）与两个 tag 值齐全，且 PROTOCOL_VERSION == 2
 5. ConfigBus / StatusBarSubtitleBridge 的转发壳**必须仍存在**（删了就断调用点）
 
 用法
@@ -44,9 +44,15 @@ ALL_ACTIONS = [
     'CONFIG_CHANGED', 'RESTART_SYSUI', 'SCOPE_HOST_PING', 'SCOPE_HOST_PONG',
     'STATUSBAR_SUBTITLE_LINE', 'STATUSBAR_SUBTITLE_ENABLED',
     'STATUSBAR_SUBTITLE_DISMISS_REQUEST', 'STATUSBAR_SCOPE_PING', 'STATUSBAR_SCOPE_PONG',
+    # 【code 1007】字幕缓存三通道（设置页 ↔ DLsiteSound 进程）
+    'SUBTITLE_CACHE_CLEAR', 'SUBTITLE_CACHE_STATS_REQ', 'SUBTITLE_CACHE_STATS',
 ]
 ALL_EXTRAS = ['build', 'tag', 'host_alive', 'config_json', 'reason',
-              'line', 'enabled', 'duration_ms', 'playing', 'pong_build']
+              'line', 'enabled', 'duration_ms', 'playing', 'pong_build',
+              # 【code 1007】缓存占用负载
+              'cache_count', 'cache_bytes']
+# 【code 1007】契约版本 1 → 2（新增三条 action）。**只在增/废 action 时动**。
+EXPECTED_PROTOCOL_VERSION = 2
 PKG_LITERALS = ['jp.co.eisys.dlsitesound', 'com.android.systemui']
 
 PROTOCOL_REL = os.path.join('config', 'Protocol.java')
@@ -135,11 +141,16 @@ def main():
     print()
     print('=== 2. Protocol 定义完整性（防搬漏）===')
     miss_a = [a for a in ALL_ACTIONS if '"%s"' % a not in proto_actions]
-    check('9 个 action 全在 Protocol 定义',
+    check('%d 个 action 全在 Protocol 定义' % len(ALL_ACTIONS),
           not miss_a, '缺: %s' % (miss_a or '无'))
     miss_e = [e for e in ALL_EXTRAS if '"%s"' % e not in proto]
-    check('10 个 extra key 全在', not miss_e, '缺: %s' % (miss_e or '无'))
+    check('%d 个 extra key 全在' % len(ALL_EXTRAS), not miss_e, '缺: %s' % (miss_e or '无'))
     check('PROTOCOL_VERSION 已定义', 'PROTOCOL_VERSION' in proto)
+    # 【code 1007】值也要核：新增/废弃 action 才 +1，本轮 1 → 2。
+    m_ver = re.search(r'PROTOCOL_VERSION\s*=\s*(\d+)', proto)
+    check('PROTOCOL_VERSION == %d' % EXPECTED_PROTOCOL_VERSION,
+          bool(m_ver) and int(m_ver.group(1)) == EXPECTED_PROTOCOL_VERSION,
+          '实际 %s' % (m_ver.group(1) if m_ver else '未取到'))
     check('ACTION_PREFIX 已定义', 'ACTION_PREFIX' in proto)
 
     print()

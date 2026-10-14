@@ -375,7 +375,6 @@ public class ActivityButtonHook {
     private static final int CAPSULE_ID_STATUSBAR = 0x7F999002;
     /** 悬浮窗字幕胶囊的 id。 */
     private static final int CAPSULE_ID_FLOATING = 0x7F999003;
-
     /**
      * ── v57（2026-09-20）：字幕开关从「单按钮 + 长按/短按」改成**双胶囊按钮** ──
      *
@@ -3086,9 +3085,16 @@ public class ActivityButtonHook {
         // 被节流提前 return 也不会让检测链断掉。
         // 例外：切页动画期间的快速复检需要绕过节流（否则会被丢掉）。
         long now = SystemClock.uptimeMillis();
-        if (!sForceNextDetect && now - sLastDetectMs < DETECT_MIN_INTERVAL_MS) {
+        // 【code 1018 / 架构审查 2.2】两道前置闸（节流 + 跟手跳过）的判定已抽成
+        //   {@link DetectGatePolicy#decide}（零状态纯函数，可离线单测）——
+        //   判据顺序与阈值逐条照搬原实现；这里只执行它的结论、并推进那两个状态。
+        int gate = DetectGatePolicy.decide(now, sLastDetectMs, sForceNextDetect,
+                sFollowing, sLastPageMotionMs,
+                DETECT_MIN_INTERVAL_MS, PAGE_MOTION_HOLD_MS);
+        if (gate == DetectGatePolicy.SKIP_THROTTLE) {
             return;
         }
+        // 节流闸放行 ⇒ 推进这两个状态（顺序与原实现一致：先清 force、再记时刻）。
         sForceNextDetect = false;
         sLastDetectMs = now;
 
@@ -3106,8 +3112,7 @@ public class ActivityButtonHook {
         //   · 基线采集要求「页面静止」，拖动中本来就采不到。
         // 所以直接跳过，只把心跳按 FOLLOW_QUIET_HEARTBEAT_MS（120ms）续上 ——
         // 页面一停，本条件立刻不成立，完整扫描自动恢复（含「页面被卸载」的判定）。
-        if (sFollowing && sLastPageMotionMs != 0L
-                && now - sLastPageMotionMs < PAGE_MOTION_HOLD_MS) {
+        if (gate == DetectGatePolicy.SKIP_FOLLOWING) {
             sQuietScanSkips++;
             sNextHeartbeatMs = FOLLOW_QUIET_HEARTBEAT_MS;
             return;
@@ -4484,7 +4489,11 @@ public class ActivityButtonHook {
             float min = CAPSULE_TEXT_MIN_SP * d;
             String[] samples = {
                     I18n.statusOn(), I18n.statusOff(),
-                    I18n.floatingOn(), I18n.floatingOff(), I18n.noSub()};
+                    I18n.floatingOn(), I18n.floatingOff(), I18n.noSub(),
+                    // 【code 1007】字幕缓存胶囊的两种文案也要参与量宽 —— 漏了它，
+                    //   若哪天缓存文案比现有文案长，胶囊就会被撑出省略号（本函数正是
+                    //   「文字一定放得下」这条保证的唯一来源）。
+                    I18n.cacheOn(), I18n.cacheOff()};
             while (size > min) {
                 paint.setTextSize(size);
                 float max = 0f;
@@ -4508,4 +4517,5 @@ public class ActivityButtonHook {
                 + "px, density=" + d + ", lang=" + I18n.lang() + ")");
         return sCapsuleTextPx;
     }
+
 }

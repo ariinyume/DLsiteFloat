@@ -21,13 +21,7 @@ package io.github.ariinyume.dlsitesoundfloat.util;
 import android.content.Context;
 import android.content.Intent;
 import android.os.SystemClock;
-import android.text.TextUtils;
-
 import io.github.ariinyume.dlsitesoundfloat.config.Protocol;
-import io.github.ariinyume.dlsitesoundfloat.data.SubtitleCue;
-import io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository;
-
-import java.util.List;
 
 /**
  * 跨进程桥：DLsiteSound 进程 ↔ SystemUI 进程。
@@ -49,6 +43,13 @@ import java.util.List;
  *    根本不需要动开关。现在：开关只由长按翻转；数据侧只决定「当下有没有内容可显示」。
  *  - 广播从 {@code SubtitleRepository} 的中央观察者发出，与悬浮窗开关/视图生命周期解耦——
  *    即使悬浮窗关闭，只要 DLsite Sound 在播，状态栏字幕照常刷新。
+ *  - 【code 1018 / 架构审查 2.3】本类**不再直接依赖数据层**。原先它 {@code import}
+ *    {@code data.SubtitleRepository} / {@code data.SubtitleCue}，那是 {@code util → data}
+ *    的**反向依赖**（{@code util} 是全项目的公共底座，按约定应当是叶子包）
+ *    ⇒ 包级依赖图成环，「改 util 要考虑会不会影响数据层」。
+ *    现在它只依赖 {@link LineSource} —— 一个只吐「算好的结果」的接口，
+ *    实现在数据层（{@code SubtitleRepository implements LineSource}），
+ *    因此**调用点零改动**（传进去的还是同一个仓库对象）。
  *  - **暂停即隐藏**：检测到暂停时这里把 line 置空（状态栏据此隐藏字幕并还原时钟/通知图标）；
  *    恢复播放后 line 自动回来，只要开关还开着就继续显示。
  */
@@ -292,8 +293,8 @@ public final class StatusBarSubtitleBridge {
      *  【v57】触发形式已由「长按」改为「点击」，判据本身不变。 */
     // 【1.21.16 问题 1】口径统一到 shouldShowNoSubtitles()（含软裁决 / 换轨待确认）。
     // 【2.3.0 §2.1.1.4】再加一道 L1 总闸：功能级关着时，会话开关压根不该能被翻。
-    public static boolean canToggle(SubtitleRepository repo) {
-        return repo != null && !repo.shouldShowNoSubtitles() && sFeatureEnabled;
+    public static boolean canToggle(LineSource src) {
+        return src != null && !src.shouldShowNoSubtitles() && sFeatureEnabled;
     }
 
     /** 广播开关状态（App 启动 / 翻转时调用）。 */
@@ -325,13 +326,13 @@ public final class StatusBarSubtitleBridge {
      * 强制重推当前字幕行 + 开关态（绕过去重）。长按翻转开关后立即调用，确保状态栏即时刷新；
      * 也用于 SystemUI 进程重启后由 App 侧重新同步一次最新状态。
      */
-    public static void resendCurrentFromRepo(Context ctx, SubtitleRepository repo) {
-        if (ctx == null || repo == null) {
+    public static void resendCurrentFromRepo(Context ctx, LineSource src) {
+        if (ctx == null || src == null) {
             return;
         }
-        boolean playing = isPlaying(repo);
-        String line = playing ? computeCurrentLine(repo) : "";
-        long dur = playing ? computeCurrentDurationMs(repo) : 0L;
+        boolean playing = isPlaying(src);
+        String line = playing ? src.statusBarLine() : "";
+        long dur = playing ? computeCurrentDurationMs(src) : 0L;
         sLastSentLine = line;
         sLastSentDurationMs = dur;
         sLastSentPlaying = playing;
@@ -342,13 +343,13 @@ public final class StatusBarSubtitleBridge {
      * 从仓库算出当前字幕行并广播；与上次相同则跳过（去重）。
      * 统一从仓库计算，避免依赖悬浮窗视图是否存活——满足「无论悬浮窗开关状态都常驻」。
      */
-    public static void sendCurrentFromRepo(Context ctx, SubtitleRepository repo) {
-        if (ctx == null || repo == null) {
+    public static void sendCurrentFromRepo(Context ctx, LineSource src) {
+        if (ctx == null || src == null) {
             return;
         }
-        boolean playing = isPlaying(repo);
-        String line = playing ? computeCurrentLine(repo) : "";
-        long dur = playing ? computeCurrentDurationMs(repo) : 0L;
+        boolean playing = isPlaying(src);
+        String line = playing ? src.statusBarLine() : "";
+        long dur = playing ? computeCurrentDurationMs(src) : 0L;
         if (line.equals(sLastSentLine)
                 && dur == sLastSentDurationMs
                 && playing == sLastSentPlaying) {
@@ -369,49 +370,27 @@ public final class StatusBarSubtitleBridge {
         }
     }
 
-    /** 仓库侧是「三态」的：hook 全挂时返回 true（宁可多显示，也不要把字幕弄没）。 */
-    private static boolean isPlaying(SubtitleRepository repo) {
+    /** 数据源侧是「三态」的：hook 全挂时返回 true（宁可多显示，也不要把字幕弄没）。 */
+    private static boolean isPlaying(LineSource src) {
         try {
-            return repo.isPlayingOrUnknown();
+            return src.isPlayingOrUnknown();
         } catch (Throwable t) {
             return true;
         }
     }
 
-    private static String computeCurrentLine(SubtitleRepository repo) {
-        List<SubtitleCue> cues = repo.getCues();
-        int idx = repo.findCurrentCueIndex();
-        if (cues != null && !cues.isEmpty() && idx >= 0 && idx < cues.size()) {
-            return join(cues.get(idx));
-        }
-        List<String> cur = repo.getCurrentSubtitles();
-        if (cur != null && !cur.isEmpty()) {
-            return TextUtils.join(" ", cur).toString();
-        }
-        return "";
-    }
-
     /** 当前字幕行的播放时长（毫秒）；0 = 未知。状态栏据此决定单程滚动的用时。 */
-    private static long computeCurrentDurationMs(SubtitleRepository repo) {
+    private static long computeCurrentDurationMs(LineSource src) {
         try {
-            return repo.getCurrentCueDurationMs();
+            return src.getCurrentCueDurationMs();
         } catch (Throwable t) {
             return 0L;
         }
     }
 
-    /** 把一条 cue 的多条字幕用空格合并成单行（与 FloatingSubtitleView.joinSubtitles 等价）。 */
-    private static String join(SubtitleCue cue) {
-        if (cue == null || cue.subtitles == null) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (String s : cue.subtitles) {
-            if (sb.length() > 0) {
-                sb.append(' ');
-            }
-            sb.append(s);
-        }
-        return sb.toString();
-    }
+    // 【code 1018】原先这里还有两个私有方法（computeCurrentLine / join），
+    //   已**逐行**搬进数据层成为 SubtitleRepository.statusBarLine() / joinCue()
+    //   —— 那是本次断 util → data 反向依赖的代价：算「当前该显示哪一行」需要认识
+    //   SubtitleCue，而 util 包不该认识它。锁粒度与原来完全相同（本类仍只是
+    //   依次调用三个各自加锁的读方法），因为 statusBarLine() 自身不加锁。
 }

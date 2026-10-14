@@ -19,6 +19,7 @@
 package io.github.ariinyume.dlsitesoundfloat.util;
 
 import android.content.Context;
+import android.util.DisplayMetrics;
 import android.util.TypedValue;
 
 /**
@@ -81,5 +82,23 @@ public class Utils {
     public static int applyDimensionDip(Context ctx, float dp) {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp,
                 ctx.getResources().getDisplayMetrics());
+    }
+
+    /**
+     * float 口径的 dp → px（**不取整**，也没有 {@code +0.5f}）。
+     *
+     * <p>【code 1018 / 架构审查 2.6】{@code view} 包里三个自绘视图各自私有了一份 dp 换算，
+     * 三处语义**完全相同**（{@code TypedValue.applyDimension(COMPLEX_UNIT_DIP, v, dm)}
+     * 的实现就是 {@code v * metrics.density}）—— 本方法给它们一个归口。
+     *
+     * <p>⚠️ <b>不能</b>改用 {@link #dip2px} / {@link #applyDimensionDip}：那两处返回
+     * {@code int}，而这里三处调用点的入参/出参都是<b>几何中间量</b>
+     * （描边宽度、三角形边长、内缩量），取整会丢精度。
+     *
+     * @param dm 密度来源（调用方直接传 {@code getResources().getDisplayMetrics()}，
+     *           与原先那三处私有实现取的是同一个对象，保证行为逐字节等价）
+     */
+    public static float dip2pxF(DisplayMetrics dm, float dp) {
+        return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, dm);
     }
 }

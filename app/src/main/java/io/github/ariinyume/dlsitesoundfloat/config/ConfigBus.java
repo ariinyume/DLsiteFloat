@@ -76,11 +76,22 @@ public final class ConfigBus {
     /** DLsiteSound 进程 → 设置页：探测应答。 */
     public static final String ACTION_HOST_PONG = Protocol.ACTION_HOST_PONG;
 
+    /** 【code 1007】设置页 → 宿主：清空全部字幕缓存（缓存落在宿主私有目录，只有宿主能清）。 */
+    public static final String ACTION_SUBTITLE_CACHE_CLEAR = Protocol.ACTION_SUBTITLE_CACHE_CLEAR;
+    /** 【code 1007】设置页 → 宿主：查询字幕缓存占用。 */
+    public static final String ACTION_SUBTITLE_CACHE_STATS_REQ =
+            Protocol.ACTION_SUBTITLE_CACHE_STATS_REQ;
+    /** 【code 1007】宿主 → 设置页：字幕缓存占用应答。 */
+    public static final String ACTION_SUBTITLE_CACHE_STATS = Protocol.ACTION_SUBTITLE_CACHE_STATS;
+    /** 【code 1007】缓存条目数（{@link #ACTION_SUBTITLE_CACHE_STATS} 携带）。 */
+    public static final String EXTRA_CACHE_COUNT = Protocol.EXTRA_CACHE_COUNT;
+    /** 【code 1007】缓存占用字节数（{@link #ACTION_SUBTITLE_CACHE_STATS} 携带）。 */
+    public static final String EXTRA_CACHE_BYTES = Protocol.EXTRA_CACHE_BYTES;
+
     /** PONG 携带的模块构建号（与 {@code BuildConfig.VERSION_CODE} 同源，用于版本一致性告警）。 */
     public static final String EXTRA_BUILD = Protocol.EXTRA_BUILD;
     /** PONG 携带的进程标识（"host" / "systemui"）。 */
-    public static final String EXTRA_TAG = Protocol.EXTRA_TAG;
-    /**
+    public static final String EXTRA_TAG = Protocol.EXTRA_TAG;    /**
      * 【2.3.0】宿主 PONG 携带的「DLsiteSound 当前真的在用」标志（boolean）。
      *
      * 判据（与 {@link ScopeProbe.Result#hostAlive} 严格对应）：
@@ -159,6 +170,12 @@ public final class ConfigBus {
             // 重启系统界面只由 SystemUI 进程内的模块处理
             f.addAction(ACTION_RESTART_SYSUI);
         }
+        if ("host".equals(tag)) {
+            // 【code 1007】字幕缓存的清理 / 统计只由宿主进程执行（缓存目录是宿主的私有目录，
+            //   设置页与 SystemUI 受 SELinux 限制读不到，见 Protocol 里这三条 action 的说明）。
+            f.addAction(ACTION_SUBTITLE_CACHE_CLEAR);
+            f.addAction(ACTION_SUBTITLE_CACHE_STATS_REQ);
+        }
         BroadcastReceiver r = new BroadcastReceiver() {
             @Override
             public void onReceive(Context c, Intent i) {
@@ -173,6 +190,14 @@ public final class ConfigBus {
                     }
                     if (ACTION_RESTART_SYSUI.equals(action)) {
                         restartSystemUi(tag);
+                        return;
+                    }
+                    if (ACTION_SUBTITLE_CACHE_CLEAR.equals(action)) {
+                        handleCacheClear(c, tag);
+                        return;
+                    }
+                    if (ACTION_SUBTITLE_CACHE_STATS_REQ.equals(action)) {
+                        answerCacheStats(c, tag);
                         return;
                     }
                     if (ACTION_CONFIG_CHANGED.equals(action)) {
@@ -380,8 +405,60 @@ public final class ConfigBus {
     }
 
     /**
-     * 配置变更后把「状态栏字幕**功能**」的持久化值同步进宿主进程并推给 SystemUI。
+     * 【code 1007】宿主进程侧：把整份字幕缓存清空（设置页「清除所有字幕缓存」）。
      *
+     * <p>只对 {@code tag == "host"} 生效 —— 缓存落在**宿主**的私有目录，设置页 / SystemUI
+     * 进程即便收到也清不了（且它们根本不会注册这条 action，见 {@link #installResponder}）。
+     * 清完回一条统计（0 条 / 0 字节），让设置页那行占用显示立刻归零。
+     */
+    private static void handleCacheClear(Context ctx, String tag) {
+        if (ctx == null || !"host".equals(tag)) {
+            return;
+        }
+        try {
+            io.github.ariinyume.dlsitesoundfloat.data.SubtitleCache cache =
+                    io.github.ariinyume.dlsitesoundfloat.data.SubtitleCache.get();
+            // 兜底初始化（正常情况下模块已在 Application#attach 时初始化过）：
+            //   拿到的是真实宿主 Application Context ⇒ 目录正确。
+            cache.init(ctx);
+            cache.clearAll();
+            logInfo("[host] subtitle cache cleared by settings page");
+            sendCacheStats(ctx, cache.count(), cache.bytes());
+        } catch (Throwable t) {
+            logWarn("handleCacheClear failed: " + t);
+        }
+    }
+
+    /** 【code 1007】宿主进程侧：应答缓存占用查询。 */
+    private static void answerCacheStats(Context ctx, String tag) {
+        if (ctx == null || !"host".equals(tag)) {
+            return;
+        }
+        try {
+            io.github.ariinyume.dlsitesoundfloat.data.SubtitleCache cache =
+                    io.github.ariinyume.dlsitesoundfloat.data.SubtitleCache.get();
+            cache.init(ctx);
+            sendCacheStats(ctx, cache.count(), cache.bytes());
+        } catch (Throwable t) {
+            logWarn("answerCacheStats failed: " + t);
+        }
+    }
+
+    /** 【code 1007】宿主 → 设置页：广播一条缓存占用。 */
+    private static void sendCacheStats(Context ctx, int count, long bytes) {
+        try {
+            Intent out = new Intent(ACTION_SUBTITLE_CACHE_STATS);
+            out.putExtra(EXTRA_CACHE_COUNT, count);
+            out.putExtra(EXTRA_CACHE_BYTES, bytes);
+            ctx.sendBroadcast(out);
+            logDebug("[host] cache stats sent: " + count + " entr(ies), " + bytes + " bytes");
+        } catch (Throwable t) {
+            logWarn("sendCacheStats failed: " + t);
+        }
+    }
+
+    /**
+     * 配置变更后把「状态栏字幕**功能**」的持久化值同步进宿主进程并推给 SystemUI。     *
      * 【2.3.0 §2.1.1.4】这里是两级开关最容易串味的地方，口径写死在这里：
      *   · 配置键 {@code statusbar_subtitle_enabled} 是 **L1 功能级总闸**（持久）；
      *   · {@code StatusBarSubtitleBridge.sAppEnabled} 是 **L2 会话级开关**（宿主会话，默认关）。
@@ -473,6 +550,41 @@ public final class ConfigBus {
             ctx.sendBroadcast(ping);
         } catch (Throwable t) {
             logWarn("sendHostScopePing failed: " + t);
+        }
+    }
+
+    /**
+     * 【code 1007】设置页「清除所有字幕缓存」：显式广播给宿主进程。
+     *
+     * <p>为什么用 {@code setPackage}（显式广播）：与 {@link #sendHostScopePing} 同因 ——
+     * 宿主退到后台后收不到**隐式**广播（Android 8.0 起的后台限制），而缓存操作本来就是在
+     * 用户切到设置页、宿主在后台时做的。
+     */
+    public static void sendCacheClear(Context ctx) {
+        if (ctx == null) {
+            return;
+        }
+        try {
+            Intent i = new Intent(ACTION_SUBTITLE_CACHE_CLEAR);
+            i.setPackage(HOST_PKG);
+            ctx.sendBroadcast(i);
+            logDebug("cache clear request sent to host");
+        } catch (Throwable t) {
+            logWarn("sendCacheClear failed: " + t);
+        }
+    }
+
+    /** 【code 1007】设置页查询缓存占用（宿主会回一条 {@link #ACTION_SUBTITLE_CACHE_STATS}）。 */
+    public static void sendCacheStatsRequest(Context ctx) {
+        if (ctx == null) {
+            return;
+        }
+        try {
+            Intent i = new Intent(ACTION_SUBTITLE_CACHE_STATS_REQ);
+            i.setPackage(HOST_PKG);
+            ctx.sendBroadcast(i);
+        } catch (Throwable t) {
+            logWarn("sendCacheStatsRequest failed: " + t);
         }
     }
 

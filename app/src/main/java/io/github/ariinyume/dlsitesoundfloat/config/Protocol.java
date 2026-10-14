@@ -51,8 +51,10 @@ public final class Protocol {
      *
      * <p>作用：握手时带上，双方版本不一致打警告 —— 跨进程链路曾经因为
      * 「一边 code 951、一边 code 950」而出现握手告警（见 CHANGELOG code 951 末尾）。
+     *
+     * <p>【code 1007】1 → 2：新增字幕缓存清理 / 统计三条 action（见下）。
      */
-    public static final int PROTOCOL_VERSION = 1;
+    public static final int PROTOCOL_VERSION = 2;
 
     /** 广播 action 的统一前缀。跟 {@code applicationId} 同源，改包名时必须同步。 */
     public static final String ACTION_PREFIX = "io.github.ariinyume.dlsitesoundfloat.action.";
@@ -91,6 +93,22 @@ public final class Protocol {
     /** 作用域探测应答 **SystemUI → App**。 */
     public static final String ACTION_SCOPE_PONG = ACTION_PREFIX + "STATUSBAR_SCOPE_PONG";
 
+    // ── 【code 1007】字幕缓存（设置页 ↔ DLsiteSound 进程）────────────────
+    //
+    // 为什么必须走广播：缓存落在**宿主 App 的私有目录**
+    // （Android/data/<宿主包名>/files/subtitle_cache/），设置页进程受 SELinux 限制读不到
+    // 那个目录，SystemUI 同理。所以「清空缓存」与「查缓存占用」都只能由宿主进程执行。
+
+    /** 设置页 → DLsiteSound 进程：清空全部字幕缓存。 */
+    public static final String ACTION_SUBTITLE_CACHE_CLEAR = ACTION_PREFIX + "SUBTITLE_CACHE_CLEAR";
+
+    /** 设置页 → DLsiteSound 进程：查询字幕缓存占用。 */
+    public static final String ACTION_SUBTITLE_CACHE_STATS_REQ =
+            ACTION_PREFIX + "SUBTITLE_CACHE_STATS_REQ";
+
+    /** DLsiteSound 进程 → 设置页：字幕缓存占用应答（{@link #EXTRA_CACHE_COUNT}/{@link #EXTRA_CACHE_BYTES}）。 */
+    public static final String ACTION_SUBTITLE_CACHE_STATS = ACTION_PREFIX + "SUBTITLE_CACHE_STATS";
+
     // ── EXTRA key ───────────────────────────────────────────────────────
 
     /** PONG 携带的模块构建号（与 {@code BuildConfig.VERSION_CODE} 同源）。 */
@@ -123,6 +141,12 @@ public final class Protocol {
     /** PONG 携带的 SystemUI 侧构建号（见 {@link #ACTION_SCOPE_PONG}）。 */
     public static final String EXTRA_PONG_BUILD = "pong_build";
 
+    /** 【code 1007】字幕缓存条目数（{@link #ACTION_SUBTITLE_CACHE_STATS} 携带，int）。 */
+    public static final String EXTRA_CACHE_COUNT = "cache_count";
+
+    /** 【code 1007】字幕缓存占用字节数（{@link #ACTION_SUBTITLE_CACHE_STATS} 携带，long）。 */
+    public static final String EXTRA_CACHE_BYTES = "cache_bytes";
+
     // ── 标识与包名 ──────────────────────────────────────────────────────
 
     /** {@link #EXTRA_TAG} 的宿主取值。 */
@@ -152,6 +176,8 @@ public final class Protocol {
                 ACTION_HOST_PING, ACTION_HOST_PONG,
                 ACTION_LINE, ACTION_ENABLED, ACTION_DISMISS_REQUEST,
                 ACTION_SCOPE_PING, ACTION_SCOPE_PONG,
+                ACTION_SUBTITLE_CACHE_CLEAR, ACTION_SUBTITLE_CACHE_STATS_REQ,
+                ACTION_SUBTITLE_CACHE_STATS,
         };
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (String a : actions) {
@@ -167,6 +193,7 @@ public final class Protocol {
                 EXTRA_BUILD, EXTRA_TAG, EXTRA_HOST_ALIVE, EXTRA_CONFIG_JSON,
                 EXTRA_DISMISS_REASON, EXTRA_LINE, EXTRA_ENABLED,
                 EXTRA_DURATION_MS, EXTRA_PLAYING, EXTRA_PONG_BUILD,
+                EXTRA_CACHE_COUNT, EXTRA_CACHE_BYTES,
         };
         seen.clear();
         for (String e : extras) {

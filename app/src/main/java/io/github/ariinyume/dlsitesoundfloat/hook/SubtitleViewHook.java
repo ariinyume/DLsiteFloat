@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
+import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 
 /**
@@ -175,6 +176,62 @@ public class SubtitleViewHook {
     /** 判定结果：非播放页（屏幕上出现了底部 mini-player）。 */
     public static final int PAGE_OTHER = 2;
 
+    // ── 【code 1007】官方顶栏两个控件的 testID（判定依据见 probeOfficialToolbar）─────
+    /**
+     * 官方「字幕开关（CC）」按钮的 testID 后缀。
+     *
+     * <p>来源：{@code PlayerHeader} 的 {@code testID = TEST_IDS.PLAYER.SUBTITLE_BUTTON}
+     * （反汇编见 {@code work/f_header.txt}）。运行时它落在**视图的普通 tag** 上 ——
+     * RN 的 {@code BaseViewManager.setTestId} 做的是
+     * {@code view.setTag(R.id.react_test_id, testId); view.setTag(testId);}
+     * （两类都写，且**普通 tag 那一路正是我们唯一需要的那一路**，见 smali 实证）。
+     *
+     * <p>⚠️ 该按钮**不是常驻**的：{@code PlayerHeader} 只在 {@code hasSubtitles} 为真时
+     * 渲染它 —— 本轨没有 vtt 时它**根本不在树里**。所以它缺席时要用
+     * {@link #closeRect}（顶栏关闭键，常驻）推出的位置兜底，见
+     * {@code ActivityButtonHook#layoutCacheButton}。
+     */
+    public static final String CC_BUTTON_TAG = "SUBTITLE_BUTTON";
+    /** 官方播放页顶栏「收起」按钮的 testID 后缀（{@code TEST_IDS.PLAYER.FULL_PLAYER_CLOSE_BUTTON}，常驻）。 */
+    public static final String CLOSE_BUTTON_TAG = "FULL_PLAYER_CLOSE_BUTTON";
+
+    /**
+     * 【code 1009 修】把视图 tag 归一化后再与上面两个常量比对 —— **这就是「胶囊不出现」的根因**。
+     *
+     * <p>宿主那张 {@code TEST_IDS} 表里，{@code SUBTITLE_BUTTON} 是**属性名**，它的**取值**
+     * 是**短横线**形态：{@code subtitle-button} / {@code full-player-close-button}
+     * （反汇编见 {@code work/f_header.txt}：{@code testID = TEST_IDS.PLAYER.SUBTITLE_BUTTON}
+     * 取的是属性，落进 {@code testID} 的是它的值）。code 1007 / 1008 直接拿**属性名**去做
+     * {@code contains} ⇒ 两趟真机、三个会话，**一次都没认到**（FOUND 零条），
+     * 于是三档锚点全丢、胶囊被永久隐藏 —— 飞行模式那条也因此没了入口。
+     *
+     * <p>两条真机实证：① code 1008 的 tag 普查把树上真实 tag 原样抄了回来，全是
+     * {@code work-menu-button} / {@code tab-home} / {@code track-item-0} 这一套**短横线**命名；
+     * ② 把普查里那些静态 testID 拿去宿主 Hermes 串表交叉验证，**全部以短横线字面量存在**，
+     * 且 {@code full-player} 与 {@code full-player-close-button} 是**相邻两条**。
+     *
+     * <p>归一化规则：整体大写 + 短横线 / 空格折成下划线 ⇒ {@code full-player-close-button}
+     * 变成 {@code FULL_PLAYER_CLOSE_BUTTON}，与常量对齐；宿主将来换回下划线形态也照样认。
+     * 判定用**后缀匹配**而不是包含：容忍前缀、又排除「图标名恰好同前缀」一类干扰。
+     */
+    private static String normalizeTag(String tag) {
+        if (tag == null || tag.isEmpty()) {
+            return "";
+        }
+        int n = tag.length();
+        StringBuilder sb = new StringBuilder(n);
+        for (int i = 0; i < n; i++) {
+            char c = tag.charAt(i);
+            if (c == '-' || c == ' ') {
+                sb.append('_');
+            } else {
+                sb.append(Character.toUpperCase(c));
+            }
+        }
+        return sb.toString();
+    }
+
+
     public static String verdictName(int v) {
         switch (v) {
             case PAGE_PLAYER: return "PLAYER";
@@ -268,6 +325,30 @@ public class SubtitleViewHook {
         public WeakReference<View> anchorRef;
         /** 锚点的诊断描述（类名 + 高度 + 子 View 数）。 */
         public String anchorDesc = "none";
+
+        /**
+         * 【code 1007】官方「字幕开关（CC）」按钮 —— 本模块「字幕缓存」胶囊的锚点。
+         *
+         * <p>{@code ccFound} 为 false 有两种含义（都会在日志里体现）：① 还在别处；
+         * ② 本轨没有 vtt，宿主压根没渲染这个按钮（它由 {@code hasSubtitles} 条件渲染）。
+         */
+        public boolean ccFound;
+        public WeakReference<View> ccButtonRef;
+        /** CC 按钮的屏幕矩形 {@code {left, top, right, bottom}}；未找到为 null。 */
+        public int[] ccRect;
+        /** 官方顶栏「收起」按钮是否扫到（常驻控件，是「此刻确实在播放页顶栏」的硬证据）。 */
+        public boolean closeFound;
+        /** 顶栏「收起」按钮的屏幕矩形；未找到为 null。 */
+        public int[] closeRect;
+        /** 顶栏「收起」按钮的引用（CC 缺席时靠它推出右侧按钮簇，见 {@link #trailingToolbarClusterRect}）。 */
+        public WeakReference<View> closeButtonRef;
+        /**
+         * 【code 1007】顶栏**右侧按钮簇**（容纳 CC 与菜单键的那个容器）的屏幕矩形。
+         *
+         * 仅在 {@code ccFound == false && closeFound == true} 时才会去算（见 {@link #scan}）：
+         * 它是「CC 缺席时缓存胶囊该落在哪」的兜底依据。拿不到就是 null。
+         */
+        public int[] trailingClusterRect;
 
         /**
          * 页面三态判定。
@@ -463,12 +544,484 @@ public class SubtitleViewHook {
             r.mainSliderTimeLabels = n;
             r.mainSliderPaired = n > 0;
         }
+
+        // 【code 1007】官方 CC 按钮**不在树里**（本轨没有 vtt，宿主没渲染它）时，从常驻的
+        //   顶栏「收起」键推出右侧按钮簇的位置 —— 缓存胶囊要靠它落在「CC 本该在的位置」。
+        //   只在**真需要**时才算（正常有 CC 的轨一次都不进这里）。
+        if (!r.ccFound && r.closeFound) {
+            try {
+                r.trailingClusterRect = trailingToolbarClusterRect(r.closeButtonRef);
+            } catch (Throwable ignored) {
+            }
+        }
         return r;
     }
 
+    /** 【code 1007】按钮簇宽度 / 收起键宽度 的比率上限（超过它说明还没下潜到位）。 */
+    private static final float CLUSTER_W_RATIO = 3.0f;
+    /** 【code 1007】下潜层数上限（RN 会插若干层包裹视图，层数不稳定，这里只作防死循环）。 */
+    private static final int CLUSTER_MAX_DEPTH = 8;
+    /** 【code 1011】上溯找顶栏行的层数上限（比旧值 4 宽一档 —— RN 包裹层数不稳定）。 */
+    private static final int CLUSTER_ASCEND_MAX = 6;
+
+    /**
+     * 【code 1007】由常驻的顶栏「收起」键推出**顶栏右侧按钮簇**（容纳 CC 与菜单键的容器）
+     * 的屏幕矩形。
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * 为什么需要：官方 CC 按钮是**条件渲染**的（本轨没有 vtt 就没有它），而此时恰恰是
+     * 「本地缓存字幕」最该出现的时候。要落在「CC 本该在的位置」就必须知道顶栏右侧那簇
+     * 按钮在哪。顶栏结构（反汇编 {@code work/f_header.txt}）：
+     *
+     * <pre>
+     *   View                                        ← 顶栏行（横向）
+     *     ├─ ToolbarGlassButton[ 收起键 testID=FULL_PLAYER_CLOSE_BUTTON ]  ← 最左、常驻
+     *     ├─ View[ 本地播放骨架条 ]                                        ← 可选
+     *     └─ View.rightContainer                                          ← 最右
+     *          └─ ToolbarGlassButton
+     *               └─ View.headerButtons
+     *                    ├─ FABButton testID=SUBTITLE_BUTTON   ← CC，可选
+     *                    └─ FABButton ≡ 菜单键
+     * </pre>
+     *
+     * 走法两步：
+     *   ① **上溯**到那个「最后一个可见子 View 确实落在收起键右边」的祖先 = 顶栏行；
+     *   ② 从顶栏行一路**取最后一个可见子**下潜，直到宽度落到「按钮簇量级」
+     *      （≤ 收起键宽度 × {@link #CLUSTER_W_RATIO}）—— 那一层就是右侧按钮簇。
+     *
+     * ⚠️ 收口用**宽度量级**而不是「下潜固定层数」：RN 组件会插若干层包裹视图，
+     *    层数不稳定；而「按钮簇的宽度与一枚键同量级」是稳定的几何事实。
+     * ⚠️ 任一步拿不到 / 下潜到底仍不满足宽度量级 → 返回 null，调用方退回
+     *    「不显示」——**绝不猜位置**（一个摆错地方的按钮比没有按钮更糟）。
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    private static int[] trailingToolbarClusterRect(WeakReference<View> closeRef) {
+        View close = closeRef == null ? null : closeRef.get();
+        if (close == null || close.getWidth() <= 0 || !close.isAttachedToWindow()) {
+            return null;
+        }
+        int[] closeRect = rectOnScreen(close);
+        int closeW = Math.max(1, closeRect[2] - closeRect[0]);
+
+        // ① 上溯找「顶栏行」：行内**存在**整体位于收起键右侧的可见子。
+        //   ⚠️ 不能用「最后一个可见子」（code 1010 真机失败根因，见 hasVisibleChildRightOf）。
+        ViewGroup row = null;
+        View node = close;
+        for (int i = 0; i < CLUSTER_ASCEND_MAX; i++) {
+            android.view.ViewParent parent = node.getParent();
+            if (!(parent instanceof ViewGroup)) {
+                break;
+            }
+            ViewGroup g = (ViewGroup) parent;
+            if (hasVisibleChildRightOf(g, node, closeRect)) {
+                row = g;
+                break;
+            }
+            node = g;
+        }
+        if (row == null) {
+            return null;
+        }
+
+        // ② 取「右侧可见子」的外接矩形；太宽就进到最外层那个右侧容器里继续收敛。
+        int limit = (int) (closeW * CLUSTER_W_RATIO);
+        ViewGroup cur = row;
+        View skip = node; // 本层里要排除的「收起键那一支」
+        for (int d = 0; d < CLUSTER_MAX_DEPTH; d++) {
+            int[] uni = unionChildrenRightOf(cur, skip, closeRect);
+            if (uni == null) {
+                return null;
+            }
+            int w = uni[2] - uni[0];
+            if (w <= 0) {
+                return null;
+            }
+            if (w <= limit) {
+                return uni; // 到位：这一层就是右侧按钮簇
+            }
+            ViewGroup next = leftmostChildRightOf(cur, skip, closeRect);
+            if (next == null || next == cur) {
+                return null;
+            }
+            cur = next;
+            skip = null;
+        }
+        return null;
+    }
+
+    /**
+     * 【code 1011】结构推断全部失败时的**对称几何兜底**：由常驻收起键镜像出「CC 本该在的位置」。
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * 依据（2026-10-13 code 1010 真机实测，同一播放页同一帧）：
+     *   · 收起键 rect = [60, 141, 202, 284]        ⇒ 左边距 60、键宽 142；
+     *   · 主滑条 rect = x 60、宽 1153（屏宽 1272）  ⇒ 右端 1213、右边距 59。
+     *   左右内边距 60 / 59 **实测对称**（差 1px 是取整）⇒ 顶栏同样按对称内边距走。
+     * 于是把「收起键的尺寸 + 纵向中线」镜像到屏幕右端，即得 CC 的落位。
+     *
+     * ⚠️ 这是**兜底档**，只在 cc / mem / struct 三档全失败时才用。真机上「按钮锚得略偏」
+     *   远好于「按钮完全不出现」—— 那枚胶囊是本地缓存模式**唯一**的开关，它不出现等于
+     *   整个离线字幕功能不可用。调用方会把实际档位（src）打进 shown 日志，便于事后核对。
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    public static int[] symmetricCcRect(ScanResult r, int screenW) {
+        if (r == null || !r.closeFound || r.closeButtonRef == null || screenW <= 0) {
+            return null;
+        }
+        View close = r.closeButtonRef.get();
+        if (close == null || close.getWidth() <= 0) {
+            return null;
+        }
+        int[] cr = rectOnScreen(close);
+        int w = cr[2] - cr[0];
+        int h = cr[3] - cr[1];
+        if (w <= 0 || h <= 0) {
+            return null;
+        }
+        int pad = cr[0]; // 左内边距 ≈ 右内边距
+        int right = screenW - pad;
+        if (right <= w) {
+            return null; // 异常密度 / 分屏：右边界比键宽还小 ⇒ 不采信
+        }
+        return new int[]{right - w, cr[1], right, cr[3]};
+    }
+
+    /**
+     * 【code 1011】容器里**存在**「可见 + 有尺寸 + 整体落在参照矩形右侧」的子 View 吗。
+     *
+     * <p>旧实现（code 1007 的 {@code lastVisibleChild}）只看「**最后一个**可见子」，这正是
+     * code 1010 真机失败的那个根因：播放页顶栏之后还挂着全屏手势区
+     * （tag = {@code player-gesture-area}，矩形自 x=0 起），它恰好就是那个「最后一个可见子」，
+     * 于是「最后一个可见子在收起键右侧」这条判据**永远不成立** ⇒ 上溯找不到顶栏行 ⇒
+     * 按钮簇恒为 null（真机读数 {@code cache gate … close=true cluster=false}）。
+     * 本判据改为「**存在**这样的子」，手势层因为左边界落在收起键左边，自然被排除。
+     */
+    private static boolean hasVisibleChildRightOf(ViewGroup g, View exclude, int[] ref) {
+        if (g == null) {
+            return false;
+        }
+        for (int i = 0; i < g.getChildCount(); i++) {
+            View c = g.getChildAt(i);
+            if (c == null || c == exclude || c.getVisibility() != View.VISIBLE
+                    || c.getWidth() <= 0 || c.getHeight() <= 0) {
+                continue;
+            }
+            int[] r = rectOnScreen(c);
+            if (r[2] - r[0] > 0 && r[0] >= ref[2] - 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 【code 1011】容器里所有「整体落在参照矩形右侧」的可见子的**外接矩形**。
+     *
+     * <p>这就是顶栏右侧按钮簇（容纳 CC 与菜单键的容器）的位置。不再靠「逐层取最后一个
+     * 可见子下潜」那套脆弱推断 —— 层数随 RN 版本变，且很容易被全屏覆盖层带偏；而
+     * 「右侧所有可见子的外接矩形」对中间隔着几层包裹视图天然免疫。返回 null = 本层
+     * 里没有符合条件的子。
+     */
+    private static int[] unionChildrenRightOf(ViewGroup g, View exclude, int[] ref) {
+        if (g == null) {
+            return null;
+        }
+        int l = Integer.MAX_VALUE;
+        int t = Integer.MAX_VALUE;
+        int r = Integer.MIN_VALUE;
+        int b = Integer.MIN_VALUE;
+        int n = 0;
+        for (int i = 0; i < g.getChildCount(); i++) {
+            View c = g.getChildAt(i);
+            if (c == null || c == exclude || c.getVisibility() != View.VISIBLE
+                    || c.getWidth() <= 0 || c.getHeight() <= 0) {
+                continue;
+            }
+            int[] rc = rectOnScreen(c);
+            if (rc[2] - rc[0] <= 0 || rc[0] < ref[2] - 1) {
+                continue; // 不在参照矩形右侧 ⇒ 不是按钮簇的一部分
+            }
+            l = Math.min(l, rc[0]);
+            t = Math.min(t, rc[1]);
+            r = Math.max(r, rc[2]);
+            b = Math.max(b, rc[3]);
+            n++;
+        }
+        return n == 0 ? null : new int[]{l, t, r, b};
+    }
+
+    /**
+     * 【code 1011】容器里**最靠左**的那个「整体位于参照矩形右侧」的可见子容器。
+     *
+     * <p>下潜用：右侧外接矩形太宽（说明这一层还是整块右侧区域，不是按钮簇）时，
+     * 进到最外层那个右侧容器里继续收敛。
+     */
+    private static ViewGroup leftmostChildRightOf(ViewGroup g, View exclude, int[] ref) {
+        if (g == null) {
+            return null;
+        }
+        ViewGroup best = null;
+        int bestLeft = Integer.MAX_VALUE;
+        for (int i = 0; i < g.getChildCount(); i++) {
+            View c = g.getChildAt(i);
+            if (!(c instanceof ViewGroup) || c == exclude || c.getVisibility() != View.VISIBLE
+                    || c.getWidth() <= 0 || c.getHeight() <= 0) {
+                continue;
+            }
+            int[] rc = rectOnScreen(c);
+            if (rc[2] - rc[0] > 0 && rc[0] >= ref[2] - 1 && rc[0] < bestLeft) {
+                best = (ViewGroup) c;
+                bestLeft = rc[0];
+            }
+        }
+        return best;
+    }
+
+    /**
+     * 【code 1007】扫描途中顺手认下官方顶栏的两个控件。
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * 为什么就地在扫描里做、不另起一趟专用遍历
+     *
+     * 本函数被 {@link #collect} 对**每一个上屏可见 View** 调一次，而 {@code collect}
+     * 本来就要走完整棵树；另起一趟等于把单次扫描的 6~8ms 翻一倍 —— 这段代码由 55ms
+     * 一次的心跳驱动，代价直接压在主线程上。这里每个 View 只做「取普通 tag、判它是不是
+     * String」，且两个控件都认到之后第一行就短路返回。
+     *
+     * ── 认的是哪两个 ──
+     *   · CC 开关（{@link #CC_BUTTON_TAG}）：播放页那枚「字幕缓存」胶囊的锚点，挂在它
+     *     左边。⚠️ **它不是常驻控件** —— 本轨没有 vtt 时宿主压根不渲染它。
+     *   · 顶栏收起键（{@link #CLOSE_BUTTON_TAG}）：常驻。它出现 = 「此刻确实站在播放页
+     *     顶栏上」，用它给「缓存胶囊该不该出现」兜底（见 ActivityButtonHook）。
+     *
+     * ⚠️ 判据用**普通 tag**（{@code getTag()}）而不是 {@code getTag(R.id.react_test_id)}：
+     *    RN 的 {@code BaseViewManager.setTestId} 两条都写，而普通 tag 那一路不需要知道
+     *    宿主 RN 的 {@code R.id}（本模块编译期拿不到宿主的资源 id）—— 反汇编实证：
+     *    {@code sget R$id->react_test_id} 之后是两句 {@code setTag}，第二句是
+     *    {@code setTag(Object)}，写的正是 testID 字符串。
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    private static void probeOfficialToolbar(View v, ScanResult r) {
+        if (r.ccFound && r.closeFound && sTagCensusDone) {
+            return; // 两个都认到 + 普查做完：后续每个 View 都从这里直接短路
+        }
+        Object raw = null;
+        try {
+            raw = v.getTag();
+        } catch (Throwable ignored) {
+        }
+        String tag = raw instanceof String ? (String) raw : null;
+        if (tag == null || tag.length() == 0) {
+            // 兼容通道：RN 的 setTestId 对**两个槽**都写，
+            //   若普通 tag 被别人占用（或不是字符串），再试 R.id.react_test_id 那一路。
+            int rid = reactTestIdRes(v);
+            if (rid != 0) {
+                try {
+                    Object alt = v.getTag(rid);
+                    if (alt instanceof String && ((String) alt).length() > 0) {
+                        tag = (String) alt;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        if (!sTagCensusDone) {
+            censusTag(raw, tag);
+        }
+        // 【code 1009】即使普查预算用尽，也把「像播放页顶栏」的 tag 无条件抄下来 ——
+        //   code 1008 的教训：普查的样本名额在首页 / 作品页就被吃光，等用户进播放页时
+        //   普查已经停了，于是「顶栏那两个控件的 testID 到底长什么样」这一问落了空。
+        logToolbarIshTag(tag);
+        if (tag == null || tag.length() == 0) {
+            return;
+        }
+        try {
+            // 【code 1009】先归一化：宿主 testID 的实值是短横线形态，常量是下划线形态。
+            String key = normalizeTag(tag);
+            if (!r.ccFound && key.endsWith(CC_BUTTON_TAG)) {
+                r.ccFound = true;
+                r.ccButtonRef = new WeakReference<>(v);
+                r.ccRect = rectOnScreen(v);
+                logFoundOnce(true, tag, r.ccRect);
+                return;
+            }
+            if (!r.closeFound && key.endsWith(CLOSE_BUTTON_TAG)) {
+                r.closeFound = true;
+                r.closeButtonRef = new WeakReference<>(v);
+                r.closeRect = rectOnScreen(v);
+                logFoundOnce(false, tag, r.closeRect);
+            }
+        } catch (Throwable ignored) {
+            // 这两个控件是**纯附加信息**（只为摆按钮用），绝不因为认它们把整趟扫描带崩
+        }
+    }
+
+    // ===================== 【code 1008 · 诊断件】 =====================
+    // 为什么要这三个成员：「普通 tag 能不能读到 testID」
+    //   这件事**静态判据一律照不到**——只能靠真机把树上真实存在的 tag
+    //   原样拄进日志。普查完成后 sTagCensusDone 置真，热路径上只剩一次布尔判断。
+
+    /** 普查出的 testID 样本（保持插入顺序：看得出「谁先被认到」）。 */
+    private static final java.util.LinkedHashSet<String> sTagSamples =
+            new java.util.LinkedHashSet<>();
+    /** 见过的「有 tag 但不是 String」样本（≤ 2 条）—— 用来区分「没 tag」与「tag 不是串」。 */
+    private static final java.util.ArrayList<String> sTagNonString = new java.util.ArrayList<>();
+    private static final int TAG_CENSUS_MAX = 48;
+    private static final int TAG_CENSUS_LOG_MAX = 14;
+    /** 【code 1011】普查的**时间窗**：这段时间内没把样本收满也收工（否则 done 永不置真）。 */
+    private static final long TAG_CENSUS_WINDOW_MS = 60000L;
+    private static boolean sTagCensusDone = false;
+    private static int sTagCensusLogs = 0;
+    private static long sTagCensusLastLogMs = 0L;
+    /** 【code 1011】普查起始时刻（uptimeMillis；0 = 还没开始）。 */
+    private static long sTagCensusStartMs = 0L;
+    /** RN 的 R.id.react_test_id（按名字查宿主资源；0 = 查不到、不再重查）。 */
+    private static int sReactTestIdRes = -1;
+
+    /** 【code 1008】宿主 RN 的 react_test_id 资源 id（编译期拿不到对方的 R，只能按名字查）。 */
+    private static int reactTestIdRes(View v) {
+        if (sReactTestIdRes != 0) {
+            return sReactTestIdRes;
+        }
+        int rid = 0;
+        try {
+            rid = v.getResources().getIdentifier("react_test_id", "id",
+                    io.github.ariinyume.dlsitesoundfloat.config.Protocol.HOST_PKG);
+        } catch (Throwable ignored) {
+        }
+        sReactTestIdRes = rid;
+        XposedCompat.log(TAG + " [code 1008] react_test_id res id = " + rid
+                + (rid == 0 ? " (not found -> plain-tag channel only)" : ""));
+        return rid;
+    }
+
+    /** 【code 1009】「像顶栏」的 tag 独立小预算（不吃普查名额，普查停了它还在跑）。 */
+    private static final int TAG_KEYWORD_LOG_MAX = 12;
+    private static int sTagKeywordLogs = 0;
+
+    /**
+     * 【code 1009】把「像播放页顶栏」的 tag 抄进日志 —— **独立预算、不受普查影响**。
+     *
+     * <p>为什么单独一条：普查是**一次性**的，样本满了就永久停。code 1008 真机实测：
+     * 用户在首页与作品页就把样本用光，进播放页时普查已经停了 —— 而「播放页顶栏那两个
+     * 控件的 tag 究竟长什么样」恰恰是唯一需要回答的问题。这条按关键字过滤（只要像顶栏
+     * 就要），加上自己的小上限，代价可忽略。
+     */
+    private static void logToolbarIshTag(String tag) {
+        if (tag == null || tag.isEmpty() || sTagKeywordLogs >= TAG_KEYWORD_LOG_MAX) {
+            return;
+        }
+        try {
+            String key = normalizeTag(tag);
+            if (key.endsWith(CC_BUTTON_TAG) || key.endsWith(CLOSE_BUTTON_TAG)
+                    || key.contains("PLAYER") || key.contains("SUBTITLE")
+                    || key.contains("CLOSE") || key.contains("HEADER")) {
+                sTagKeywordLogs++;
+                // 【code 1011】降为诊断级：这是 code 1009 定位「顶栏 tag 叫什么」时的一次性
+                //   取证件，问题回答完就没有常开价值了。
+                LogGate.debug(TAG, " [code 1009] toolbar-ish tag #" + sTagKeywordLogs
+                        + ": " + tag);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 【code 1008 · 诊断】把视图树上真实可读的 testID 抄一份（最多 10 行日志）。 */
+    private static void censusTag(Object raw, String tag) {
+        try {
+            if (raw != null && !(raw instanceof String) && sTagNonString.size() < 2) {
+                sTagNonString.add(raw.getClass().getName());
+            }
+            if (tag != null && tag.length() > 0) {
+                sTagSamples.add(tag);
+            }
+            if (sTagCensusStartMs == 0L) {
+                sTagCensusStartMs = android.os.SystemClock.uptimeMillis();
+            }
+            long now = android.os.SystemClock.uptimeMillis();
+            boolean full = sTagSamples.size() >= TAG_CENSUS_MAX;
+            boolean expired = now - sTagCensusStartMs > TAG_CENSUS_WINDOW_MS;
+            boolean due = now - sTagCensusLastLogMs > 3000L;
+            if (sTagCensusLogs < TAG_CENSUS_LOG_MAX && (full || expired || due)) {
+                sTagCensusLogs++;
+                sTagCensusLastLogMs = now;
+                // 【code 1011】降为诊断级：这是「只在深挖算法细节时才有用」的读数，
+                //   且样本集自带 48 上限、日志自带 14 条上限，本就不该占常开通道。
+                LogGate.debug(TAG, " [code 1008] tag census #" + sTagCensusLogs
+                        + " (" + sTagSamples.size() + "): " + sTagSamples
+                        + " | nonStringTag=" + sTagNonString);
+            }
+            // 【code 1010 修】原实现把「日志打满」当成「普查结束」是 bug —— 日志条数只
+            //   是**打印上限**，不该终止普查。
+            // 【code 1011 补】但「样本收满才停」在真机上等于**永不停**：单次会话最多只
+            //   收到 44 个样本（首页 + 作品页 + 播放页的全部 tag 加一起），于是
+            //   sTagCensusDone 永不置真 ⇒ probeOfficialToolbar 每 View 的短路永不生效，
+            //   每个上屏 View 都白跑整套 tag 判定。现在补一条**时间窗**（60s）收口。
+            if (full || expired) {
+                sTagCensusDone = true;
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 【code 1008】矩形的可读格式（诊断日志用）。 */
+    private static String fmtRect(int[] r) {
+        return r == null ? "null" : "[" + r[0] + "," + r[1] + "," + r[2] + "," + r[3] + "]";
+    }
+
+    /** 【code 1011】两个官方控件「首次认到」的里程碑标志（整进程各打一次，之后降诊断级）。 */
+    private static boolean sCcFoundLogged = false;
+    private static boolean sCloseFoundLogged = false;
+
+    /**
+     * 【code 1011】「认到官方控件」的日志：**整进程只打一次常开里程碑**，之后走诊断级。
+     *
+     * <p>为什么必须去重：code 1010 真机实测，单次会话 52 秒里这一条打了 **81 遍** ——
+     * 每趟扫描都是新的 {@code ScanResult}，「本趟已认到」这个守卫拦不住下一趟；短路条件里
+     * 又挂着普查完成位（而普查样本收不满 48 就永不置真），于是每个上屏 View 都走完整逻辑、
+     * 每次都重打一条。日志被自己刷爆，真正要看的读数反而被淹没。
+     */
+    private static void logFoundOnce(boolean isCc, String tag, int[] rect) {
+        String msg = "[code 1007] " + (isCc ? "CC" : "CLOSE") + " button FOUND tag=\"" + tag
+                + "\" rect=" + fmtRect(rect);
+        boolean already = isCc ? sCcFoundLogged : sCloseFoundLogged;
+        if (isCc) {
+            sCcFoundLogged = true;
+        } else {
+            sCloseFoundLogged = true;
+        }
+        if (already) {
+            LogGate.debug(TAG, " " + msg); // 里程碑已打过：后续同类只作诊断
+        } else {
+            XposedCompat.log(TAG + " " + msg);
+        }
+    }
+
+        /**
+     * 【code 1010】把普查样本**全量**抄一条 —— 由按钮层在「锚点全丢」那一刻调用。
+     *
+     * <p>为什么单独留这个入口：普查的日志是按 3 秒节流打的，关键时刻（用户刚进播放页、
+     * 判定锚点全丢）未必正好落在打印窗口里。这个方法把当前样本集原样倒出来，是唯一能
+     * 回答「播放页顶栏到底有哪些 tag」的读数。调用方已按快照节流，同一现场只打一次。
+     */
+    public static void dumpTagSamples(String why) {
+        try {
+            XposedCompat.log(TAG + " [code 1010] tag dump (" + why + ") n=" + sTagSamples.size()
+                    + " done=" + sTagCensusDone + " logs=" + sTagCensusLogs
+                    + ": " + sTagSamples + " | nonString=" + sTagNonString);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 【code 1007】View 的屏幕矩形 {@code {left, top, right, bottom}}。 */
+    private static int[] rectOnScreen(View v) {
+        int[] loc = new int[2];
+        v.getLocationOnScreen(loc);
+        return new int[]{loc[0], loc[1], loc[0] + v.getWidth(), loc[1] + v.getHeight()};
+    }
+
     private static void collect(View v, ScanResult r, SubtitleRepository repo,
-                               List<int[]> labels, Rect visRect, Ctx ctx) {
-        if (v == null || v.getVisibility() != View.VISIBLE) {
+                               List<int[]> labels, Rect visRect, Ctx ctx) {        if (v == null || v.getVisibility() != View.VISIBLE) {
             return; // 不可见的子树直接跳过（RN 切页后旧页面仍挂在树里）
         }
         try {
@@ -478,6 +1031,9 @@ public class SubtitleViewHook {
             boolean onScreen = v.getWidth() > 0 && v.getHeight() > 0 && v.getGlobalVisibleRect(visRect);
 
             if (onScreen) {
+                // 【code 1007】顺手认下官方顶栏两个控件（CC 开关 / 收起键）—— 播放在
+                //   上屏子树里，且同一个 View 只做一次字符串比较，见该函数注释。
+                probeOfficialToolbar(v, r);
                 CharSequence cs = getViewText(v);
                 if (cs != null && cs.length() > 0) {
                     String t = cs.toString().trim();

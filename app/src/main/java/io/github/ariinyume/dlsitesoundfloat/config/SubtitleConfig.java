@@ -185,6 +185,34 @@ public final class SubtitleConfig {
      */
     public static final String K_LIQUID_GLASS_BACKDROP_LUM = "liquid_glass_backdrop_lum";
 
+    /**
+     * 【code 1007】「字幕缓存」开关（默认**开**）—— 设置页「其他」卡片里的那一行。
+     *
+     * <p>口径：开启后，**在线抓到的字幕会落盘到宿主 App 的私有目录**，断网时同一音轨
+     * 可以读回本地那份（播放页右侧另有一个**会话级**的「本地缓存字幕」按钮控制「本次是否
+     * 真的用本地字幕」，本键只管「要不要缓存」这一层）。
+     * 关掉后：新抓到的字幕不再落盘（已有缓存保留，可用设置页的「清除所有字幕缓存」清掉）。
+     *
+     * <p>⚠️ 键名冻结（PRD §FR-09 规则 4）：本键为新增键，旧配置读不到时回落默认值（开），天然兼容。
+     */
+    public static final String K_SUBTITLE_CACHE_ENABLED = "subtitle_cache_enabled";
+
+    /**
+     * 【code 1015 / 2.3.2】「实验性功能」总闸（默认**关**）。
+     *
+     * <p>口径：设置页「实验性功能」卡片的显隐总开关，**界面上没有直接入口** ——
+     * 解锁方式是「在状态卡上连续点击五次」（见 {@code SettingsActivity}），
+     * 免得日常用户误入尚未定型的半成品功能。开启后写进本键并随配置持久化，
+     * **覆盖安装升级后依旧保持**，直到用户自己把总闸关掉。
+     *
+     * <p>不变式（见 {@link #clamp()}）：总闸关 ⇒ 卡内子功能一律关
+     * （目前只有 {@link #subtitleCacheEnabled}）。这样即便配置文件被手工编辑、
+     * 或由旧版本导入，也不会出现「卡片已关、缓存却还开着」的错位。
+     *
+     * <p>⚠️ 键名冻结（PRD §FR-09 规则 4）：本键为新增键，旧配置读不到时回落默认值（关），天然兼容。
+     */
+    public static final String K_EXPERIMENTAL_ENABLED = "experimental_enabled";
+
     // ==================================================================
     // 枚举取值（PRD §十「范围/枚举」列）
     // ==================================================================
@@ -350,6 +378,25 @@ public final class SubtitleConfig {
     /** 【2.2.7 / code 979】诊断日志开关（界面展示于「其他」卡片）：默认关，仅排查时打开。 */
     public boolean debugLog = false;
 
+    /**
+     * 【code 1007】「字幕缓存」总闸（默认开）。语义见 {@link #K_SUBTITLE_CACHE_ENABLED}。
+     *
+     * <p>关 = 新抓到的字幕不落盘；开 = 落盘（断网可读回）。与播放页那个「本地缓存字幕」
+     * **会话级**按钮是两层：本字段决定「存不存」，那个按钮决定「本次用不用」。
+     */
+    public boolean subtitleCacheEnabled = true;
+
+    /**
+     * 【code 1015 / 2.3.2】「实验性功能」总闸（卡片显隐 + 卡内子功能可用性），默认**关**。
+     *
+     * <p>为什么默认关：卡内放的是尚未定型的实验功能（当前是「字幕缓存」），
+     * 给普通用户一个显式入口只会徒增困惑；解锁方式是**连续点击状态卡五次**。
+     *
+     * <p>持久化：随配置一起写进标准 JSON 与本地偏好（见 {@code toJson / writeToPrefs}），
+     * 因此**覆盖安装升级后仍然保持**（键名冻结，配置库不清）。
+     */
+    public boolean experimentalEnabled = false;
+
     public SubtitleConfig() {
     }
 
@@ -391,6 +438,8 @@ public final class SubtitleConfig {
         c.keepScreenOn = keepScreenOn;
         c.hotReload = hotReload;
         c.debugLog = debugLog;
+        c.subtitleCacheEnabled = subtitleCacheEnabled;
+        c.experimentalEnabled = experimentalEnabled;
         return c;
     }
 
@@ -423,6 +472,8 @@ public final class SubtitleConfig {
                 && keepScreenOn == o.keepScreenOn
                 && hotReload == o.hotReload
                 && debugLog == o.debugLog
+                && subtitleCacheEnabled == o.subtitleCacheEnabled
+                && experimentalEnabled == o.experimentalEnabled
                 && eq(uiLanguage, o.uiLanguage);
     }
 
@@ -463,6 +514,14 @@ public final class SubtitleConfig {
         activeScale = clampFloat(activeScale, ACTIVE_SCALE_MIN, ACTIVE_SCALE_MAX);
         lineSpacingDp = clampFloat(lineSpacingDp, LINE_SPACING_MIN, LINE_SPACING_MAX);
         wrapExtraSpacingDp = clampFloat(wrapExtraSpacingDp, WRAP_SPACING_MIN, WRAP_SPACING_MAX);
+
+        // 【code 1015 / 2.3.2】不变式：实验性功能总闸关闭 ⇒ 卡内子功能一律关。
+        //   目前卡内只有「字幕缓存」一项。放在 clamp 里而不是只放在设置页的点击回调里，
+        //   是为了让**任何**读配置的路径都遵守同一条规则 —— 包括手工编辑过的配置 JSON、
+        //   旧版本导出的配置，以及宿主进程自己读配置的那一侧（它也该少做一份无用功）。
+        if (!experimentalEnabled) {
+            subtitleCacheEnabled = false;
+        }
     }
 
     public static int clampInt(int v, int min, int max) {
@@ -522,6 +581,8 @@ public final class SubtitleConfig {
             o.put(K_KEEP_SCREEN_ON, keepScreenOn);
             o.put(K_HOT_RELOAD, hotReload);
             o.put(K_DEBUG_LOG, debugLog);
+            o.put(K_SUBTITLE_CACHE_ENABLED, subtitleCacheEnabled);
+            o.put(K_EXPERIMENTAL_ENABLED, experimentalEnabled);
         } catch (Throwable ignored) {
             // JSONObject.put 只在传 null 键时抛，本方法不传 null
         }
@@ -568,6 +629,8 @@ public final class SubtitleConfig {
         c.keepScreenOn = o.optBoolean(K_KEEP_SCREEN_ON, c.keepScreenOn);
         c.hotReload = o.optBoolean(K_HOT_RELOAD, c.hotReload);
         c.debugLog = o.optBoolean(K_DEBUG_LOG, c.debugLog);
+        c.subtitleCacheEnabled = o.optBoolean(K_SUBTITLE_CACHE_ENABLED, c.subtitleCacheEnabled);
+        c.experimentalEnabled = o.optBoolean(K_EXPERIMENTAL_ENABLED, c.experimentalEnabled);
         c.clamp();
         return c;
     }
@@ -605,6 +668,8 @@ public final class SubtitleConfig {
         e.putBoolean(K_KEEP_SCREEN_ON, keepScreenOn);
         e.putBoolean(K_HOT_RELOAD, hotReload);
         e.putBoolean(K_DEBUG_LOG, debugLog);
+        e.putBoolean(K_SUBTITLE_CACHE_ENABLED, subtitleCacheEnabled);
+        e.putBoolean(K_EXPERIMENTAL_ENABLED, experimentalEnabled);
     }
 
     /** 从 SharedPreferences 读；未写过的键（{@code contains == false}）保留默认值。 */
@@ -642,6 +707,8 @@ public final class SubtitleConfig {
         c.keepScreenOn = p.getBoolean(K_KEEP_SCREEN_ON, c.keepScreenOn);
         c.hotReload = p.getBoolean(K_HOT_RELOAD, c.hotReload);
         c.debugLog = p.getBoolean(K_DEBUG_LOG, c.debugLog);
+        c.subtitleCacheEnabled = p.getBoolean(K_SUBTITLE_CACHE_ENABLED, c.subtitleCacheEnabled);
+        c.experimentalEnabled = p.getBoolean(K_EXPERIMENTAL_ENABLED, c.experimentalEnabled);
         c.clamp();
         return c;
     }
@@ -706,7 +773,9 @@ public final class SubtitleConfig {
                 + " liquidGlass=" + liquidGlass + "/" + liquidGlassBlurPct + "%"
                 + " lum=" + liquidGlassPanelLum + " transp=" + liquidGlassTransparency
                 + " bdLum=" + liquidGlassBackdropLum
-                + " debugLog=" + debugLog;
+                + " debugLog=" + debugLog
+                + " subtitleCache=" + subtitleCacheEnabled
+                + " experimental=" + experimentalEnabled;
     }
 
     @Override

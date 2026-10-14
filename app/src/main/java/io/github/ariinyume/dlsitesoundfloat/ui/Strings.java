@@ -119,6 +119,24 @@ public enum Strings {
     /** 【code 1003】「液态玻璃效果调整」卡片标题（独立成卡，摆在「其他」卡片之前）。 */
     GROUP_LIQUID_GLASS("液态玻璃效果调整", "液態玻璃效果調整", "Liquid glass tuning"),
 
+    // ── 【code 1015 / 2.3.2】「实验性功能」卡片 ──────────────────────────
+    /** 卡片标题（与「液态玻璃效果调整」「其他」同一层级，在卡片外）。 */
+    GROUP_EXPERIMENTAL("实验性功能", "實驗性功能", "Experimental"),
+    /** 卡内首行：实验性功能总开关。 */
+    EXPERIMENTAL_MASTER("启用实验性功能", "啟用實驗性功能", "Enable experimental features"),
+    /**
+     * 【code 1016】已经打开实验性功能时**再点状态卡**的提示（Ari 需求 4）。
+     *
+     * 为什么要有这条：连点五次是**未解锁时**的入口；一旦开着，这个手势就没有意义了，
+     * 静默不理会让用户以为「点了没反应 / 是不是坏了」。
+     */
+    EXPERIMENTAL_ALREADY_ON("你已经打开实验性功能，无需进行此操作",
+            "你已經開啟實驗性功能，無需進行此操作",
+            "Experimental features are already on — no need to do this"),
+    /** 状态卡连点解锁成功后的提示。 */
+    EXPERIMENTAL_UNLOCKED("已解锁「实验性功能」卡片（记得保存设置）", "已解鎖「實驗性功能」卡片（記得儲存設定）",
+            "Experimental features unlocked — remember to save"),
+
     // ── 其他（PRD §FR-07 / 备份恢复 / 常亮）────────────────────────────
     /**
      * v1.4 §2.1.1.4：本开关是**功能级总闸**（原「状态栏字幕」→「状态栏字幕功能」）。
@@ -206,6 +224,51 @@ public enum Strings {
     LIQUID_GLASS_HINT("悬浮窗面板与播放页字幕按钮改为玻璃质感；开启后「悬浮窗颜色」不可调整",
             "懸浮窗面板與播放頁字幕按鈕改為玻璃質感；開啟後「懸浮窗顏色」無法調整",
             "Panel & playback subtitle buttons become glass; panel color is locked while on"),
+    /**
+     * 【code 1007 / 1015】「字幕缓存」开关标签（code 1015 起搬进「实验性功能」卡片，摆在总开关下方）。
+     *
+     * 语义：字幕缓存的总闸（配置键 {@code subtitle_cache_enabled}，默认**开**）。
+     * 开 ⇒ 宿主把「在线抓到过的音轨字幕」写进本地缓存，断网 / 飞行模式下可回放；
+     * 关 ⇒ 不写新缓存、也不再从缓存恢复（已缓存的文件保留，可由下方按钮清掉）。
+     *
+     * ⚠️ 与播放页那个缓存按钮**不是**同一个东西：
+     *    本开关 = 持久化的能力总闸（设置页）；
+     *    播放页按钮 = 当前播放会话里「要不要用本地缓存字幕」的临时开关（会话级、默认关）。
+     */
+    SUBTITLE_CACHE("字幕缓存", "字幕快取", "Subtitle cache"),
+    /** 「字幕缓存」开关下方的常驻说明小字（三语；【code 1016】按 Ari 口径改写）。 */
+    SUBTITLE_CACHE_HINT("播放过的音轨字幕会自动缓存，超出储存上限后按最早缓存顺序自动清除",
+            "播放過的音軌字幕會自動快取，超出儲存上限後依最早快取順序自動清除",
+            "Subtitles of tracks you have played are cached automatically; "
+                    + "once the storage limit is reached, the oldest ones are removed first"),
+    /** 缓存占用读数：{@code 已缓存 %1$d 轨 · 占用 %2$s / %3$s}。 */
+    CACHE_USAGE("已缓存 %1$d 轨 · 占用 %2$s / %3$s",
+            "已快取 %1$d 軌 · 佔用 %2$s / %3$s",
+            "%1$d track(s) cached · %2$s of %3$s used"),
+    /** 尚未拿到宿主应答时的占位读数（首帧，通常 100ms 内会被真实读数替换）。 */
+    CACHE_USAGE_LOADING("正在读取缓存占用…", "正在讀取快取佔用…", "Reading cache usage…"),
+    /**
+     * 宿主没在跑时的占位读数。
+     *
+     * 缓存落在**宿主进程的私有目录**，设置页读不到，只能由宿主广播回来（见
+     * {@code ConfigBus#sendCacheStatsRequest}）—— 宿主不在 ⇒ 这条读数拿不到，
+     * 必须如实说「读不到」，不能显示 0（那会被误读成「缓存是空的」）。
+     */
+    CACHE_USAGE_OFF("宿主未运行，暂时无法读取缓存占用",
+            "宿主未執行，暫時無法讀取快取佔用",
+            "DLsiteSound not running — cache usage unavailable"),
+    /** 「清除所有字幕缓存」按钮标签。 */
+    CACHE_CLEAR("清除所有字幕缓存", "清除所有字幕快取", "Clear all subtitle cache"),
+    /** 清除前的二次确认（标题 / 正文）—— 删的是用户已经攒下来的离线字幕，必须给一次确认。 */
+    CACHE_CLEAR_CONFIRM_TITLE("清除所有字幕缓存？", "清除所有字幕快取？", "Clear all subtitle cache?"),
+    CACHE_CLEAR_CONFIRM_MSG("将删除已缓存的全部音轨字幕。此后断网 / 飞行模式下这些音轨不再显示字幕，"
+            + "直到联网重新播放过一遍。",
+            "將刪除已快取的全部音軌字幕。此後斷網 / 飛航模式下這些音軌不再顯示字幕，"
+                    + "直到連線重新播放過一遍。",
+            "All cached subtitles will be deleted. Offline playback will show none for these "
+                    + "tracks until you play them online again."),
+    /** 清除成功提示（由宿主回执触发，不是点下按钮就报成功）。 */
+    CACHE_CLEAR_DONE("已清除所有字幕缓存", "已清除所有字幕快取", "All subtitle cache cleared"),
     BACKUP_RESTORE("字幕配置备份与恢复", "字幕配置備份與恢復", "Backup & restore"),
     EXPORT("导出", "匯出", "Export"),
     IMPORT("导入", "匯入", "Import"),
