@@ -4,8 +4,8 @@
 
 > An LSPosed / Xposed module that pins a **floating subtitle window** synced with playback progress onto the **playback page** of DLsiteSound (the DLsite audio app), and can also mirror subtitles to the **system status bar** (injected inside the SystemUI process).
 
-- Current version: **2.3.1** (`DLsiteFloat-2.3.1-code1006-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
-- 📦 Download APK: [Releases · v2.3.1](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.3.1)
+- Current version: **2.3.2** (`DLsiteFloat-2.3.2-code1019-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
+- 📦 Download APK: [Releases · v2.3.2](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.3.2)
 - 📝 Development progress: [DLsiteFloat 插件开发进度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh) (in Chinese)
 - ⭐ Xposed repository: [DLsiteFloat - DLsiteSound floating window / status bar subtitle module](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -35,13 +35,16 @@
   - **Fluid Cloud avoidance**: the subtitle's right edge dynamically stops just left of Fluid Cloud (`seeding_card_container`); when Fluid Cloud is absent it fills up to a fixed left bound (38dp). A 24px hysteresis band keeps the width from jumping as Fluid Cloud comes and goes.
 
 - **Visual settings page (since 2.2.0)**: the module ships its own settings page; changes take effect as soon as you tap "Save settings".
-  - **Status card**: the three states — "whether the module is active / whether SystemUI is authorized / whether DLsiteSound is running" — each get their own guidance, and the whole page is disabled while the module is inactive.
+  - **Status card**: the three states — "whether the module is active / whether SystemUI is authorized / whether DLsiteSound is running" — each get their own guidance, and the whole page is disabled while the module is inactive (**tapping the status card five times in a row** unlocks the hidden "Experimental features" card — see below).
   - **Main subtitle / active line**: subtitle color, shadow color, shadow strength, shadow radius, active line opacity, active line scale.
   - **Inactive lines**: blur inactive lines + blur radius, scale inactive lines + scale ratio.
   - **Typography**: alignment (left / center / right), line spacing, extra spacing for wrapped lines inside a long subtitle, panel color.
   - **Live preview panel**: the preview re-renders in sync while you tweak the parameters.
   - **Liquid glass tuning (since 2.3.0)**: its own card, placed **before** the "More" card; a master switch + four sliders (backdrop brightness / transparency / brightness / blur strength) + reset to defaults.
   - **Language**: switch between **简体中文 / 繁體中文 / English** on the spot inside the page (independent of the playback-page button language setting).
+  - **Experimental features (since 2.3.2)**: a home for capabilities that are **still being validated, not yet performance-stable, or carry potential copyright risk**, and it is **hidden by default**. **Tap the status card five times in a row** on the settings page (no more than 3 s between consecutive taps) to unlock it; even after unlocking, you still have to tap "Save settings" for it to be written into the config.
+    - **Its master switch**: when off, every sub-feature under it is **turned off**, the switch is **greyed out**, and the **related cache is cleared**.
+    - **Subtitle cache**: the "Offline subtitle cache" described under Features — you can see the current usage and clear it with one tap.
   - **More**: master switch for status bar subtitles, the **debug log** toggle (since 2.2.7, off by default), subtitle config backup & restore (export / import JSON), restart SystemUI.
 
 - **In-process floating window**: the window hangs directly inside the DLsiteSound process (`WindowManager` + `TYPE_APPLICATION_OVERLAY`) and shares the same `SubtitleRepository` instance with all the hooks, so it needs **no cross-process IPC and no separate Service**.
@@ -57,7 +60,15 @@
 
 - **Automatic subtitle capture**: intercepts DLsiteSound's network responses (okhttp3) and scans the response body directly for `webvtt` / `subtitles` subtitle JSON, parsing it on the spot — it **does not rely on URL keywords**, so it still works with obfuscated or repackaged okhttp3. The subtitle source is DLsiteSound's official `play.dl.dlsitesound.com/.../optimized/xxx.json`, delivered per audio track.
 
+- **Offline subtitle cache (since 2.3.2)**: any audio track you have **played online** has its subtitles cached on the device automatically — so they still show up **with no network / in airplane mode / without a proxy**. The cache stores only the **subtitle text** delivered by the official server (one entry per audio track); it involves no audio content whatsoever.
+  - **Only tracks you have already played**: a track whose subtitles were never captured online still has none when you are offline.
+  - **Keyed by "work + track identity"**: the identity is the `(track count, duration, index)` triple — changing chapters, switching tracks or rebuilding the playlist never crosses tracks; entries whose timeline does not match are **automatically judged mis-tagged and discarded**.
+  - **Automatic cleanup**: once the storage limit is exceeded, the **oldest cached entries are removed first**.
+  - **Cache location**: the host app's private directory `Android/data/jp.co.eisys.dlsitesound/files/subtitle_cache/`; the usage readout and the "Clear subtitle cache" entry live in the "**Experimental features**" card on the settings page (that card is hidden by default — see below).
+  - ⚠️ **You may see the cache "reset" once after an upgrade**: if a module upgrade changes the cache format, the old cache is **invalidated and rebuilt wholesale** — the usage readout on the settings page goes back to zero (**this is expected behaviour**, not something a system cleaner did), and it comes back once you play the works again.
+
 - **Smart track switching**: when you switch to an audio track with no subtitles, handling is suspended first and the floating window shows a `No Subtitles` placeholder while it waits for the new track's subtitle JSON — **5 s** when there are no cached cues, relaxed to **15 s** when cached cues exist; if no JSON arrives within **5 s** the window is **closed early**, and it is **automatically reopened** once the JSON arrives; only if the arbitration window expires with still no JSON are the cues cleared and the state judged to be "no subtitles". See [docs/track-change.md](docs/track-change.md).
+  - **Cloud first, local fallback (since 2.3.2)**: after a track switch the module **waits for the latest cloud copy** first; only if it does not arrive within the window (no network / a slow cloud) does it fall back to the **locally cached** copy, and when fully offline (airplane mode) it reads the local copy straight away.
 
 - **Permission guidance and graceful degradation**: when overlay permission has not been granted, the first tap jumps to the "Display over other apps" settings page, and it **only prompts once**.
 
@@ -87,10 +98,10 @@
 
 ## Tested on
 
-- Software version: DLsiteSound 2.20.2
+- Software version: DLsiteSound 2.21.0
 
-- Device 1: OnePlus 15, ColorOS 17.0.0.102 (CN01B110P02), KernelSU 3.3.0 (32601-2) · LSPosed 2.2.1 (7912)
-- Device 2: OnePlus 12, ColorOS 16.0.10.501 (CN01B110P02), SukiSU 4.2.0 (40900-2) · LSPosed 2.2.1 (7912)
+- Device 1: OnePlus 15, ColorOS 17.0.0.105 (CN01B110P02), KernelSU 3.3.0 (32680-2) · kernel 6.12 · LSPosed 2.2.1 (7912)
+- Device 2: OnePlus 12, ColorOS 16.0.10.501 (CN01B110P02), SukiSU 4.2.0 (40900-2) · kernel 6.1 · LSPosed 2.2.1 (7912)
 
 ---
 
@@ -122,7 +133,7 @@
   1. Your device model / Android version / ROM (in particular whether it is ColorOS / HyperOS / stock / near-stock, etc.)
   2. The DLsiteSound version you are using
   3. Reproduction steps + the LSPosed log (filtered by `DLsiteSoundFloat`) + `dlsitefloat_net.log` when relevant + screen recording / screenshots (please redact or crop out any sensitive information)
-- **Before filing, please confirm**: that you installed the latest APK (check the `==== BUILD 2.3.1 / code 1006` line in the LSPosed log)
+- **Before filing, please confirm**: that you installed the latest APK (check the `==== BUILD 2.3.2 / code 1019` line in the LSPosed log)
 - **When troubleshooting track switching / subtitle capture problems**: turn on the **debug log** under "More" on the settings page and reproduce the issue once more (it is off by default and will flood the log if left on; remember to turn it back off afterwards).
 - **Liquid glass issues**: first try "setting blur strength back to 50–60", "not maxing out transparency" and "matching backdrop brightness to how bright the page is"; if it is still wrong, attach the LSPosed log (filtered by `DLsiteSoundFloat`) and state your **device model / ROM** (compositor blur support varies between ROMs).
 
