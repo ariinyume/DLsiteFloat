@@ -60,7 +60,7 @@
 
 - **Automatic subtitle capture**: intercepts DLsiteSound's network responses (okhttp3) and scans the response body directly for `webvtt` / `subtitles` subtitle JSON, parsing it on the spot — it **does not rely on URL keywords**, so it still works with obfuscated or repackaged okhttp3. The subtitle source is DLsiteSound's official `play.dl.dlsitesound.com/.../optimized/xxx.json`, delivered per audio track.
 
-- **Offline subtitle cache (since 2.3.2)**: any audio track you have **played online** has its subtitles cached on the device automatically — so they still show up **with no network / in airplane mode / without a proxy**. The cache stores only the **subtitle text** delivered by the official server (one entry per audio track); it involves no audio content whatsoever.
+- **Offline subtitle cache (since 2.3.2, belong to Experimental features)**: any audio track you have **played online** has its subtitles cached on the device automatically — so they still show up **with no network / in airplane mode / without a proxy**. The cache stores only the **subtitle text** delivered by the official server (one entry per audio track); it involves no audio content whatsoever.
   - **Only tracks you have already played**: a track whose subtitles were never captured online still has none when you are offline.
   - **Keyed by "work + track identity"**: the identity is the `(track count, duration, index)` triple — changing chapters, switching tracks or rebuilding the playlist never crosses tracks; entries whose timeline does not match are **automatically judged mis-tagged and discarded**.
   - **Automatic cleanup**: once the storage limit is exceeded, the **oldest cached entries are removed first**.
