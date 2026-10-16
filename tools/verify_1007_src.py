@@ -387,8 +387,16 @@ def main():
     check('L2 appVersionCodeLabel 形如 MMDD.NN（日期段随构建当天）',
           m_lab is not None and re.match(r'^\d{4}\.\d+$', m_lab.group(1)) is not None,
           'label=%s' % (m_lab.group(1) if m_lab else '?'))
-    check('L3 appVersionName = 2.3.2（本轮 Ari 明确要求升版本号）',
-          vname is not None and vname == '2.3.2', 'versionName=%s' % vname)
+    # 【code 1020】2.3.2 是 code 1019 那轮的钉死值（属**本轮判据**）；1020 按 Ari 指令
+    #   升到 2.3.3。按铁律 82 收回泛化：只要求语义版本号成型且**不低于 2.3.2**
+    #   （防倒退、不设过期日）。「包内 code 与构建配置一致」由 L4 的横幅判据守。
+    def _vtL3(s):
+        try:
+            return tuple(int(x) for x in str(s).split('.'))
+        except Exception:
+            return (0,)
+    check('L3 appVersionName 成型且 >= 2.3.2（code 1020 起改为下界）',
+          vname is not None and _vtL3(vname) >= (2, 3, 2), 'versionName=%s' % vname)
     keep = 'XposedCompat.log("[DLsiteSoundFloat] ==== BUILD %s / code %s");' % (vname, vcode)
     check('L4 常开横幅那一行是本轮 code、且 versionName 与 build.gradle 一致（装机前核这行）',
           keep in mod, 'expected: %s' % keep)
@@ -705,8 +713,10 @@ def main():
     # 【code 1018】原为「appVersionCode = 1017」的钉死值 —— 本轮判据，每轮必假 FAIL。
     #   按铁律 82 收回泛化为**下界**（口径同 L1 的 `>= 1007`）：防倒退、不设过期日。
     #   「包内 code 与构建配置一致」由 L4 的横幅判据守，这里只兜住版本号口径。
-    check('U18 【版本】versionName 2.3.2 / appVersionCode 不低于本轮（下界 1018）',
-          vname == '2.3.2' and vcode is not None and vcode.isdigit() and int(vcode) >= 1018)
+    # 【code 1020】同 L3：versionName 的钉死值也随轮次前进（1020 起是 2.3.3）⇒
+    #   这里只守 code 的**下界**，versionName 交给 L3 判（避免两处重复钉同一个值）。
+    check('U18 【版本】appVersionCode 不低于本轮（下界 1020）',
+          bool(vname) and vcode is not None and vcode.isdigit() and int(vcode) >= 1020)
     check('U19 负向：1014 的那行常开横幅已消失（常量池里不再有 2.3.1 / code 1014 的常开行）',
           'XposedCompat.log("[DLsiteSoundFloat] ==== BUILD 2.3.1 / code 1014");' not in mod)
 
@@ -785,8 +795,10 @@ def main():
     check('W8 【code 1017】导入齐备：HashSet 与 Set（清扫白名单用）',
           'import java.util.HashSet;' in cc and 'import java.util.Set;' in cc)
     # 【code 1018】同 U18：钉死值 1017 属本轮判据，收回泛化为下界。
-    check('W9 【版本】versionName 2.3.2 / appVersionCode 不低于本轮（下界 1018）',
-          vname == '2.3.2' and vcode is not None and vcode.isdigit() and int(vcode) >= 1018)
+    # 【code 1020】同 L3：versionName 的钉死值也随轮次前进（1020 起是 2.3.3）⇒
+    #   这里只守 code 的**下界**，versionName 交给 L3 判（避免两处重复钉同一个值）。
+    check('W9 【版本】appVersionCode 不低于本轮（下界 1020）',
+          bool(vname) and vcode is not None and vcode.isdigit() and int(vcode) >= 1020)
     # 【code 1018】同 L10：上一轮的要点词不再复用，改判「履历段自报 code == 横幅 code」。
     check('W10 本轮履历段自报的【code】与横幅 code 一致（同 L10，两处各守一半）',
           seg is not None and ('【code %s' % (vcode or 'x')) in seg.group(1))

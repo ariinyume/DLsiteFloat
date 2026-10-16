@@ -559,7 +559,8 @@ public class ActivityButtonHook {
      * 【1.21.12 问题 2】按钮从「有字幕」切到「无字幕」之前，先压这么久的延时。
      *
      * 换轨后仓库会进「待确认」窗口（{@link io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository}
-     * 的 `NO_SUBTITLE_GRACE_MS` = 3000ms）：字幕先挂起不显示，等新音轨的字幕 JSON；
+     * 的 `NO_SUBTITLE_GRACE_MS`，【code 1021】起 1000ms）：字幕先挂起不显示，
+     * 等新音轨的字幕 JSON；
      * 等到窗口结束还没到才裁决「本音轨无字幕」（清 cues + 关悬浮窗）。
      *
      * 按钮原先只看 `hasSubtitles()`（= cues 非空），而 cues 在窗口期内**还没清**
@@ -570,7 +571,7 @@ public class ActivityButtonHook {
      * 压 500ms 就能把「新音轨其实有字幕」的情况整个滤掉（全程不闪），
      * 而真没字幕的音轨也能在 ~0.5s 表态，比原来的 3s 快 6 倍。
      *
-     * ⚠️ 这只是**提前表态 UI**，数据侧那 3000ms 裁决窗一个字没动 ——
+     * ⚠️ 这只是**提前表态 UI**，数据侧那个裁决窗（【code 1021】起 1000ms）一个字没动 ——
      * 提前显示「无字幕」不等于清 cues，JSON 真迟到时窗口还会自动恢复。
      */
     private static final long BUTTON_NO_SUB_DELAY_MS = 500L;

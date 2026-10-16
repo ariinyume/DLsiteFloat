@@ -29,6 +29,30 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 脚本 → (类别, 一句话说明它验什么)
 # ⚠️ 说明必须与脚本内部判据一致；改判据时同步改这里，否则索引表本身就会骗人。
 SCRIPTS = [
+    ('verify_1021_src.py', '源码层',
+     'code 1021 等待窗 3000→1000：NO_SUBTITLE_GRACE_MS=1000（旧 3000L 绝迹）、'
+     '并列三个时限常量一个没动、窗口分级/兜底读盘/离线直读/提前收窗结构不动、'
+     '静默窗 INDEX_SUPPRESS_MS 按**数值**仍严格大于本窗（974 死循环的根治条件）、'
+     '三处交叉引用注释改后新形态在+旧形态绝迹+历史段不改写、'
+     '本轮标记只落在四个 java 文件、零调用点改动、版本/横幅纪律（48 项）'),
+    ('verify_1021.py', 'dex 字节码层',
+     'code 1021：全包静态常量表逐项 diff 恰为 {BuildConfig.VERSION_CODE + '
+     'NO_SUBTITLE_GRACE_MS: 3000→1000}（既抓改漏也抓多改）、并列常量与缓存层 '
+     'INDEX_SCHEMA=4 未动、五个对外签名与 invoke 形态仍在、aapt2 '
+     'versionCode=1021/versionName=2.3.3、横幅串 BUILD 2.3.3 / code 1021'
+     '（28 项 / 28 有区分力锚）'),
+    ('verify_1020_src.py', '源码层',
+     'code 1020 缓存键空间修复：lookup 只认身份键（identity==0 即放弃命中，'
+     '体内不再碰弱键表 bySelection、不再有时间轴自愈删除）+ has 同口径 + 作品键降为只作取证'
+     '（新串 hit ACCEPTED despite work-key mismatch、旧拒绝串绝迹）+ 前身按文件识别'
+     '（新字段 byFile / put 用它找前身 / stampDuration 补盖后摘出孤儿槽位 / 索引重建按身份分派）+ '
+     'timelineFits 补反向（读条目自己的 durMs）+ INDEX_SCHEMA 3→4 + '
+     '零调用点改动（数据仓库四处调用原样）+ 版本/横幅纪律（51 项）'),
+    ('verify_1020.py', 'dex 字节码层',
+     'code 1020：lookup/has 体内不再访问 bySelection、lookup 内 removeEntryLocked 2→1 处、'
+     'byFile:Ljava/util/Map; 字段与 put 体内的访问、索引 Map 字段 3→4、'
+     'timelineFits 体内读 .durMs:J、INDEX_SCHEMA=4、aapt2 versionCode=1020/versionName=2.3.3、'
+     '横幅串 BUILD 2.3.3 / code 1020（50 项 / 50 有区分力锚）'),
     ('verify_1019_src.py', '源码层',
      'code 1019 首轨字幕修复：种子路径补 onSeededTrack（只取缓存、不挂起不裁决，'
      '体内不出现 pending*/floatingWindowOpen/onTrackChanged）+ 认领即改签'
@@ -123,6 +147,8 @@ SCRIPTS = [
 #   不接包的脚本（如源码层校验、真机日志校验）不要登记，否则会被误判成「缺参数」。
 NEEDS_APK = {
     'verify_1007.py': (1017, 1006, 1011),
+    'verify_1021.py': (1021, 1020, 1011),   # <apk_1021> <apk_1020 上一版> <apk_1011 反向固定>
+    'verify_1020.py': (1020, 1019, 1011),   # <apk_1020> <apk_1019 上一版> <apk_1011 反向固定>
     'verify_1019.py': (1019, 1018, 1011),   # <apk_1019> <apk_1018 上一版> <apk_1011 反向固定>
     'verify_1018.py': (1018, 1017, 1011),   # <apk_1018> <apk_1017 上一版> <apk_1011 反向固定>
     # <apk_主验> <apk_对照> <apk_上一版>（1007 新功能 + 1011 簇推断根修 +

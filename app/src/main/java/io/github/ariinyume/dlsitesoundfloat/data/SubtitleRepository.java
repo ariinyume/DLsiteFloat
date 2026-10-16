@@ -46,8 +46,27 @@ public class SubtitleRepository implements LineSource {
 
     /** 音轨切换时：距上次成功加载字幕 JSON 多久以内，视为「新音轨预加载的字幕」而保留。 */
     private static final long PRELOAD_TOLERANCE_MS = 3500L;
-    /** 音轨切换后等多久仍没等到字幕 JSON，就判定「该音轨没有字幕」（无缓存字幕时）。 */
-    private static final long NO_SUBTITLE_GRACE_MS = 3000L;
+    /**
+     * 音轨切换后等多久仍没等到字幕 JSON，就判定「该音轨没有字幕」（无缓存字幕时）。
+     *
+     * <p>【code 1021】3000 → 1000（Ari 指令）：这个窗口就是「没收到官方字幕之后多久去取本地字幕」
+     * 的等待时长 —— 换轨后先挂起、等宿主自己取回的云端 JSON，等到窗口到点还没等到，才由
+     * {@link #resolvePendingTrack} 兜底回退本地磁盘缓存（见那里的 `tryResumeFromDisk`）。
+     *
+     * <p>为什么 1 秒够：真机实测「换轨 → 字幕 JSON 到达」的正常延迟是 115ms 与 345ms，
+     * 缓存命中时 ~0.2s ⇒ 1 秒足够把「其实有字幕」的轨整个滤掉，剩下的就地取本地，
+     * 把白等的 2 秒还给用户。
+     *
+     * <p>⚠️ 两处联动约束仍然成立（改值前已复核）：① {@code PlayerSourceHook#INDEX_SUPPRESS_MS}
+     * （20000ms）必须**大于**本窗口，否则「上报 → 作废 → 上报」的死循环会复现 —— 20000 ≫ 1000，
+     * 余量反而更大；② 提前收窗取 {@code min(NO_SUBTITLE_EARLY_CLOSE_MS, grace)}，本值变小后它与
+     * 裁决同时到点，由裁决先行、提前收窗在「已裁决」时直接空转（见 {@link #provisionalEarlyClose}
+     * 的卫语句）。
+     *
+     * <p>⚠️ 盘上没有本轨缓存的另一条分支走的是 {@link #NO_SUBTITLE_GRACE_MS_CACHED}（15000ms）
+     * 长窗，**不受本值影响** —— 那条路上没有本地可退，多等是对的。
+     */
+    private static final long NO_SUBTITLE_GRACE_MS = 1000L;
     /**
      * 【1.21.15 问题 1】进入待确认时**已有缓存 cues** 的情况下，给字幕 JSON 的宽限时间。
      *
@@ -58,7 +77,8 @@ public class SubtitleRepository implements LineSource {
      *   17:35:02.521 判无字幕（cues were 81）→ 17:35:07.812 Loaded 152 cues（5.3s 后到）
      *   17:22:02.745 判无字幕（cues were 81）→ 17:22:16.824 Loaded 81 cues（11.1s 后到）
      * 而「进入待确认时已有 cues」本身就说明**这部作品是有字幕的**，值得多等一会儿；
-     * cues 本来就是空（用户一直待在无字幕音轨上）则维持 3000ms 结案，零代价。
+     * cues 本来就是空（用户一直待在无字幕音轨上）则维持**标准窗口**结案，零代价
+     * （该标准窗口【code 1021】由 3000ms 收到 1000ms，见 {@link #NO_SUBTITLE_GRACE_MS}）。
      *
      * 【2.1.3 问题 1】10s → 15s：冷请求实测尾部到 15.6s
      * （2026-09-29 日志 `FALSE NEGATIVE ... 1311ms after the verdict` 之外，
@@ -1722,7 +1742,11 @@ public class SubtitleRepository implements LineSource {
             pendingPosSamples = 0;
             if (lastLoadJsonMs <= pendingBaselineLoadMs) {
                 // 等待期内没有任何新的字幕 JSON。**下结论前先怀疑一次「其实没换轨」**：
-                // 这 3 秒里播放位置若一直在往前走、从未回退，说明音频根本没重开新轨
+                // 这 1 秒里播放位置若一直在往前走、从未回退，说明音频根本没重开新轨
+                // 【code 1021】等待窗由 3000ms 收到 1000ms（见 NO_SUBTITLE_GRACE_MS）：
+                //   窗口变短 ⇒ 这条「假换轨」判据能采到的位置样本也变少，但它本来就只在
+                //   **老信号路径**（非权威序号门）下参与，且要求看到位置**大幅回退**才敢判，
+                //   属于「宁可真换轨」的保守侧，缩短不会把它推到错误的一边。
                 // （典型场景：在**第一轨**按「上一首」，App 是 no-op，继续播第一轨）。
                 // 此时若照旧判定「无字幕」，就会清空 cues 并关掉悬浮窗 —— 这正是 v27 要修的 bug。
                 // ⚠️ v28 修正：v27 这里用「位置从未回退」当假换轨的判据，前提**不成立** ——

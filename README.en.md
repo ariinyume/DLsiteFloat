@@ -4,8 +4,8 @@
 
 > An LSPosed / Xposed module that pins a **floating subtitle window** synced with playback progress onto the **playback page** of DLsiteSound (the DLsite audio app), and can also mirror subtitles to the **system status bar** (injected inside the SystemUI process).
 
-- Current version: **2.3.2** (`DLsiteFloat-2.3.2-code1019-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
-- 📦 Download APK: [Releases · v2.3.2](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.3.2)
+- Current version: **2.3.3** (`DLsiteFloat-2.3.3-code1021-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
+- 📦 Download APK: [Releases · v2.3.3](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.3.3)
 - 📝 Development progress: [DLsiteFloat 插件开发进度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh) (in Chinese)
 - ⭐ Xposed repository: [DLsiteFloat - DLsiteSound floating window / status bar subtitle module](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -133,7 +133,7 @@
   1. Your device model / Android version / ROM (in particular whether it is ColorOS / HyperOS / stock / near-stock, etc.)
   2. The DLsiteSound version you are using
   3. Reproduction steps + the LSPosed log (filtered by `DLsiteSoundFloat`) + `dlsitefloat_net.log` when relevant + screen recording / screenshots (please redact or crop out any sensitive information)
-- **Before filing, please confirm**: that you installed the latest APK (check the `==== BUILD 2.3.2 / code 1019` line in the LSPosed log)
+- **Before filing, please confirm**: that you installed the latest APK (check the `==== BUILD 2.3.3 / code 1021` line in the LSPosed log)
 - **When troubleshooting track switching / subtitle capture problems**: turn on the **debug log** under "More" on the settings page and reproduce the issue once more (it is off by default and will flood the log if left on; remember to turn it back off afterwards).
 - **Liquid glass issues**: first try "setting blur strength back to 50–60", "not maxing out transparency" and "matching backdrop brightness to how bright the page is"; if it is still wrong, attach the LSPosed log (filtered by `DLsiteSoundFloat`) and state your **device model / ROM** (compositor blur support varies between ROMs).
 

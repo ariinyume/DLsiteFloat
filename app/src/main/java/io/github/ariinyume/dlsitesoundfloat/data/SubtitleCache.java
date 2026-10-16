@@ -68,17 +68,28 @@ import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
  * （与 {@code PlayerSourceHook} 的换轨判据**同一口径**，见 {@link PlaylistKey#makeIdentity}）。
  * 副键 = 选择键 {@code (trackCount, currentIndex)}（{@link PlaylistKey#makeSelection}）——
  * 字幕 JSON 往往比「带时长的权威读数」先到，落盘时先按副键挂着，等权威读数到了再补盖时长
- * （{@link #stampDuration}）。
+ * （{@link #stampDuration}）。**副键只活在「补盖」这一侧；读取一律不用它**
+ * 【code 1020】—— 理由见下方防护栈第 ① 条。
  *
  * <h3>── 为什么不会张冠李戴（防护栈）──</h3>
  * <ol>
- *   <li><b>时长补盖 + 时间轴交叉校验</b>：条目里记着这份字幕的最大结束时间，补盖时长时
- *       若它超出 {@code durMs + 2s} ⇒ 说明这份 JSON 其实不属于这条轨（竞态张冠李戴），
- *       拒绝补盖 —— 它此后永远是「无身份的孤儿」，永不命中；</li>
+ *   <li><b>只认强键</b>【code 1020】：查缓存**只认身份键**（曲目数 + 时长毫秒 + 曲目序号
+ *       的三元组打包值）—— 毫秒级时长本身就是区分作品的事实。弱的「选择键」
+ *       （只有曲目数 + 序号）**曾经**用作身份未知时的兜底，而真机两次兜底命中、
+ *       **两次都是别的作品的台词**（2026-10-14 16:18:19 与 17:14:54）⇒ 整条兜底路径已删除；
+ *       身份未知（即时长未知）时**放弃命中** —— 宁可屏幕空白，也绝不把来路不明的台词
+ *       放上去；</li>
+ *   <li><b>时长补盖 + 时间轴交叉校验</b>：条目里记着这份字幕的最大结束时间**和它自己的
+ *       时长**，补盖时长时若最大结束时间超出 {@code durMs + 2s}、或它记的时长与身份的
+ *       时长对不上 ⇒ 说明这份 JSON 其实不属于这条轨（竞态张冠李戴），拒绝补盖 ——
+ *       它此后永远是「无身份的孤儿」，永不命中；</li>
  *   <li><b>内容哈希去重</b>：同一作品下两条目正文哈希相同而序号/时长不同 ⇒ 后者写入时
  *       删掉前者（被误标的那份在正确轨重播时被清掉）；</li>
- *   <li><b>作品键正向校验</b>：命中时若手上有「当前作品键」（刚在线加载过才拿得到），
- *       而它与条目里的作品键不同 ⇒ <b>拒绝命中</b>（跨作品冒充的唯一正证据）；</li>
+ *   <li><b>作品键只作取证</b>【code 1020】：命中时若手上有「当前作品键」而它与条目里的
+ *       不同，只**打一行日志**、不再拒绝。它曾是唯一的跨作品防线，但真机证明它不可靠 ——
+ *       它只在抓到在线 JSON 那一刻刷新，切轨那一刻往往还停在上一个作品，而且离上次刷新
+ *       不到三分钟、仍落在「新鲜窗口」内 ⇒ 会否掉**正确**的那一条
+ *       （17:17:45 / 17:18:02 / 17:18:34 连续三次）；</li>
  *   <li><b>全量日志</b>：每次命中/补盖/淘汰都打一行，Ari 可事后抽验。</li>
  * </ol>
  *
@@ -123,8 +134,13 @@ public final class SubtitleCache {
      * 却**仍然留在副键表里可被命中**，放出来就是别的作品的台词。
      * 写入侧已修（认领即改签）、读取侧已补校验（副键命中同样过时间轴并自愈删除），
      * 这里把已经写歪的旧条目整批作废，让缓存目录从干净状态重新积累。
+     *
+     * <p>【code 1020】3 → 4：读取路径**不再认副键**（选择键兜底已整条删除，见
+     * {@link #bySelection}），于是「什么样的条目才算能命中」的口径整个变了。盘上按旧口径
+     * 写下的条目里仍混着跨作品错标的历史脏数据（code 1013~1019 写入侧竞态留痕），
+     * 本轮把索引版本加一，让它们整批作废、按新口径重新积累。
      */
-    private static final int INDEX_SCHEMA = 3;
+    private static final int INDEX_SCHEMA = 4;
     /** 时间轴交叉校验的容差：字幕最大结束时间允许超出时长这么多秒。 */
     private static final double TIMELINE_TOLERANCE_SEC = 2.0;
 
@@ -158,10 +174,33 @@ public final class SubtitleCache {
     private Context appCtx;
     private boolean ready;
 
-    /** 按身份键索引（已补盖时长的、可命中的条目）。 */
+    /**
+     * 【code 1020】强键索引：身份键（{@link PlaylistKey#makeIdentity}，**含毫秒级时长**）
+     * → 条目。**刻意不按作品分槽** —— 时长本身就是区分作品的事实，而「作品键」只能在抓到
+     * 在线 JSON 时得到：切轨那一刻它要么为空、要么是**上一部作品的陈旧快照**（详见
+     * {@link #lookup} 里那段说明）。
+     */
     private final Map<Long, Entry> byIdentity = new HashMap<>();
-    /** 按选择键索引（含未补盖时长的孤儿；也用于同轨重写去重）。 */
+    /**
+     * 【code 1020】弱键索引：选择键 → **尚未补盖时长的孤儿**（{@code identity == 0}）。
+     *
+     * <p>⚠️ 它**不参与读取**：{@link #lookup} 只认身份键。选择键只由
+     * {@code (trackCount, idx)} 组成，任何两部作品的同序号音轨都会撞在同一个槽位上 ——
+     * 真机实证（2026-10-14 16:18:19 与 17:14:54）两次「按选择键兜底命中」，
+     * **两次都是别人的台词**，一次都没对。它现在只承担一件事：给
+     * {@link #stampDuration} 找到那条等着补盖时长的条目。
+     */
     private final Map<Long, Entry> bySelection = new HashMap<>();
+    /**
+     * 【code 1020】文件名 → 条目。同一个 {@code (作品, tc, idx)} 必然落到同一个文件名
+     * （见 {@link #fileNameFor}），覆盖写之后旧条目必须让位 —— 否则两条目共用一份文件，
+     * 删掉其中一条会把另一条也弄成「文件读不出来」。
+     *
+     * <p>为什么不用选择键找前身：选择键跨作品共用 ⇒ 一部作品写自己的一条轨，会顺手把
+     * **另一部作品**那条已经能被强键命中的条目一起摘掉（真机 17:16:55 摘掉之后，
+     * 17:17:16 那次换轨的主键查询直接落空）。
+     */
+    private final Map<String, Entry> byFile = new HashMap<>();
     /** 全部条目（LRU / 统计 / 索引持久化）。 */
     private final List<Entry> entries = new ArrayList<>();
     /** 内容哈希 → 条目（同一作品内的去重）。 */
@@ -280,7 +319,8 @@ public final class SubtitleCache {
                     return;
                 }
 
-                Entry prev = bySelection.get(selection);
+                // 【code 1020】前身按**文件**找，不再按选择键（见 byFile 的注释）。
+                Entry prev = byFile.get(fileName);
                 long prevBytes = prev != null ? prev.bytes : 0L;
                 if (prev != null) {
                     removeEntryLocked(prev, false);   // 同轨重写（自愈：字幕被更新时也覆盖）
@@ -313,10 +353,18 @@ public final class SubtitleCache {
                 e.selection = selection;
                 e.identity = e.durMs > 0 ? PlaylistKey.makeIdentity(tc, e.durMs / 1000.0, idx) : 0L;
 
+                // 【code 1020】孤儿槽位一条轨只留一个：被顶掉的那条永远等不到补盖时长
+                //   （它已经不在索引里了），留着只是白占字节 —— 一并回收。
+                Entry orphanPrev = bySelection.get(selection);
+                if (orphanPrev != null && orphanPrev != prev) {
+                    removeEntryLocked(orphanPrev, true);
+                }
                 entries.add(e);
-                bySelection.put(selection, e);
+                byFile.put(fileName, e);
                 if (e.identity != 0L) {
                     byIdentity.put(e.identity, e);
+                } else {
+                    bySelection.put(selection, e);   // 只是个待补盖的孤儿，读侧不用它
                 }
                 if (workKey != null) {
                     byHash.put(hashKey(workKey, hash), e);
@@ -365,8 +413,19 @@ public final class SubtitleCache {
                             + "s + " + TIMELINE_TOLERANCE_SEC + "s -> stays orphan (never matches)");
                     return;
                 }
+                // 【code 1020】补盖成功 ⇒ 它不再是孤儿：从孤儿槽位摘掉，改挂强键表。
                 e.durMs = durMs;
                 e.identity = identity;
+                bySelection.remove(selection);
+                Entry dup = byIdentity.get(identity);
+                if (dup != null && dup != e) {
+                    // 同一身份已被别的条目占着（只可能来自被改坏的索引）⇒ 让位，
+                    //   否则旧那条会永远留在 entries 里、谁也取不到。
+                    log("stamp: identity already held by another entry -> replacing"
+                            + " (idx=" + dup.idx + " dur=" + dup.durMs
+                            + " bytes=" + dup.bytes + ")");
+                    removeEntryLocked(dup, false);
+                }
                 byIdentity.put(identity, e);
                 persistIndexLocked();
                 log("stamp duration: tc=" + e.tc + " idx=" + e.idx + " dur=" + durMs
@@ -382,64 +441,60 @@ public final class SubtitleCache {
     // ==================================================================
 
     /**
-     * 按身份/选择键查缓存，命中返回**字幕 JSON 全文**（未命中返回 {@code null}）。
+     * 按身份键查缓存，命中返回**字幕 JSON 全文**（未命中返回 {@code null}）。
      *
-     * @param identity       本次换轨目标的身份键（0 = 未知）—— **主判据**
-     * @param selection      本次换轨目标的选择键（0 = 未知）—— 副判据（身份未知时的兜底）
-     * @param currentWorkKey 【Phase 3 / URI 通道】手上「当前作品键」（null = 没有正证据）。
-     *                       与条目作品键不同时**拒绝命中** —— 这是跨作品冒充的唯一正证据。
+     * @param identity       本次换轨目标的身份键（0 = 未知）—— 【code 1020】**唯一判据**；
+     *                       为 0（等价于时长未知）时直接放弃命中
+     * @param selection      本次换轨目标的选择键（0 = 未知）—— 【code 1020】只进日志，不参与判据
+     * @param currentWorkKey 【Phase 3 / URI 通道】手上「当前作品键」（null = 没有）。
+     *                       【code 1020】它**只作取证、不再作否决** —— 它只在抓到在线 JSON
+     *                       那一刻刷新，切轨那一刻往往还停在**上一部作品**，而它仍在
+     *                       三分钟新鲜窗口内 ⇒ 拿它否决会否掉正确的那一条（真机连续三次）。
      */
     public String lookup(long identity, long selection, String currentWorkKey) {
         if (!ready) {
             return null;
         }
         try {
+            // 【code 1020】只认强键（身份键，**含毫秒级时长**）。
+            //   弱键（选择键）兜底已整条删除 —— 理由见 {@link #bySelection} 的注释
+            //   （真机两次副键兜底命中，两次都是别人的台词）。
+            //   身份未知（== 0L，等价于「时长未知」）⇒ 按 Ari 定的政策**放弃命中**：
+            //   宁可屏幕空白，也绝不把来路不明的台词放上去。
+            if (identity == 0L) {
+                return null;
+            }
             Entry e;
-            Entry stale = null;
-            boolean byIdent = false;
             synchronized (lock) {
-                e = identity != 0L ? byIdentity.get(identity) : null;
-                if (e != null) {
-                    byIdent = true;
-                } else if (selection != 0L) {
-                    e = bySelection.get(selection);
-                    // 【code 1019】副键（选择键）命中必须与主键**同一口径**过时间轴交叉校验。
-                    //   主键是补盖出来的，补盖时已经过这道校验；而副键条目在「补盖被拒」之后
-                    //   **仍然是可命中的**（它只是永远当孤儿）。真机的病灶正是这个组合：
-                    //   一份别的作品的字幕被错标到 tc=9 idx=0，补盖 208.08s 时被拒
-                    //   （maxEnd=383.733s），却因为副键还在，之后每一次查这一轨都照样命中
-                    //   ⇒ 屏幕上放的是别人家的台词。
-                    if (e != null && !timelineFits(e, identity)) {
-                        stale = e;
-                        e = null;
-                    }
+                e = byIdentity.get(identity);
+                if (e != null && !timelineFits(e, identity)) {
+                    // 护栏：强键条目在补盖时已经过同一把尺子，正常走不到这里；
+                    //   只有索引被外力改坏（手改 index.json / 半截写盘）才可能。
+                    log("hit REJECTED (identity, timeline mismatch): idx=" + e.idx
+                            + " dur=" + e.durMs + "ms maxEnd=" + e.maxEnd + "s"
+                            + " requested dur="
+                            + (PlaylistKey.identityDurationMs(identity) / 1000.0) + "s");
+                    e = null;
                 }
                 if (e != null) {
-                    // ③ 作品键正向校验（Phase 3）：两侧都有作品键且不同 ⇒ 拒绝。
-                    if (currentWorkKey != null && e.workKey != null
-                            && !currentWorkKey.equals(e.workKey)) {
-                        log("hit REJECTED (work-key mismatch): entry work=" + shortKey(e.workKey)
-                                + " current work=" + shortKey(currentWorkKey));
-                        return null;
-                    }
                     e.used = System.currentTimeMillis();
                 }
             }
-            if (stale != null) {
-                // 【code 1019】证伪即**自愈**：只拒绝补盖是不够的 —— 条目连同它的文件一起删掉，
-                //   否则它会一直挂在副键表里，下一次查这一轨照样命中。
-                log("hit REJECTED (selection-only, timeline mismatch) -> self-heal drop:"
-                        + " idx=" + stale.idx + " maxEnd=" + stale.maxEnd + "s cues=" + stale.cues
-                        + " bytes=" + stale.bytes + " requested dur="
-                        + (PlaylistKey.identityDurationMs(identity) / 1000.0) + "s");
-                synchronized (lock) {
-                    removeEntryLocked(stale, true);
-                    persistIndexLocked();
-                }
-                return null;
-            }
             if (e == null) {
                 return null;
+            }
+            if (currentWorkKey != null && e.workKey != null
+                    && !currentWorkKey.equals(e.workKey)) {
+                // 【code 1020】作品键从此**只作取证、不再作否决**。真机 17:17:45 /
+                //   17:18:02 / 17:18:34 三次都拿它当否决依据，而被它否掉的恰恰是**正确**
+                //   的那一条：切轨那一刻手上那个键还停在上一个作品（这一部作品的字幕 JSON
+                //   还没到），可它离上次刷新不到三分钟、仍在「新鲜窗口」内 ⇒ 被判成正证据。
+                //   同场的反证在 17:16:03：强键命中后 6ms 到达的 JSON 与条目同属一个作品
+                //   ⇒ 含毫秒级时长的身份键本身足以定归属，作品键只是个会过期的快照。
+                log("hit ACCEPTED despite work-key mismatch (current work key is a stale"
+                        + " snapshot, NOT evidence): entry work=" + shortKey(e.workKey)
+                        + " current work=" + shortKey(currentWorkKey)
+                        + " identity=" + identity + " selection=" + selection);
             }
             String text = readFile(e.file);
             if (text == null || text.isEmpty()) {
@@ -450,9 +505,9 @@ public final class SubtitleCache {
                 }
                 return null;
             }
-            log("HIT" + (byIdent ? " (identity)" : " (selection-only)") + ": tc=" + e.tc
-                    + " idx=" + e.idx + " dur=" + e.durMs + "ms cues=" + e.cues
-                    + " work=" + shortKey(e.workKey) + " bytes=" + e.bytes);
+            log("HIT (identity): tc=" + e.tc + " idx=" + e.idx + " dur=" + e.durMs
+                    + "ms cues=" + e.cues + " work=" + shortKey(e.workKey)
+                    + " bytes=" + e.bytes + " selection=" + selection);
             synchronized (lock) {
                 persistIndexLocked();   // 记下 lastUsed（LRU）
             }
@@ -466,34 +521,51 @@ public final class SubtitleCache {
     /**
      * 【code 1019】时间轴交叉校验 —— **补盖与读取同一把尺子**（{@link #TIMELINE_TOLERANCE_SEC}）。
      *
-     * <p>判据：请求身份带时长时，条目的字幕最大结束时间不得超过 {@code durMs + 容差}。
-     * 请求身份没带时长（{@code durMs <= 0}）或条目没记最大结束时间时**一律放行** ——
-     * 宁可沿用旧行为，也不要用一个未知量去拒绝一次正常命中。
+     * <p>判据两条：① 条目自己记的时长与本次请求的时长**必须一致**（容差
+     * {@link #TIMELINE_TOLERANCE_SEC}）—— 这是真正有区分力的一条【code 1020 新增】；
+     * ② 条目的字幕最大结束时间不得超过 {@code durMs + 容差}（code 1019 的尺子）。
+     * 第二条在条目没记最大结束时间、或请求没带时长时一律放行 —— 读路径已经不认
+     * 「时长未知」的请求（见 {@link #lookup}），这里的宽松只会少一次本该命中的机会，
+     * 不会放进错误的条目。
      *
      * <p>纯判定、零状态：不读实例字段、不改任何东西，因此 {@link #stampDuration} 与
      * {@link #lookup} 可以共用同一条判据，不会出现「补盖严、命中松」的裂缝。
      */
     private static boolean timelineFits(Entry e, long identity) {
-        if (e == null || e.maxEnd <= 0) {
+        if (e == null) {
             return true;
         }
         long durMs = identity != 0L ? PlaylistKey.identityDurationMs(identity) : 0L;
-        if (durMs <= 0L) {
+        // 【code 1020】补上真正有区分力的那**反向**：条目自己记的时长与本请求的时长必须
+        //   对得上。旧的单向判据只看「字幕最大结束时间 ≤ 时长 + 容差」，天生偏向放行 ——
+        //   真机 17:14:54 的伪命中就是「条目 470.136s、请求 975.504s」：
+        //   950.677s ≤ 977.5s ⇒ 放行，于是屏上放的是另一条轨的台词。
+        if (e.durMs > 0L && durMs > 0L) {
+            long tolMs = (long) (TIMELINE_TOLERANCE_SEC * 1000.0);
+            if (e.durMs > durMs + tolMs || durMs > e.durMs + tolMs) {
+                return false;
+            }
+        }
+        if (e.maxEnd <= 0 || durMs <= 0L) {
             return true;
         }
         return e.maxEnd <= durMs / 1000.0 + TIMELINE_TOLERANCE_SEC;
     }
 
-    /** 这份身份/选择键是否**有**可命中的缓存（不读文件、只查内存索引；给播放页按钮用）。 */
+    /**
+     * 这份身份是否**有**可命中的缓存（不读文件、只查内存索引）。
+     *
+     * <p>【code 1020】口径与 {@link #lookup} 完全一致：**只认身份键**。副键兜底已经删除，
+     * 这里再留一条「选择键命中就算有」的分支，就会出现「页面亮着有缓存、真去取却取不到」
+     * 的自相矛盾（{@code hasDiskCacheFor} 还拿它决定云端要等多久）。
+     * {@code selection} 只为调用点签名稳定而保留。
+     */
     public boolean has(long identity, long selection) {
-        if (!ready) {
+        if (!ready || identity == 0L) {
             return false;
         }
         synchronized (lock) {
-            if (identity != 0L && byIdentity.containsKey(identity)) {
-                return true;
-            }
-            return selection != 0L && bySelection.containsKey(selection);
+            return byIdentity.containsKey(identity);
         }
     }
 
@@ -508,6 +580,7 @@ public final class SubtitleCache {
             entries.clear();
             byIdentity.clear();
             bySelection.clear();
+            byFile.clear();
             byHash.clear();
             totalBytes = 0L;
             persistIndexLocked();
@@ -595,6 +668,9 @@ public final class SubtitleCache {
                 && byHash.get(hashKey(e.workKey, e.hash)) == e) {
             byHash.remove(hashKey(e.workKey, e.hash));
         }
+        if (e.file != null && byFile.get(e.file) == e) {
+            byFile.remove(e.file);
+        }
         totalBytes -= e.bytes;
         if (totalBytes < 0) {
             totalBytes = 0;
@@ -665,11 +741,16 @@ public final class SubtitleCache {
                 if (e.selection == 0L) {
                     e.selection = PlaylistKey.makeSelection(e.tc, e.idx);
                 }
-                if (bySelection.get(e.selection) == null) {
-                    bySelection.put(e.selection, e);
+                // 【code 1020】按身份分派：有身份的进强键表，没身份的（孤儿）进孤儿槽位。
+                if (e.file != null && !byFile.containsKey(e.file)) {
+                    byFile.put(e.file, e);
                 }
-                if (e.identity != 0L && byIdentity.get(e.identity) == null) {
-                    byIdentity.put(e.identity, e);
+                if (e.identity != 0L) {
+                    if (byIdentity.get(e.identity) == null) {
+                        byIdentity.put(e.identity, e);
+                    }
+                } else if (bySelection.get(e.selection) == null) {
+                    bySelection.put(e.selection, e);
                 }
                 if (e.workKey != null && e.hash != null) {
                     byHash.put(hashKey(e.workKey, e.hash), e);
@@ -682,6 +763,7 @@ public final class SubtitleCache {
             entries.clear();
             byIdentity.clear();
             bySelection.clear();
+            byFile.clear();
             byHash.clear();
             totalBytes = 0L;
         }

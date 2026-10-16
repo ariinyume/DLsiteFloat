@@ -345,8 +345,17 @@ def main():
           '实际 %s' % (m_code.group(1) if m_code else '缺失'))
     check('build.gradle：label 存在且为 MMDD.N 形态',
           re.search(r"def appVersionCodeLabel = '\d{4}\.\d+'", gd) is not None)
-    check('build.gradle：tag 仍 2.3.2', "def appVersionTag = '2.3.2'" in gd)
-    check('build.gradle：name 仍 2.3.2', "def appVersionName = '2.3.2'" in gd)
+    # 【code 1020】这一组原来钉死在 2.3.2（属 code 1018 那轮的**本轮判据**）；
+    #   1020 按 Ari 指令升到 2.3.3。按铁律 82 收回泛化：只守那条**不变式** ——
+    #   tag == name（tag 决定 APK 文件名，与包内版本必须一致）。
+    _mt = re.search(r"def appVersionTag\s*=\s*'([^']+)'", gd)
+    _mn = re.search(r"def appVersionName\s*=\s*'([^']+)'", gd)
+    _tag = _mt.group(1) if _mt else ''
+    _nam = _mn.group(1) if _mn else ''
+    check('build.gradle：tag 与 name 都成型且相等（APK 文件名与包内版本一致）',
+          bool(_tag) and _tag == _nam
+          and re.match(r'^\d+\.\d+\.\d+$', _tag) is not None,
+          'tag=%s name=%s' % (_tag, _nam))
 
     banners = re.findall(r'XposedCompat\.log\("\[DLsiteSoundFloat\] ==== BUILD [\d.]+ / code (\d+)"\);',
                          mod_raw)
@@ -357,7 +366,7 @@ def main():
           bool(bcode) and ('【code %s' % bcode) in mod_raw)
     check('履历段收尾句合规（code (b-1) 升 b）',
           bool(bcode) and ('、code %d 升 %s。' % (int(bcode) - 1, bcode)) in mod_raw)
-    m_hist = re.search(r'LogGate\.debug\("\[DLsiteSoundFloat\] ==== BUILD 2\.3\.2 / code %s （(.*?)"\);'
+    m_hist = re.search(r'LogGate\.debug\("\[DLsiteSoundFloat\] ==== BUILD [\d.]+ / code %s （(.*?)"\);'
                        % re.escape(bcode),
                        mod_raw, re.S)
     hist = m_hist.group(1) if m_hist else ''

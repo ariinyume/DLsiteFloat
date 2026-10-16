@@ -273,26 +273,36 @@ def main():
         check('零状态（不 iget/iput 实例字段、不持阈值常量）',
               'iget' not in tf and 'iput' not in tf
               and 'TIMELINE_TOLERANCE_SEC' in tf)
-        check('请求身份无时长时放行（durMs <= 0 ⇒ true）', 'if (durMs <= 0L) {' in tf)
-        check('条目无 maxEnd 时放行', 'if (e == null || e.maxEnd <= 0) {' in tf)
+        # 【code 1020】两次放行判断已合并成一条 `if (e.maxEnd <= 0 || durMs <= 0L) {`。
+        #   按铁律 82 收回泛化：只判「两个未知量仍各自放行」这个**语义**，
+        #   不钉死行内写法（否则下一轮改一次写法就假 FAIL 一次）。
+        check('请求身份无时长时仍放行（durMs <= 0）', 'durMs <= 0L' in tf)
+        check('条目无 maxEnd 时仍放行', 'e.maxEnd <= 0' in tf)
         check('判据 = maxEnd <= durMs/1000 + 容差',
               'return e.maxEnd <= durMs / 1000.0 + TIMELINE_TOLERANCE_SEC;' in tf)
     lk = method_body_by_lines(cache, LOOKUP_DECL) if LOOKUP_DECL in cache else ''
     check('lookup 方法体切到', bool(lk))
     if lk:
         check('副键命中过时间轴校验', '!timelineFits(e, identity)' in lk)
-        check('证伪即标记为 stale 并让出 e', 'stale = e;' in lk and 'e = null;' in lk)
-        check('自愈：连同文件一起删掉', 'removeEntryLocked(stale, true);' in lk)
-        check('自愈带诊断日志（selection-only, timeline mismatch）',
-              'hit REJECTED (selection-only, timeline mismatch)' in lk
-              and 'self-heal drop' in lk)
+        # 【code 1020 取代】副键（选择键）兜底整条被删 —— 真机两次兜底命中、两次都是
+        #   别人的台词（16:18:19 与 17:14:54）。下面三条因此从「旧形态在位」
+        #   **翻转为「旧形态绝迹」**：语义仍成立，且谁把弱键兜底改回来这里就会响。
+        check('【code 1020 取代】弱键兜底的 stale 形态已绝迹',
+              'stale = e;' not in lk and 'removeEntryLocked(stale' not in lk)
+        check('【code 1020 取代】时间轴自愈删除已绝迹',
+              'removeEntryLocked(stale, true);' not in lk)
+        check('【code 1020 取代】自愈诊断日志已绝迹',
+              'hit REJECTED (selection-only, timeline mismatch)' not in lk
+              and 'self-heal drop' not in lk)
         i_hit = lk.find('!timelineFits(e, identity)')
         i_work = lk.find('work-key mismatch')
         check('时间轴校验排在作品键校验之前（先证伪再谈跨作品）',
               0 <= i_hit < (i_work if i_work >= 0 else 10 ** 9),
               'i_hit=%d i_work=%d' % (i_hit, i_work))
-        check('stale 处理在同步块之外（不在锁里做文件删除）',
-              lk.find('removeEntryLocked(stale, true);') > lk.find('if (stale != null) {'))
+        # 【code 1020 取代】上面那段「锁外做文件删除」的形态整条不存在了。
+        check('【code 1020 取代】stale 处理块（含锁外删文件）已绝迹',
+              'if (stale != null) {' not in lk
+              and 'removeEntryLocked(stale, true);' not in lk)
         check('主键（身份）命中路径未加校验（补盖时已验过）',
               'timelineFits' in lk and lk.count('!timelineFits(') == 1)
         check('找不到条目仍旧返回 null（回归锚）', 'if (e == null) {' in lk)
@@ -312,7 +322,12 @@ def main():
     # ================= E. 清毒与可读性 =================
     print()
     print('=== E. 清毒与可读性 ===')
-    check('INDEX_SCHEMA = 3', 'private static final int INDEX_SCHEMA = 3;' in cache)
+    # 【code 1020】3 是 1019 那轮的钉死值（本轮判据）；1020 按设计推进到 4（清毒）。
+    #   按铁律 82 收回泛化：只判「该常量存在且**不低于 3**」（防倒退）。
+    _msch = re.search(r'private static final int INDEX_SCHEMA = (\d+);', cache)
+    check('INDEX_SCHEMA 存在且不低于 3（code 1020 起改为下界）',
+          _msch is not None and int(_msch.group(1)) >= 3,
+          '实际 %s' % (_msch.group(1) if _msch else '未找到'))
     check('旧值 INDEX_SCHEMA = 2 绝迹（剥注释后）',
           'private static final int INDEX_SCHEMA = 2;' not in cache)
     check('文档写清「推进它 = 整批丢弃 + 删文件」（原始源码）',
@@ -332,21 +347,47 @@ def main():
     print('=== F. 版本号 / 横幅 / 履历段 ===')
     gd_path = os.path.join(repo_root, GRADLE_REL)
     gd = read_text(gd_path) if os.path.exists(gd_path) else ''
-    check('build.gradle：appVersionCode = 1019', 'def appVersionCode = 1019' in gd)
-    check('build.gradle：label = 1014.7', "def appVersionCodeLabel = '1014.7'" in gd)
-    check('build.gradle：tag 仍 2.3.2', "def appVersionTag = '2.3.2'" in gd)
-    check('build.gradle：name 仍 2.3.2（Ari：不升版本号）',
-          "def appVersionName = '2.3.2'" in gd)
+    # 【code 1020】这一组原来全钉在 1019 / 1014.7 / 2.3.2（属本轮判据）；1020 按 Ari 指令
+    #   把语义版本号升到 2.3.3。按铁律 82 全部收回泛化：code 判**下界**、label 判**形态**、
+    #   tag/name 判**相等**（那条不变式才是真正要守的东西）。
+    _gc = re.search(r'def appVersionCode\s*=\s*(\d+)', gd)
+    _gl = re.search(r"def appVersionCodeLabel\s*=\s*'([^']+)'", gd)
+    _gt = re.search(r"def appVersionTag\s*=\s*'([^']+)'", gd)
+    _gn = re.search(r"def appVersionName\s*=\s*'([^']+)'", gd)
+    _gcode = _gc.group(1) if _gc else ''
+    _glbl = _gl.group(1) if _gl else ''
+    _gtag = _gt.group(1) if _gt else ''
+    _gname = _gn.group(1) if _gn else ''
+    check('build.gradle：appVersionCode 不低于 1019（下界）',
+          _gcode.isdigit() and int(_gcode) >= 1019, '实际 %s' % _gcode)
+    check('build.gradle：label 形态为 MMDD.N',
+          re.match(r'^\d{4}\.\d+$', _glbl) is not None, '实际 %s' % _glbl)
+    check('build.gradle：tag / name 成型',
+          re.match(r'^\d+\.\d+\.\d+$', _gtag) is not None
+          and re.match(r'^\d+\.\d+\.\d+$', _gname) is not None,
+          'tag=%s name=%s' % (_gtag, _gname))
     check('build.gradle：tag == name（APK 文件名与包内版本一致）',
-          "def appVersionTag = '2.3.2'" in gd and "def appVersionName = '2.3.2'" in gd)
+          bool(_gtag) and _gtag == _gname)
 
     mod_raw = raw('mod')
     banners = re.findall(r'XposedCompat\.log\("\[DLsiteSoundFloat\] ==== BUILD [\d.]+ / code (\d+)"\);',
                          mod_raw)
-    check('常开横幅唯一且为 code 1019', banners == ['1019'], '实际 %r' % banners)
-    check('履历段存在（【code 1019）', '【code 1019' in mod_raw)
-    check('履历段收尾句合规', '版本号 2.3.2 不变、code 1018 升 1019。' in mod_raw)
-    m_hist = re.search(r'LogGate\.debug\("\[DLsiteSoundFloat\] ==== BUILD 2\.3\.2 / code 1019 （(.*?)"\);',
+    # 【code 1020】同版本号：横幅判**唯一且不低于 1019**。
+    check('常开横幅唯一且不低于 code 1019（code 1020 起改为下界）',
+          len(banners) == 1 and int(banners[0]) >= 1019, '实际 %r' % banners)
+    # 【code 1020】同 1017/1018 轮：改判「履历段**自报** code == 横幅 code」（只升横幅、
+    #   抄上一轮照样会被抓），收尾句改按**模板**判（版本号可能与 code 同时升）。
+    check('履历段存在（自报 code == 横幅 code）',
+          len(banners) == 1 and ('【code %s' % banners[0]) in mod_raw)
+    check('履历段收尾句合规（版本号 A 升/不变 [B]、code C 升/不变 D。）',
+          len(banners) == 1 and re.search(
+              # 【code 1021】第二个版本号改**可选**：版本号「不变」时按项目惯例省略它
+              #   （`版本号 2.3.3 不变、code 1020 升 1021。` —— 1012~1017 各轮都这么写），
+              #   旧模板强制要求它 ⇒ 「不变」的轮次必然假 FAIL。
+              r'版本号 \d+\.\d+\.\d+ (?:升|不变)(?: \d+\.\d+\.\d+)?、code \d+ (?:升|不变) %s。'
+              % banners[0], mod_raw) is not None)
+    m_hist = re.search(r'LogGate\.debug\("\[DLsiteSoundFloat\] ==== BUILD [\d.]+ / code %s （(.*?)"\);'
+                       % (banners[0] if len(banners) == 1 else 'x'),
                        mod_raw, re.S)
     hist = m_hist.group(1) if m_hist else ''
     check('履历段可切出（非空）', bool(hist))
