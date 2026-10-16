@@ -13,6 +13,30 @@
 ---
 
 
+## Preview
+
+**Default normal floating window style**: subtitle colour white, shadow colour black, shadow strength 50%, shadow radius 10%, active line opacity 100%, active line scale x1.0, inactive line blur radius 3.0px, inactive line scale ratio 90%, centre alignment, line spacing 0dp, extra spacing for wrapped lines inside a long subtitle 0dp, panel colour black.
+
+<img width="1849" height="632" alt="image" src="https://github.com/user-attachments/assets/87581cce-27fb-496f-8c2a-0525d7990b73" />
+
+---
+
+**Default liquid glass floating window style**: all liquid-glass settings (backdrop brightness, transparency, brightness, blur strength) default to 50%, and the other subtitle settings are the same as the normal floating window.
+
+<img width="1849" height="618" alt="image" src="https://github.com/user-attachments/assets/ee410bb1-50c2-46fe-ade0-265b78effea4" />
+
+---
+
+**Status bar subtitle style**
+
+<img width="464.5" height="178" alt="image" src="https://github.com/user-attachments/assets/acfe391e-d4f1-42fd-81f5-4605421df5a6" />
+
+---
+
+⚠ Note: I hold no authorization for the text shown in the previews above. If that is a problem, please contact me and I will remove it.
+
+---
+
 ## Features
 
 - **Two pill buttons on the playback page (since 2.0.1)**: two MD3 pill buttons sit side by side above the playback control bar — on the left `Status ON / Status OFF` (**the whole button disappears when there are no subtitles**), on the right `Popup ON / Popup OFF / No Sub`.
@@ -67,7 +91,7 @@
   - **Cache location**: the host app's private directory `Android/data/jp.co.eisys.dlsitesound/files/subtitle_cache/`; the usage readout and the "Clear subtitle cache" entry live in the "**Experimental features**" card on the settings page (that card is hidden by default — see below).
   - ⚠️ **You may see the cache "reset" once after an upgrade**: if a module upgrade changes the cache format, the old cache is **invalidated and rebuilt wholesale** — the usage readout on the settings page goes back to zero (**this is expected behaviour**, not something a system cleaner did), and it comes back once you play the works again.
 
-- **Smart track switching**: when you switch to an audio track with no subtitles, handling is suspended first and the floating window shows a `No Subtitles` placeholder while it waits for the new track's subtitle JSON — **1 s** when there are no cached cues, relaxed to **15 s** when cached cues exist; if no JSON arrives within **5 s** the window is **closed early**, and it is **automatically reopened** once the JSON arrives; only if the arbitration window expires with still no JSON are the cues cleared and the state judged to be "no subtitles". See [docs/track-change.md](docs/track-change.md).
+- **Smart track switching**: when you switch to an audio track with no subtitles, handling is suspended first and the floating window shows a `No Subtitles` placeholder while it waits for the new track's subtitle JSON — **1 s** when there are no cached cues, relaxed to **15 s** when cached cues exist; if the JSON has still not arrived while it waits, the floating window is **closed early**, and it is **automatically reopened** once the JSON arrives; only if the arbitration window expires with still no JSON are the cues cleared and the state judged to be "no subtitles". See [docs/track-change.md](docs/track-change.md).
   - **Cloud first, local fallback (since 2.3.2)**: after a track switch the module **waits for the latest cloud copy** first; only if it does not arrive within the window (no network / a slow cloud) does it fall back to the **locally cached** copy, and when fully offline (airplane mode) it reads the local copy straight away.
 
 - **Permission guidance and graceful degradation**: when overlay permission has not been granted, the first tap jumps to the "Display over other apps" settings page, and it **only prompts once**.
