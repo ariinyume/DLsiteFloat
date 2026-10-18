@@ -23,6 +23,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Configuration;
+import android.content.pm.PackageInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -72,6 +73,7 @@ import io.github.ariinyume.dlsitesoundfloat.config.ConfigStore;
 import io.github.ariinyume.dlsitesoundfloat.config.SubtitleConfig;
 import io.github.ariinyume.dlsitesoundfloat.data.SubtitleCache;
 import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
+import io.github.ariinyume.dlsitesoundfloat.util.HostInfo;
 import io.github.ariinyume.dlsitesoundfloat.util.ScopeProbe;
 import io.github.ariinyume.dlsitesoundfloat.util.Utils;
 import io.github.ariinyume.dlsitesoundfloat.view.LiquidGlassDrawable;
@@ -1621,12 +1623,41 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /**
+     * 【code 1022 / P0-1】宿主版本行（只读）。
+     *
+     * <p>为什么不复用 {@code HostInfo}：那份状态活在**宿主进程**里，设置页是另一个 uid
+     * 的另一份静态字段，读不到。这里用本进程的 PackageManager 直接读宿主包信息 ——
+     * 只读、零权限、宿主没在跑也能读到（installed 即可）。
+     */
+    private void buildHostVersionRow(LinearLayout parent) {
+        String name = "?";
+        boolean verified = false;
+        try {
+            PackageInfo pi = getPackageManager().getPackageInfo(
+                    io.github.ariinyume.dlsitesoundfloat.config.Protocol.HOST_PKG, 0);
+            name = pi.versionName == null ? "?" : pi.versionName;
+            verified = HostInfo.VERIFIED_VERSION.equals(name);
+        } catch (Throwable ignored) {
+            // 宿主未安装 / 包信息不可读：保持 "?"，不影响页面其余部分
+        }
+        TextView row = makeRowLabel(Strings.HOST_VERSION);
+        row.setText(Strings.HOST_VERSION.get(mLang) + " · " + name + " · "
+                + (verified ? Strings.HOST_VERIFIED.get(mLang)
+                        : Strings.HOST_UNVERIFIED.get(mLang)));
+        parent.addView(row);
+    }
+
+    /**
      * 「其他」节：状态栏字幕功能总闸 / 配置备份与恢复。
      *
      * v1.4 §16.3：**已删「保持屏幕常亮」整行**（真机测试 3.9 实锤无效果）。
      * {@code keep_screen_on} 键保留解析兼容，只是界面不再暴露。
      */
     private void buildMiscGroup(LinearLayout parent) {
+        // 【code 1022 / P0-1】卡片第一行：宿主版本（只读）。设置页跑在模块自己的进程，
+        //   不需要宿主在线也能读它的 PackageInfo —— 所以这一行是「插件能不能跟上宿主」
+        //   最便宜的一次表态。未验证时直接告诉用户「如异常请附日志」。
+        buildHostVersionRow(parent);
         buildStatusbarRow(parent);
         // 【2.2.7 / code 979】「调试日志」开关：诊断级日志的总闸。
         // 摆在「状态栏字幕功能」下方、「备份与恢复」上方（备份那排按钮仍由

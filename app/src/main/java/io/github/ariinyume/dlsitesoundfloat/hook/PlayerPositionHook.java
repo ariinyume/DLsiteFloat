@@ -167,6 +167,20 @@ public class PlayerPositionHook {
      */
     private static volatile boolean sSawPlaylistMap = false;
 
+    /**
+     * 【code 1022 / P0-3】状态 Map 的「必备键」—— 只用于**键体检**，不参与取值。
+     *
+     * <p>键名是 Hermes 字符串常量（R8 不改字符串池），所以跨混淆版本稳定；
+     * 但宿主真改了字段名时，旧代码只会「静默不更新」——用户看到字幕不动、日志干干净净。
+     * 有了这张表，第一次拿到 Map 就能判断「键还全不全」，缺了就显式降级。
+     */
+    private static final String[] WANT_KEYS = {
+            "currentTime", "duration", "playing", "playbackState", "trackCount", "currentIndex"
+    };
+
+    /** 键体检是否已做过（每个进程一次即可）。 */
+    private static volatile boolean sKeysChecked = false;
+
     public static void hook(ClassLoader cl, SubtitleRepository repo) {
         // 老采集点仍尝试挂（未混淆的老宿主上有效）；混淆宿主上会静默失败，无副作用。
         hookExoLegacy(cl);
@@ -199,6 +213,7 @@ public class PlayerPositionHook {
                 XposedCompat.log(TAG + " " + className
                         + ": no no-arg Map method (status map not exposed) -> "
                         + Shape.describeNoArgReturnTypes(cls, 8));
+                AdapterHealth.miss(AdapterHealth.Item.AUDIO_STATUS, className + " no ()Map");
                 return;
             }
             if (!sLoggedShape) {
@@ -221,6 +236,8 @@ public class PlayerPositionHook {
                 }
             });
             XposedCompat.log(TAG + " hooked " + className + "." + m.getName() + "() -> status Map");
+            AdapterHealth.hit(AdapterHealth.Item.AUDIO_STATUS,
+                    className.substring(className.lastIndexOf('.') + 1) + "." + m.getName() + "()");
         } catch (Throwable e) {
             XposedCompat.log(TAG + " " + className + " status map hook failed: " + e.getMessage());
         }
@@ -237,6 +254,26 @@ public class PlayerPositionHook {
         // ⓪ 【code 977】诊断：把整张 Map 打出来（按来源节流）—— 用于确定「哪些键、什么值、来自哪个通道」。
         //   【code 978】补上实例标识与 String 实际值（见 dumpStatusMap）。
         dumpStatusMap(m, where, inst);
+
+        // 【code 1022 / P0-3】键体检（每进程一次）：缺键 ⇒ 显式降级，不再「静默不动」。
+        if (!sKeysChecked) {
+            sKeysChecked = true;
+            StringBuilder missing = new StringBuilder();
+            for (String k : WANT_KEYS) {
+                if (!m.containsKey(k)) {
+                    if (missing.length() > 0) {
+                        missing.append(',');
+                    }
+                    missing.append(k);
+                }
+            }
+            if (missing.length() == 0) {
+                AdapterHealth.hit(AdapterHealth.Item.AUDIO_STATUS, "keys ok (" + m.size() + ")");
+            } else {
+                AdapterHealth.degraded(AdapterHealth.Item.AUDIO_STATUS,
+                        "missing keys: " + missing);
+            }
+        }
 
         // ── 【code 978】「当前活跃播放列表」判定（权威门）────────────────────
         //

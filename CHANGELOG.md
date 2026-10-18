@@ -3130,3 +3130,72 @@ versionName 保持 **2.3.3**；code 1020 → 1021；label `1014.8` → `1015.1`
 > **v2.3.3** 发出，与 code 1020 合并为同一次发布 —— 源仓 tag `v2.3.3`、
 > LSPosed 仓 tag `1021-2.3.3`，两侧 asset 同为 `DLsiteFloat-2.3.3-code1021-debug.apk`
 > （`ca94d9ea…a769e2` / 5,618,864 B）。
+
+## [2.3.4 / code 1022] — P0 适配体检四项（宿主版本感知 / 适配自检表 / 状态键体检 / 离线文案）+ ziptree 取证（2026-10-18）
+
+### 【起因】
+
+Ari 给了宿主 **DLsiteSound 2.22.0** 的实包，要求「结合宿主最新版本」给 DLsiteFloat 提优化建议，
+并把 P0 落地。离线体检结论（详见 `_review_2220/host-2.22.0-适配体检与优化建议.md`）：
+
+- 宿主这一版**没有新增任何字幕能力**（dex 字符串池 71,153 → 71,164，字幕/缓存/下载相关零新增）；
+- 但 R8 短名整体重跑：`AudioPlaylist ()Map` 由 `y()` 变 `s()`、
+  `readWithProgress` 的响应体类由 `Lvk/H;` 变 `Lwk/H;`、`okhttp3` 仍只剩 1 个类
+  ⇒ 本模块**全部形状锚点依然命中**，设计与这一版兼容；
+- 真正的缺口在**可观测性**：六条链路各自失败时只落默认关闭的 debug 日志。
+
+### 【改动】四件 P0 + 一件取证
+
+1. **宿主版本感知** `util/HostInfo`：应用 attach 后读宿主 versionName / versionCode，
+   打一行常开日志（是否等于已验证版本、本次启动前是否刚被更新过）。
+   设置页「其他」卡片首行加一条只读的「宿主版本 · X · 已验证/未验证」——
+   设置页用本进程 PackageManager 读，宿主没在跑也能读到。
+2. **适配自检表** `hook/AdapterHealth`：六条链路（网络构建点 / RN 网络锚点 / 播放状态映射 /
+   播放页判定 / 字幕文本匹配 / 状态栏注入）上报 HIT / DEGRADED / MISS，
+   **只在状态变化时落常开日志**，首次判出播放页再打一张全表。
+   ⚠️ 不做设置页可视化：自检结果在宿主进程，与设置页跨 uid，共享静态字段与 prefs 都读不到。
+3. **状态映射键体检** `hook/PlayerPositionHook`：每进程第一次拿到状态 Map 时检查六个必备键
+   （currentTime / duration / playing / playbackState / trackCount / currentIndex），
+   缺键显式降级并列出缺了哪些 —— 不再「字幕不动但日志干干净净」。
+4. **离线播放文案** `util/NetState` + `util/I18n`：用 NET_CAPABILITY_INTERNET + VALIDATED 判定，
+   读不到状态一律视为在线（绝不误报离线）。离线且本轨无缓存时，
+   胶囊显示「离线 · 无缓存」、悬浮窗占位显示「离线 · 无字幕缓存（联网播放一次即可缓存）」，
+   与「本音轨本来就没字幕」区分开。
+5. **取证** `util/DiagDump`：调试日志开启时把宿主 `ziptree.json` 原文落盘
+   （`subtitle_cache/_diag/`，最多 5 份、单份 1MB），用于反推字幕文件名 `<md5>.json` 的算法。
+   闸门对取证目标单独放宽到 1MB（普通响应仍 512KB）；调试关闭时只打一行提示。
+
+**为什么取证值得单列**：宿主下载**只下音频、不下字幕**（真机日志实证：`ziptree.json` 之后
+该作品零 `optimized/*.json`），而 CloudFront 签名 Policy 是**作品目录级通配**
+（`.../RJ01609334/*`）⇒ 只要知道文件名算法，「下载时同步缓存字幕」就成立。
+本轮先把取证链路铺好，规则一旦钉死即可做预取。
+
+### 【不改的】
+
+抓取闸门三档、去重表登记时机、换轨判据三元组、缓存身份口径与索引 schema、
+裁决窗与提前收窗、设置页既有分组结构 —— 全部一字未动（源码层与字节码层都有断言守）。
+
+### 【验证】
+
+- 源码层 `tools/verify_1022_src.py` → **40/40 PASS**
+- dex 层 `tools/verify_1022.py` → **47/47 PASS**（主验 1022 / 对照 1021），
+  六个新类（含两个枚举内部类）、7 条新字符串、6 个新名字均有区分力
+  ⚠️ 判据修正一条：`isOffline` 在对照包里也存在（同名方法来自依赖库）⇒ 该条**无区分力**，
+  已删除，改用 `util/NetState` 类描述符判定。
+- **双闭环**：`git stash -u` + clean 构建 → sha256 `ca94d9ea…a769e2`（== code 1021 交付包）；
+  `stash pop` + clean 构建 → sha256 `6eeacfd5…9a0380`（== 本轮交付包；两次 apply 构建逐字节相同）
+  ⇒ 本轮改动 = 两个包之间的**唯一差异源**
+
+### 产物
+
+`DLsiteFloat-2.3.4-code1022-debug.apk`，5,627,568 B
+sha256 `6eeacfd593f98296f8aac9cfa38fa7326e8d257fa466703a95c539358f9a0380`
+versionName 2.3.3 → **2.3.4**；code 1021 → 1022；label `1015.1` → `1018.1`
+
+> ⚠️ 升级前请确认已装版本的 code **严格小于 1022**：Android 只允许 `versionCode` 单调递增，
+> 覆盖安装失败时请先卸载旧版。
+> ⚠️ 本轮改动**不进包外推理**：索引 schema 仍为 4，升级后缓存**不清零**（与 1021 一致）。
+> ⚠️ 未提交、未打 tag、未发版 —— tag 是发布锚位，由 Ari 决定何时发。
+> 🔬 **取证下一步**：装本包 → 设置页打开「调试日志」→ 对一个多轨作品点「下载」→
+> `Android/data/jp.co.eisys.dlsitesound/files/subtitle_cache/_diag/` 里会出现 `ziptree_RJxxxx.json`，
+> 把它与各轨 `optimized/<md5>.json` 对照即可验证哈希规则。

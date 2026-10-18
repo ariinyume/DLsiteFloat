@@ -45,6 +45,7 @@ import io.github.ariinyume.dlsitesoundfloat.BuildConfig;
 import io.github.ariinyume.dlsitesoundfloat.config.RemoteConfig;
 import io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository;
 import io.github.ariinyume.dlsitesoundfloat.util.I18n;
+import io.github.ariinyume.dlsitesoundfloat.util.NetState;
 import io.github.ariinyume.dlsitesoundfloat.view.LiquidGlassDrawable;
 import io.github.ariinyume.dlsitesoundfloat.util.StatusBarSubtitleBridge;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
@@ -4234,7 +4235,10 @@ public class ActivityButtonHook {
         //   文案见 {@link I18n}（语言在进程内只判定一次，切换系统语言会重建 App）。
         final String floatText;
         if (noSub) {
-            floatText = I18n.noSub();
+            // 【code 1022 / P0-4】「离线 + 本轨无缓存」单列一态：
+            //   宿主下载只下音频不下字幕，用户下了作品、飞行模式一播，旧文案只会说「无字幕」，
+            //   与本音轨本来就没字幕完全无法区分。判定用 NetState（只读系统联网状态）。
+            floatText = NetState.isOffline() ? I18n.offlineNoCache() : I18n.noSub();
         } else if (repo.isFloatingWindowOpen()) {
             floatText = I18n.floatingOn();
         } else {
@@ -4263,8 +4267,10 @@ public class ActivityButtonHook {
         }
         // 【code 954】这里判的是「上一笔**不是**无字幕态」→ 用当前语言的「无字幕」文案
         //   （三种语言下它各不相同，写死简体会让 EN/HANT 下这道延时门失效）。
+        // 【code 1022】判据改用**本帧冻结**的 floatText：它在 noSub 为真时就是「无字幕」或
+        //   「离线·无缓存」，不会再出现「换了文案导致延时门永远成立」的二义性。
         if (allowDelay && noSub && sLastBtnSig != null
-                && sLastBtnSig.indexOf(I18n.noSub()) < 0) {
+                && sLastBtnSig.indexOf(floatText) < 0) {
             if (sBtnNoSubPending) {
                 return;                        // 已经在等，别重复排队
             }

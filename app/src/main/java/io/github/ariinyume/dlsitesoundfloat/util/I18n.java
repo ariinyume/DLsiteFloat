@@ -179,4 +179,23 @@ public final class I18n {
     public static String noSubtitles() {
         return en() ? "No Subtitles" : (hant() ? "無字幕" : "无字幕");
     }
+
+    // ── 【code 1022 / P0-4】离线且本轨无缓存时的文案（三态里的第四态）──────────
+    //
+    // 为什么需要它：宿主「下载作品」是**只下音频、不下字幕**的（2.22.0 实测：
+    // ziptree.json 之后该作品零 optimized/*.json），所以用户下了作品、飞行模式一播，
+    // 旧文案只会说「无字幕」—— 与「本音轨本来就没字幕」完全无法区分，用户会当成 bug。
+    // 这里把「离线 + 没缓存」单列一态，并给出可执行的下一步（联网播放一次即可缓存）。
+
+    /** 胶囊右钮（宽度紧张，用最短写法）。 */
+    public static String offlineNoCache() {
+        return en() ? "Offline · no cache" : (hant() ? "離線 · 無快取" : "离线 · 无缓存");
+    }
+
+    /** 悬浮窗面板占位（有空间，写全）。 */
+    public static String offlineNoCacheHint() {
+        return en() ? "Offline · not cached (play once online)"
+                : (hant() ? "離線 · 無字幕快取（連網播放一次即可快取）"
+                        : "离线 · 无字幕缓存（联网播放一次即可缓存）");
+    }
 }

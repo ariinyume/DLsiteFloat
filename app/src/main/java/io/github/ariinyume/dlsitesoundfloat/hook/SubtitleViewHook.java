@@ -362,13 +362,24 @@ public class SubtitleViewHook {
          * 时间文本 → 不敢下结论，返回 UNKNOWN（交给锚点通道决定，绝不因此判 OTHER）。
          */
         public int pageVerdict() {
+            // 【code 1022 / P0-2】自检：本趟扫描真的在宿主字幕文本上命中了 cue 行
+            //   ⇒ 「字幕文本 → cue 语义匹配」这条链路是通的（同一状态不重复打日志）。
+            if (!liveLines.isEmpty()) {
+                AdapterHealth.hit(AdapterHealth.Item.SUB_TEXT,
+                        "text∈cues (" + liveLines.size() + ")");
+            }
             if (hasMainSlider && hasBottomSlider) {
                 // 两条同时在 → RN 正在做页面切换（旧页还未卸载）。此刻判谁都不准。
                 return PAGE_UNKNOWN;
             }
             if (hasMainSlider) {
                 // 主滑条（上半屏）+ 时间文本配对成功 = 播放页主滑条，这才是干净证据。
-                return mainSliderPaired ? PAGE_PLAYER : PAGE_UNKNOWN;
+                if (mainSliderPaired) {
+                    AdapterHealth.hit(AdapterHealth.Item.VIEW_PAGE, "main slider + time label");
+                    AdapterHealth.logTableOnce("first player page");
+                    return PAGE_PLAYER;
+                }
+                return PAGE_UNKNOWN;
             }
             if (hasBottomSlider) {
                 // 底部有 mini-player 的全宽滑条 —— 这是「非播放页」的**正面证据**。

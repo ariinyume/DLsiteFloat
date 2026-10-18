@@ -18,8 +18,10 @@
  */
 package io.github.ariinyume.dlsitesoundfloat.hook;
 
+import io.github.ariinyume.dlsitesoundfloat.config.RemoteConfig;
 import io.github.ariinyume.dlsitesoundfloat.data.PlaylistKey;
 import io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository;
+import io.github.ariinyume.dlsitesoundfloat.util.DiagDump;
 import io.github.ariinyume.dlsitesoundfloat.util.NetLogFile;
 import io.github.ariinyume.dlsitesoundfloat.util.Shape;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
@@ -218,6 +220,7 @@ public class NetworkHook {
             if (probe == null) {
                 LogGate.debug(TAG, " RN anchor present but readWithProgress shape not found -> "
                         + Shape.describeNoArgReturnTypes(nm, 8));
+                AdapterHealth.miss(AdapterHealth.Item.NET_RN, "readWithProgress shape not found");
                 return;
             }
             Class<?> bodyCls = probe.getParameterTypes()[2];
@@ -225,12 +228,15 @@ public class NetworkHook {
                     + probe.getParameterTypes()[0].getSimpleName() + ","
                     + probe.getParameterTypes()[1].getSimpleName() + ","
                     + bodyCls.getName() + ")  [body class resolved BY SIGNATURE, not by name]");
+            AdapterHealth.hit(AdapterHealth.Item.NET_RN,
+                    probe.getName() + "(I,String," + bodyCls.getSimpleName() + ")");
 
             // ResponseBody 上的无参 string()（混淆后叫 l()/a()/…，按返回类型 String 认）
             Method stringM = Shape.findNoArgReturning(bodyCls, "string", String.class);
             if (stringM == null) {
                 LogGate.debug(TAG, " ResponseBody.string() not found -> "
                         + Shape.describeNoArgReturnTypes(bodyCls, 10));
+                AdapterHealth.degraded(AdapterHealth.Item.NET_RN, "string() not found on body");
                 return;
             }
             // contentLength()：先看体积再决定要不要读
@@ -353,12 +359,14 @@ public class NetworkHook {
             if (respCls == null) {
                 LogGate.debug(TAG, " response class NOT resolved (no anchor matched)"
                         + " -> build channel unavailable");
+                AdapterHealth.miss(AdapterHealth.Item.NET_BUILD, "response class unresolved");
                 return;
             }
             Field bodyField = findBodyField(respCls);
             if (bodyField == null) {
                 LogGate.debug(TAG, " no ResponseBody-shaped field on " + respCls.getName()
                         + " -> build channel unavailable");
+                AdapterHealth.miss(AdapterHealth.Item.NET_BUILD, "body field not found");
                 return;
             }
             Class<?> bodyCls = bodyField.getType();
@@ -414,9 +422,14 @@ public class NetworkHook {
                         + " body=" + bodyCls.getName()
                         + " peek=" + (okio ? "YES" : "NO(被动通道兜底)")
                         + "  [every class resolved BY SHAPE, zero hardcoded obfuscated names]");
+                // 【code 1022 / P0-2】挂钩成功 ≠ 会触发，所以这里只记「已就绪」；
+                //   真正的 HIT 要等第一次 tap 到响应体（见 tapResponseBody）。
+                AdapterHealth.degraded(AdapterHealth.Item.NET_BUILD,
+                        "hooked " + hooked + ", waiting first tap");
             } else {
                 XposedCompat.log(TAG + " build channel: no builder found on " + respCls.getName()
                         + " -> " + Shape.describeNoArgReturnTypes(respCls, 8));
+                AdapterHealth.miss(AdapterHealth.Item.NET_BUILD, "no builder on " + respCls.getSimpleName());
             }
         } catch (Throwable e) {
             XposedCompat.log(TAG + " build channel setup failed: " + e);
@@ -610,19 +623,27 @@ public class NetworkHook {
      */
     private static void tapResponseBody(Object body, Object resp, SubtitleRepository repo) {
         sBuildCalls++;
+        // 【code 1022 / P0-2】第一次真的拿到响应体 = 这条通道**确实在跑**（而不只是挂上了）。
+        if (sBuildCalls == 1) {
+            AdapterHealth.hit(AdapterHealth.Item.NET_BUILD, "first tap #1");
+        }
         Object lenObj = Shape.callNoArg(body, sBodyLenM);
         long len = (lenObj instanceof Long) ? (Long) lenObj : -1L;
         Object ctObj = Shape.callNoArg(body, sBodyCtM);
         String cts = ctObj == null ? "" : String.valueOf(ctObj).toLowerCase(Locale.US);
         String url = extractUrl(resp);
         String urlLc = url == null ? "" : url.toLowerCase(Locale.US);
+        // 【code 1022 / P0-4 取证】作品文件树要单独放宽体积上限：它可能几百 KB，
+        //   而字幕 JSON 只有几 KB。取证目标以外的响应一律沿用 PEEK_LIMIT。
+        boolean diagTarget = DiagDump.isTarget(urlLc);
+        long peekLimit = diagTarget ? DiagDump.MAX_BYTES : PEEK_LIMIT;
 
         if (sBuildCalls <= 5) {
             LogGate.debug(TAG, " response #" + sBuildCalls + ": url=" + url
                     + " ctype=" + (cts.isEmpty() ? "(none)" : cts) + " len=" + len);
         }
 
-        if (len > PEEK_LIMIT) {
+        if (len > peekLimit) {
             if (++sSkipped <= 3) {
                 LogGate.debug(TAG, " skipped #" + sSkipped + " (large): url=" + url
                         + " ctype=" + cts + " len=" + len);
@@ -647,7 +668,7 @@ public class NetworkHook {
                 return;
             }
         }
-        boolean small = len >= 0 && len <= PEEK_LIMIT;
+        boolean small = len >= 0 && len <= peekLimit;
         boolean jsonish = cts.contains("json") || cts.contains("text/") || cts.contains("xml");
         boolean urlJson = urlLc.contains(".json");
         if (!small && !jsonish && !urlJson) {
@@ -676,16 +697,25 @@ public class NetworkHook {
             XposedCompat.log(TAG + " >>> first response passed gates (peek starts): url=" + url
                     + " ctype=" + (cts.isEmpty() ? "(none)" : cts) + " len=" + len);
         }
-        String text = peekText(body, len);
+        String text = peekText(body, len, peekLimit);
         if (text == null) {
             return;
+        }
+        // 【code 1022 / P0-4 取证】作品文件树原文落盘（仅调试日志开启时），用于反推
+        //   「字幕文件名 <md5>.json 由什么算出来」。见 util/DiagDump 类头。
+        if (diagTarget) {
+            if (RemoteConfig.debugLog()) {
+                DiagDump.save("ziptree", url, text);
+            } else {
+                DiagDump.logSkippedOnce();
+            }
         }
         // 截断告警：peek 只读了前 N 字节，若正文比 N 大就会读不全。
         // 字幕 JSON 是「{...}」结构 ⇒ 结尾不是 } 或 ] 且体积不小 ⇒ 很可能被截断。
         String tail = text.trim();
         if (tail.length() > 4096 && !tail.endsWith("}") && !tail.endsWith("]")) {
             XposedCompat.log(TAG + " !! peek may be TRUNCATED (len=" + text.length()
-                    + ", limit=" + PEEK_LIMIT + ") url=" + url);
+                    + ", limit=" + peekLimit + ") url=" + url);
         }
         NetLogFile.log("RESP url=" + url + " ctype=" + cts + " len=" + len
                 + " peeked=" + text.length());
@@ -703,15 +733,15 @@ public class NetworkHook {
      * <p>⚠️ 只对**已经过闸门**的响应调用；{@code request(N)} 会阻塞到「N 字节到齐或流结束」，
      * 所以绝对不能对音频/视频这类大流调用。
      */
-    private static String peekText(Object body, long knownLen) {
+    private static String peekText(Object body, long knownLen, long limit) {
         try {
             Object src = Shape.callNoArg(body, sSrcM);
             if (src == null) {
                 return null;
             }
-            long want = (knownLen >= 0 && knownLen <= PEEK_LIMIT) ? knownLen : PEEK_LIMIT;
+            long want = (knownLen >= 0 && knownLen <= limit) ? knownLen : limit;
             if (want <= 0) {
-                want = PEEK_LIMIT;
+                want = limit;
             }
             try {
                 sRequestM.invoke(src, Long.valueOf(want));
@@ -731,7 +761,7 @@ public class NetworkHook {
                 return null;
             }
             byte[] data = (byte[]) arr;
-            if (data.length == 0 || data.length > PEEK_LIMIT) {
+            if (data.length == 0 || data.length > limit) {
                 return null;
             }
             return decodeUtf8(data, 0, data.length);

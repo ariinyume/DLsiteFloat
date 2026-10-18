@@ -41,7 +41,7 @@ plugins {
 //                    只是仓库内可读别名 ⇒ 改它**不必重新出包**。
 //                 ⚠️ 2026-10-14 回溯：1013~1017 都构建于 10-14，label 已由 `1008.30`
 //                    回填为 `1014.1`~`1014.5`；10-13 及更早的条目**保留旧值**（历史记录）。
-def appVersionTag = '2.3.3'
+def appVersionTag = '2.3.4'
 // ⚠️ 写成 int 字面量 925（不要写 0925 —— Groovy 可能按八进制/前导零解析）：
 //    versionCode 的**数值**是 925，管理器里显示 925，可读语义看 appVersionCodeLabel。
 // ── 版本履历（code 994 / label 1008.15）──
@@ -298,9 +298,22 @@ def appVersionTag = '2.3.3'
 //   提前收窗取 min(NO_SUBTITLE_EARLY_CLOSE_MS, grace)，与裁决同时到点、由裁决先行。
 //   ⚠️ 本轮**不动语义版本号**：2.3.3 尚未发版（code 1020 也未提交 / 未打 tag）⇒
 //      versionName / tag 保持 2.3.3、versionCode 推到 1021、label 跨日归 1 推到 1015.1。
-def appVersionCode = 1021
-def appVersionCodeLabel = '1015.1'
-def appVersionName = '2.3.3'
+// 【code 1022】P0 适配体检四项（依据宿主 2.22.0 实包离线体检，见 _review_2220/）
+//   ① 宿主版本感知：新增 util/HostInfo —— 读宿主 versionName/versionCode，启动打一行
+//      常开日志；versionCode 与上次不同即判「宿主刚更新」；与本模块已验证版本比对。
+//   ② 适配自检表：新增 hook/AdapterHealth —— 六条链路（网络构建点 / RN 网络 / 状态 Map /
+//      播放页判定 / 字幕文本 / 状态栏）各自上报 HIT/DEGRADED/MISS，状态变化才落日志，
+//      首次判出播放页打一张全表 ⇒ 「插件没生效」与「宿主结构变了」第一次能在日志里分开。
+//   ③ 状态 Map 键体检：首次拿到 Map 检查六个必备键，缺键显式降级（不再静默不动）。
+//   ④ 离线播放文案：新增 util/NetState + 三语文案 —— 离线且本轨无缓存时，胶囊显示
+//      「离线 · 无缓存」、悬浮窗占位显示「联网播放一次即可缓存」，与「本来就没字幕」区分。
+//   另加取证：util/DiagDump —— 调试日志开启时把 ziptree.json 原文落盘（最多 5 份 / 单份 1MB），
+//      用于反推「字幕文件名 = optimized/<md5>.json」的算法，为「下载时同步缓存字幕」探路。
+//   ⚠️ 本轮 Ari 指令**升语义版本号** ⇒ versionName / tag 2.3.3 升 2.3.4、
+//      versionCode 推到 1022、label 推到 1018.1（tag 进了 APK 文件名，必须 clean 重出包）。
+def appVersionCode = 1022
+def appVersionCodeLabel = '1018.1'
+def appVersionName = '2.3.4'
 
 android {
     namespace 'io.github.ariinyume.dlsitesoundfloat'

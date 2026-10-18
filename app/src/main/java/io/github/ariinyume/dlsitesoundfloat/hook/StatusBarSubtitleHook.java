@@ -579,6 +579,7 @@ public class StatusBarSubtitleHook {
         }
         if (cls == null) {
             XposedCompat.log(TAG + " status bar view class not found, skip status bar subtitle");
+            AdapterHealth.miss(AdapterHealth.Item.STATUSBAR, "status bar view class not found");
             return;
         }
         try {
@@ -1069,6 +1070,10 @@ public class StatusBarSubtitleHook {
                 + "(" + sClockViews.size() + ")"
                 + ", notifArea=" + (sNotifViews.isEmpty() ? "null" : sNotifViews.size())
                 + ")");
+        // 【code 1022 / P0-2】状态栏链路自检。注意本行发生在 **SystemUI 进程**，
+        //   所以这里看到的 summary 只会是「本进程这一项」，不要拿它跟宿主进程的 5 项拼分。
+        AdapterHealth.hit(AdapterHealth.Item.STATUSBAR,
+                "SystemUI " + host.getClass().getSimpleName());
         logViewTreeOnce(root);
     }
 

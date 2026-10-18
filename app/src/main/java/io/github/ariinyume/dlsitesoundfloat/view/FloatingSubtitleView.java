@@ -47,6 +47,7 @@ import java.util.List;
 
 import io.github.ariinyume.dlsitesoundfloat.util.BackdropBlur;
 import io.github.ariinyume.dlsitesoundfloat.util.I18n;
+import io.github.ariinyume.dlsitesoundfloat.util.NetState;
 import io.github.ariinyume.dlsitesoundfloat.util.Utils;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
@@ -905,6 +906,9 @@ public class FloatingSubtitleView extends FrameLayout {
             pendingTravelFromCue = -1;
             cancelScrollAnim();
             hint.setVisibility(VISIBLE);
+            // 【code 1022 / P0-4】离线态单列一句：宿主下载只下音频不下字幕，
+            //   飞行模式下播已下载作品时，用户需要知道「这不是坏了，只是没缓存」。
+            hint.setText(NetState.isOffline() ? I18n.offlineNoCacheHint() : I18n.noSubtitles());
             scrollView.setVisibility(GONE);
             container.removeAllViews();
             lastHintVisible = true;

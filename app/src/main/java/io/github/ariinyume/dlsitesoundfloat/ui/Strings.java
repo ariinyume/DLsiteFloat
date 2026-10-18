@@ -39,13 +39,16 @@ import java.util.Locale;
 public enum Strings {
 
     // ── 页面 ──────────────────────────────────────────────────────────
-    PAGE_TITLE("可视化设置", "視覺化設定", "Visual settings"),
-    SAVE("保存设置", "儲存設定", "Save settings"),
+    PAGE_TITLE("可视化设置", "視覺化設定", "Visual settings"),    SAVE("保存设置", "儲存設定", "Save settings"),
     RESET("重置", "重置", "Reset"),
     CANCEL("取消", "取消", "Cancel"),
     PROBING("状态检测中…", "狀態偵測中…", "Checking…"),
 
     // ── 状态卡（PRD §FR-01）────────────────────────────────────────────
+    /** 【code 1022 / P0-1】「其他」卡片第一行：宿主版本（只读）。 */
+    HOST_VERSION("宿主版本", "宿主版本", "Host version"),
+    HOST_VERIFIED("已验证", "已驗證", "verified"),
+    HOST_UNVERIFIED("未验证 · 如异常请附日志", "未驗證 · 如異常請附日誌", "unverified · attach logs if issues"),
     MODULE_ON("模块已激活", "模組已啟用", "Module active"),
     MODULE_OFF("模块未激活", "模組未啟用", "Module inactive"),
     /** STA-07：模块未激活时整页控件禁用 + 保存按钮不可用的提示。 */
