@@ -90,6 +90,12 @@ import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
  *       它只在抓到在线 JSON 那一刻刷新，切轨那一刻往往还停在上一个作品，而且离上次刷新
  *       不到三分钟、仍落在「新鲜窗口」内 ⇒ 会否掉**正确**的那一条
  *       （17:17:45 / 17:18:02 / 17:18:34 连续三次）；</li>
+ *   <li><b>作品维强约束</b>【code 1024】：身份键只有曲目数 / 毫秒时长 / 序号三维，两部作品
+ *       撞上同一个键时，旧实现后写的直接把先写的挤掉（先写的永远取不到、还占字节）。
+ *       现在同一身份允许多部作品的条目并存，命中时<b>用作品键认人</b>；认不出来就
+ *       <b>放弃命中</b>（宁可屏幕空白，也不放来路不明的台词）。判据见 {@link #pickLocked}。
+ *       ⚠️ 与上一条不矛盾：1020 删掉的是「拿过期作品键否决**唯一**候选」（假阴性来源），
+ *       本轮加的是「**多条**候选时才用它认人」；</li>
  *   <li><b>全量日志</b>：每次命中/补盖/淘汰都打一行，Ari 可事后抽验。</li>
  * </ol>
  *
@@ -139,6 +145,11 @@ public final class SubtitleCache {
      * {@link #bySelection}），于是「什么样的条目才算能命中」的口径整个变了。盘上按旧口径
      * 写下的条目里仍混着跨作品错标的历史脏数据（code 1013~1019 写入侧竞态留痕），
      * 本轮把索引版本加一，让它们整批作废、按新口径重新积累。
+     *
+     * <p>【code 1024】**刻意维持在 4**：本轮给缓存补上「作品维强约束」（同一身份允许多部
+     * 作品的条目并存，命中时用作品键认人），但**条目形态一个字段都没变** ——
+     * 索引 JSON 还是那几个键，旧文件照旧能读、照旧能命中。加版本号等于宣布旧条目不可信，
+     * 会连带把用户攒下来的整部作品缓存清空一次；本轮没有任何一条理由值这个代价。
      */
     private static final int INDEX_SCHEMA = 4;
     /** 时间轴交叉校验的容差：字幕最大结束时间允许超出时长这么多秒。 */
@@ -179,8 +190,14 @@ public final class SubtitleCache {
      * → 条目。**刻意不按作品分槽** —— 时长本身就是区分作品的事实，而「作品键」只能在抓到
      * 在线 JSON 时得到：切轨那一刻它要么为空、要么是**上一部作品的陈旧快照**（详见
      * {@link #lookup} 里那段说明）。
+     *
+     * <p>【code 1024】值从「单条目」改成「条目列表」—— <b>作品维强约束</b>。
+     * 身份键只有 (曲目数, 毫秒时长, 序号) 三维：两部作品若同曲目数、同时长、同序号就完全同键。
+     * 1023 之前后写的直接 {@code put} 覆盖，先写的那条仍在条目表里占字节、却<b>永远取不到</b>
+     * （静默泄漏 + 命中全凭写入顺序）。现在同键允许多条并存，命中时用作品键认人；
+     * 认不出来就放弃命中（见 {@link #lookup}）。
      */
-    private final Map<Long, Entry> byIdentity = new HashMap<>();
+    private final Map<Long, List<Entry>> byIdentity = new HashMap<>();
     /**
      * 【code 1020】弱键索引：选择键 → **尚未补盖时长的孤儿**（{@code identity == 0}）。
      *
@@ -208,6 +225,16 @@ public final class SubtitleCache {
 
     private long limitBytes = LIMIT_BYTES_DEF;
     private long totalBytes;
+
+    /**
+     * 【code 1024 / P1-8】本进程启动以来的命中 / 未命中次数。
+     *
+     * <p>用途只有一个：设置页那行缓存读数里加一段「命中 18/24 轨」，让「缓存到底有没有用」
+     * 从猜测变成可读的数字（体检报告 P1-8）。计数走的是 {@link #lookup} 的两个出口，
+     * 与 {@code tryResumeFromDisk} 的返回值口径一致；跨进程由既有的缓存统计广播带出去。
+     */
+    private int hitCount;
+    private int missCount;
 
     private SubtitleCache() {
     }
@@ -281,6 +308,20 @@ public final class SubtitleCache {
     public long limitBytes() {
         synchronized (lock) {
             return limitBytes;
+        }
+    }
+
+    /** 【code 1024 / P1-8】本进程启动以来按强键命中的次数。 */
+    public int hitCount() {
+        synchronized (lock) {
+            return hitCount;
+        }
+    }
+
+    /** 【code 1024 / P1-8】本进程启动以来没命中的次数（含「有歧义主动放弃」）。 */
+    public int missCount() {
+        synchronized (lock) {
+            return missCount;
         }
     }
 
@@ -362,7 +403,35 @@ public final class SubtitleCache {
                 entries.add(e);
                 byFile.put(fileName, e);
                 if (e.identity != 0L) {
-                    byIdentity.put(e.identity, e);
+                    // 【code 1024】同一身份允许多部作品并存（作品维强约束）：
+                    //   只摘掉**同作品同身份**的旧条目（那是同一条轨重写），
+                    //   别的作品占着同一个身份时让它继续留在桶里，由 lookup 用作品键认人。
+                    List<Entry> bucket = byIdentity.get(e.identity);
+                    if (bucket == null) {
+                        bucket = new ArrayList<>(2);
+                        byIdentity.put(e.identity, bucket);
+                    } else {
+                        for (int i = bucket.size() - 1; i >= 0; i--) {
+                            Entry old = bucket.get(i);
+                            if (old != prev && sameWork(old, e)) {
+                                log("identity SAME WORK collision: replacing old entry"
+                                        + " (idx=" + old.idx + " dur=" + old.durMs
+                                        + " work=" + shortKey(old.workKey) + ")");
+                                removeEntryLocked(old, true);
+                            }
+                        }
+                        bucket = byIdentity.get(e.identity);
+                        if (bucket == null) {
+                            bucket = new ArrayList<>(2);
+                            byIdentity.put(e.identity, bucket);
+                        }
+                    }
+                    bucket.add(e);
+                    if (bucket.size() > 1) {
+                        log("identity shared by " + bucket.size() + " works ->"
+                                + " hits must be disambiguated by work key (identity="
+                                + e.identity + ")");
+                    }
                 } else {
                     bySelection.put(selection, e);   // 只是个待补盖的孤儿，读侧不用它
                 }
@@ -417,16 +486,27 @@ public final class SubtitleCache {
                 e.durMs = durMs;
                 e.identity = identity;
                 bySelection.remove(selection);
-                Entry dup = byIdentity.get(identity);
-                if (dup != null && dup != e) {
-                    // 同一身份已被别的条目占着（只可能来自被改坏的索引）⇒ 让位，
-                    //   否则旧那条会永远留在 entries 里、谁也取不到。
-                    log("stamp: identity already held by another entry -> replacing"
-                            + " (idx=" + dup.idx + " dur=" + dup.durMs
-                            + " bytes=" + dup.bytes + ")");
-                    removeEntryLocked(dup, false);
+                // 【code 1024】作品维强约束：只有**同作品同身份**的旧条目才让位；
+                //   别的作品占着同一个身份时让它留在桶里，由 lookup 用作品键认人。
+                List<Entry> bucket = byIdentity.get(identity);
+                if (bucket != null) {
+                    for (int i = bucket.size() - 1; i >= 0; i--) {
+                        Entry dup = bucket.get(i);
+                        if (dup != e && sameWork(dup, e)) {
+                            // 同一身份被**本作品**的另一条占着（只可能来自被改坏的索引）
+                            log("stamp: same-work entry already holds identity -> replacing"
+                                    + " (idx=" + dup.idx + " dur=" + dup.durMs
+                                    + " bytes=" + dup.bytes + ")");
+                            removeEntryLocked(dup, false);
+                        }
+                    }
+                    bucket = byIdentity.get(identity);
                 }
-                byIdentity.put(identity, e);
+                if (bucket == null) {
+                    bucket = new ArrayList<>(2);
+                    byIdentity.put(identity, bucket);
+                }
+                bucket.add(e);
                 persistIndexLocked();
                 log("stamp duration: tc=" + e.tc + " idx=" + e.idx + " dur=" + durMs
                         + "ms -> identity=" + identity + " (now matchable)");
@@ -443,13 +523,16 @@ public final class SubtitleCache {
     /**
      * 按身份键查缓存，命中返回**字幕 JSON 全文**（未命中返回 {@code null}）。
      *
-     * @param identity       本次换轨目标的身份键（0 = 未知）—— 【code 1020】**唯一判据**；
+     * @param identity       本次换轨目标的身份键（0 = 未知）—— 【code 1020】**唯一主判据**；
      *                       为 0（等价于时长未知）时直接放弃命中
      * @param selection      本次换轨目标的选择键（0 = 未知）—— 【code 1020】只进日志，不参与判据
      * @param currentWorkKey 【Phase 3 / URI 通道】手上「当前作品键」（null = 没有）。
-     *                       【code 1020】它**只作取证、不再作否决** —— 它只在抓到在线 JSON
-     *                       那一刻刷新，切轨那一刻往往还停在**上一部作品**，而它仍在
-     *                       三分钟新鲜窗口内 ⇒ 拿它否决会否掉正确的那一条（真机连续三次）。
+     *                       【code 1020】它**不否决单条命中** —— 它只在抓到在线 JSON 那一刻刷新，
+     *                       切轨那一刻往往还停在**上一部作品**，而它仍在三分钟新鲜窗口内 ⇒
+     *                       拿它否决会否掉正确的那一条（真机连续三次）。
+     *                       <p>【code 1024】但它从此有了**一项新职责**：同一身份有多条候选时
+     *                       （= 多部作品撞了同一个身份键），它是唯一能认人的证据 ——
+     *                       见 {@link #pickLocked}。认不出来就放弃命中。
      */
     public String lookup(long identity, long selection, String currentWorkKey) {
         if (!ready) {
@@ -462,11 +545,16 @@ public final class SubtitleCache {
             //   身份未知（== 0L，等价于「时长未知」）⇒ 按 Ari 定的政策**放弃命中**：
             //   宁可屏幕空白，也绝不把来路不明的台词放上去。
             if (identity == 0L) {
+                synchronized (lock) {
+                    missCount++;
+                }
                 return null;
             }
             Entry e;
             synchronized (lock) {
-                e = byIdentity.get(identity);
+                // 【code 1024】作品维强约束：同一身份可能有多部作品的条目并存。
+                List<Entry> bucket = byIdentity.get(identity);
+                e = pickLocked(bucket, currentWorkKey, identity, selection);
                 if (e != null && !timelineFits(e, identity)) {
                     // 护栏：强键条目在补盖时已经过同一把尺子，正常走不到这里；
                     //   只有索引被外力改坏（手改 index.json / 半截写盘）才可能。
@@ -478,6 +566,9 @@ public final class SubtitleCache {
                 }
                 if (e != null) {
                     e.used = System.currentTimeMillis();
+                    hitCount++;
+                } else {
+                    missCount++;
                 }
             }
             if (e == null) {
@@ -516,6 +607,101 @@ public final class SubtitleCache {
             log("lookup failed (ignored): " + t);
             return null;
         }
+    }
+
+    /**
+     * 【code 1024】作品维强约束下的**取人逻辑** —— 从「同一身份的所有候选」里挑出唯一那条。
+     *
+     * <h3>── 为什么同一个身份会有多条候选 ──</h3>
+     * 身份键 = {@code (曲目数, 毫秒时长, 序号)}。两部作品只要同曲目数、同时长、同序号，
+     * 就是**同一个键** —— 这不是理论风险：系列作、分前后篇的作品、同一作品的不同章节
+     * 都极容易出现「三轨、每轨 5 分钟、序号 0」这种撞车。1023 之前后写的直接覆盖，
+     * 先写的那条从此永远取不到（还占着字节）；更糟的是「取到的是哪一部」纯看写入顺序。
+     *
+     * <h3>── 判据（越往下越弱，弱到有歧义就放弃）──</h3>
+     * <ol>
+     *   <li><b>一条候选</b> ⇒ 就是它（没有歧义，1020 以来的老行为，一个字节都没变）；</li>
+     *   <li><b>多条候选 + 作品键能认人</b> ⇒ 取作品键相等的那条（最强证据：宿主自己写在
+     *       字幕 JSON 的 URL 里的作品路径）；</li>
+     *   <li><b>多条候选 + 作品键认不出来</b>（为 null / 停在上一部作品 / 都对不上）⇒
+     *       <b>放弃命中</b>。按 Ari 定的政策：宁可屏幕空白，也绝不把来路不明的台词放上去。</li>
+     * </ol>
+     *
+     * <p>⚠️ 与 1020 的关系：1020 删掉的是「拿**过期**的作品键去否决唯一候选」，
+     * 本轮加的是「**多条候选时**用作品键认人、认不出就放弃」。前者是假阴性来源、
+     * 后者只在真有歧义时生效 —— 两者不冲突。
+     *
+     * <p>调用方必须持有 {@link #lock}。
+     */
+    private Entry pickLocked(List<Entry> bucket, String currentWorkKey,
+                             long identity, long selection) {
+        if (bucket == null || bucket.isEmpty()) {
+            return null;
+        }
+        if (bucket.size() == 1) {
+            return bucket.get(0);
+        }
+        if (currentWorkKey != null && !currentWorkKey.isEmpty()) {
+            for (int i = bucket.size() - 1; i >= 0; i--) {
+                Entry e = bucket.get(i);
+                if (currentWorkKey.equals(e.workKey)) {
+                    log("identity shared by " + bucket.size() + " works -> picked by work key: "
+                            + shortKey(e.workKey) + " identity=" + identity
+                            + " selection=" + selection);
+                    return e;
+                }
+            }
+        }
+        // 【code 1024】候选有多条、但**全属同一部作品**（或全都没有作品键）⇒ 不是跨作品撞车，
+        //   只是历史写入留下的同槽重复（见 loadIndexLocked 的并条逻辑）。取最近用过的那条，
+        //   不要让「自己不干净的历史」变成假 MISS。
+        Entry first = bucket.get(0);
+        boolean oneWork = true;
+        for (Entry e : bucket) {
+            if (!sameWork(first, e)) {
+                oneWork = false;
+                break;
+            }
+        }
+        if (oneWork) {
+            Entry best = first;
+            for (Entry e : bucket) {
+                if (e.used > best.used) {
+                    best = e;
+                }
+            }
+            log("identity shared by " + bucket.size() + " entries of the SAME work ->"
+                    + " picked most recently used (idx=" + best.idx + " used=" + best.used + ")");
+            return best;
+        }
+        log("hit REFUSED (ambiguous across works): identity=" + identity
+                + " has " + bucket.size() + " candidates, work key "
+                + (currentWorkKey == null || currentWorkKey.isEmpty()
+                        ? "missing" : "mismatched (" + shortKey(currentWorkKey) + ")")
+                + " -> blank rather than a wrong line");
+        return null;
+    }
+
+    /**
+     * 【code 1024】两条条目是不是**同一部作品**（决定「同身份覆盖」还是「同身份并存」）。
+     *
+     * <p>两边都有作品键 ⇒ 比键；<b>都</b>没有作品键（这条通道拿不到 URL，例如数组入口）
+     * ⇒ 退回「同轨标签」判等 —— 那种情况下它们只可能是同一条轨的两次写入，覆盖是对的；
+     * 一边有一边没有 ⇒ 判「不同作品」（宁可让两条并存，也不能悄悄删掉可能正确的那条）。
+     */
+    private static boolean sameWork(Entry a, Entry b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        boolean an = a.workKey == null || a.workKey.isEmpty();
+        boolean bn = b.workKey == null || b.workKey.isEmpty();
+        if (an && bn) {
+            return a.tc == b.tc && a.idx == b.idx;
+        }
+        if (an || bn) {
+            return false;
+        }
+        return a.workKey.equals(b.workKey);
     }
 
     /**
@@ -559,6 +745,10 @@ public final class SubtitleCache {
      * 这里再留一条「选择键命中就算有」的分支，就会出现「页面亮着有缓存、真去取却取不到」
      * 的自相矛盾（{@code hasDiskCacheFor} 还拿它决定云端要等多久）。
      * {@code selection} 只为调用点签名稳定而保留。
+     *
+     * <p>⚠️【code 1024】唯一的例外是**歧义**：同一身份装着多部作品的条目、而作品键又认不出人时，
+     * {@link #lookup} 会放弃命中，这里仍返回 true。方向是保守的 —— 这里的 true 只影响
+     * 「云端优先等多久」（有本地垫背就只等标准窗），不会让错误的台词上屏。
      */
     public boolean has(long identity, long selection) {
         if (!ready || identity == 0L) {
@@ -658,8 +848,15 @@ public final class SubtitleCache {
             return;
         }
         entries.remove(e);
-        if (e.identity != 0L && byIdentity.get(e.identity) == e) {
-            byIdentity.remove(e.identity);
+        if (e.identity != 0L) {
+            // 【code 1024】桶里可能还有别的作品的条目 ⇒ 只摘掉这一条，桶空了才删键。
+            List<Entry> bucket = byIdentity.get(e.identity);
+            if (bucket != null) {
+                bucket.remove(e);
+                if (bucket.isEmpty()) {
+                    byIdentity.remove(e.identity);
+                }
+            }
         }
         if (bySelection.get(e.selection) == e) {
             bySelection.remove(e.selection);
@@ -746,9 +943,40 @@ public final class SubtitleCache {
                     byFile.put(e.file, e);
                 }
                 if (e.identity != 0L) {
-                    if (byIdentity.get(e.identity) == null) {
-                        byIdentity.put(e.identity, e);
+                    // 【code 1024】同一身份可能装着多部作品的条目 ⇒ 一律进桶（读侧再认人）。
+                    //   但**同作品同身份**的重复条目必须先并掉：1023 及更早的写入侧会按
+                    //   byIdentity 直接覆盖（桶里只留最后一条），而 entries 里两条都在 ——
+                    //   读回来若不并，桶里就有两条同作品的候选，命中也变成「有歧义」而放弃，
+                    //   等于把老用户已经攒下的缓存全部变成假 MISS。
+                    //   并的规则：同作品同身份 ⇒ 保留最近用过的（used 大的），另一条丢条目。
+                    List<Entry> bucket = byIdentity.get(e.identity);
+                    if (bucket == null) {
+                        bucket = new ArrayList<>(2);
+                        byIdentity.put(e.identity, bucket);
+                    } else {
+                        Entry dup = null;
+                        for (Entry old : bucket) {
+                            if (sameWork(old, e)) {
+                                dup = old;
+                                break;
+                            }
+                        }
+                        if (dup != null) {
+                            if (dup.used >= e.used) {
+                                log("index: same-work duplicate identity -> keep older-loaded"
+                                        + " entry (dropped idx=" + e.idx + " used=" + e.used + ")");
+                                entries.remove(e);
+                                totalBytes -= e.bytes;
+                                continue;
+                            }
+                            log("index: same-work duplicate identity -> keep newer entry"
+                                    + " (dropped idx=" + dup.idx + " used=" + dup.used + ")");
+                            entries.remove(dup);
+                            totalBytes -= dup.bytes;
+                            bucket.remove(dup);
+                        }
                     }
+                    bucket.add(e);
                 } else if (bySelection.get(e.selection) == null) {
                     bySelection.put(e.selection, e);
                 }

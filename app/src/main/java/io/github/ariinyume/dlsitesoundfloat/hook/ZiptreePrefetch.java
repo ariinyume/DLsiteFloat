@@ -161,6 +161,8 @@ public final class ZiptreePrefetch {
     private static final Object LOCK = new Object();
     private static volatile boolean sIndexLoaded = false;
     private static volatile boolean sDisabled = false;
+    /** 【code 1024】「正文不是完整文件树」只提示一次（否则每次压缩态都刷一行）。 */
+    private static boolean sBadBodyLogged = false;
 
     private ZiptreePrefetch() {
     }
@@ -232,6 +234,24 @@ public final class ZiptreePrefetch {
             return;
         }
         try {
+            // 【code 1024】正文结构校验：不是「{…"playfile"…}」就不是完整文件树。
+            //
+            // 🔴 真机实证（1023 的日志）：同一份 ziptree 被读到 4 次，前 3 次是 4143 字节的
+            //    **压缩正文**（按文本解出来是一串替换字符），每次都在这里抛 JSONException
+            //    并记一条 DEGRADED —— 整部作品能不能预取到，全看「第几次恰好读到解压的那份」。
+            //    压缩正文的解压已在网络层补上（见 NetworkHook#maybeGunzip）；这里再加一道
+            //    结构校验兜底：**不合格就静默跳过**，不算故障、不进自检表 ——
+            //    「还没读到完整的那一份」不是「预取坏了」。
+            String body = text.trim();
+            if (!body.startsWith("{") || !body.contains("\"playfile\"")) {
+                if (!sBadBodyLogged) {
+                    sBadBodyLogged = true;
+                    XposedCompat.log(TAG + " skip (not a complete ziptree: len=" + body.length()
+                            + ", startsWithBrace=" + body.startsWith("{")
+                            + ") -> waiting for the inflated copy");
+                }
+                return;
+            }
             if (NetState.isOffline()) {
                 // 离线时宿主多半是从它自己的缓存里读的 ziptree，下载必然失败 —— 直接跳过
                 XposedCompat.log(TAG + " skip (offline) url=" + url);
@@ -312,12 +332,30 @@ public final class ZiptreePrefetch {
     // ==================================================================
 
     /**
-     * 按**时长**取一份已预取的字幕。
+     * 按**时长**取一份已预取的字幕 —— 【code 1024】带作品维强约束。
      *
-     * @param durMs 目标音轨时长（毫秒，来自身份键）
-     * @return 命中返回正文；没有则 {@code null}
+     * <h3>── 为什么必须加作品维（Ari 的要求：预防「多作品时长撞车」）──</h3>
+     * 预取时拿不到宿主的 {@code trackCount}，本类只能用<b>毫秒级时长</b>当键。
+     * 1023 的取法是「逆序遍历所有作品，谁先撞上就用谁」—— 手上同时攒了两部以上作品时，
+     * 只要它们的某条轨时长相同，就会**随便挑一部**：挑中的正好是本作品是运气，
+     * 挑中就别的作品就是「放着别人家的台词」。同一部作品内时长相同的那几条是同一轨的
+     * 不同语言版本（取哪份都对），跨作品相同则完全没有这层保证。
+     *
+     * <p>现在的判据（三步，越往下越弱）：
+     * <ol>
+     *   <li><b>作品键认人</b>：给了 {@code workKeyHint} 且某部作品的键与它相等 ⇒ 只在该作品内取
+     *       （最强证据：这是宿主自己写在这份 JSON 的 URL 里的作品路径）；</li>
+     *   <li><b>唯一候选</b>：没给作品键、但撞上时长的作品**只有一部** ⇒ 取它（没有歧义）；</li>
+     *   <li><b>有歧义就放弃</b>：撞上时长的作品不止一部、而作品键又对不上 ⇒
+     *       <b>放弃命中</b>并落一行日志。按既有政策：宁可屏幕空白，也不放来路不明的台词。</li>
+     * </ol>
+     *
+     * @param durMs       目标音轨时长（毫秒，来自身份键）
+     * @param workKeyHint 手上的当前作品键（{@link io.github.ariinyume.dlsitesoundfloat.data
+     *                    .PlaylistKey#workKeyOf} 口径；{@code null}/空 = 没有证据）
+     * @return 命中返回正文；没有（或歧义放弃）返回 {@code null}
      */
-    public static Hit take(long durMs) {
+    public static Hit take(long durMs, String workKeyHint) {
         if (sDisabled || durMs <= 0L) {
             return null;
         }
@@ -328,27 +366,55 @@ public final class ZiptreePrefetch {
                 snapshot = new ArrayList<>(PACKS.values());
             }
             // 逆序 = 最近 offer/命中的作品优先（accessOrder 的末尾是最新的）
+            List<Pack> matched = new ArrayList<>(2);
+            Pack hinted = null;
             for (int i = snapshot.size() - 1; i >= 0; i--) {
                 Pack p = snapshot.get(i);
-                for (Track t : p.tracks) {
-                    if (Math.abs(t.durMs - durMs) > DUR_TOLERANCE_MS) {
-                        continue;
-                    }
-                    File f = new File(p.dir, t.jsonName);
-                    if (!f.exists() || f.length() <= 0) {
-                        continue;
-                    }
-                    String txt = readText(f);
-                    if (txt == null || txt.length() == 0) {
-                        continue;
-                    }
-                    XposedCompat.log(TAG + " HIT dur=" + durMs + "ms -> "
-                            + p.workno + "/" + t.jsonName + " (" + f.length() + " B)"
-                            + " work=" + p.workKey());
-                    return new Hit(txt, p.workKey(), t.durMs, t.jsonName);
+                if (!hasDuration(p, durMs)) {
+                    continue;
+                }
+                matched.add(p);
+                if (hinted == null && workKeyHint != null && !workKeyHint.isEmpty()
+                        && workKeyHint.equals(p.workKey())) {
+                    hinted = p;
                 }
             }
-            XposedCompat.log(TAG + " MISS dur=" + durMs + "ms (packs=" + snapshot.size() + ")");
+            if (matched.isEmpty()) {
+                XposedCompat.log(TAG + " MISS dur=" + durMs + "ms (packs=" + snapshot.size() + ")");
+                return null;
+            }
+            Pack pick;
+            if (hinted != null) {
+                pick = hinted;
+            } else if (matched.size() == 1) {
+                pick = matched.get(0);
+            } else {
+                // 【code 1024】作品维强约束：多部作品同值、又没有作品键认人 ⇒ 放弃。
+                XposedCompat.log(TAG + " AMBIGUOUS dur=" + durMs + "ms matches "
+                        + matched.size() + " works, no usable work key (hint="
+                        + (workKeyHint == null ? "null" : workKeyHint) + ") -> refuse hit");
+                return null;
+            }
+            for (Track t : pick.tracks) {
+                if (Math.abs(t.durMs - durMs) > DUR_TOLERANCE_MS) {
+                    continue;
+                }
+                File f = new File(pick.dir, t.jsonName);
+                if (!f.exists() || f.length() <= 0) {
+                    continue;
+                }
+                String txt = readText(f);
+                if (txt == null || txt.length() == 0) {
+                    continue;
+                }
+                XposedCompat.log(TAG + " HIT dur=" + durMs + "ms -> "
+                        + pick.workno + "/" + t.jsonName + " (" + f.length() + " B)"
+                        + " work=" + pick.workKey()
+                        + (hinted != null ? " [work-scoped]" : " [sole candidate]"));
+                return new Hit(txt, pick.workKey(), t.durMs, t.jsonName);
+            }
+            XposedCompat.log(TAG + " MISS dur=" + durMs + "ms in work " + pick.workno
+                    + " (file not downloaded yet)");
             return null;
         } catch (Throwable e) {
             XposedCompat.log(TAG + " take failed (ignored): " + e);
@@ -356,19 +422,48 @@ public final class ZiptreePrefetch {
         }
     }
 
+    /** 【code 1024】这部作品里有没有「时长对得上」的轨（只看索引，不碰磁盘）。 */
+    private static boolean hasDuration(Pack p, long durMs) {
+        for (Track t : p.tracks) {
+            if (Math.abs(t.durMs - durMs) <= DUR_TOLERANCE_MS) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 【code 1024 / P1-8】已预取几部作品（设置页读数用）。 */
+    public static int works() {
+        try {
+            ensureIndexLoaded();
+            synchronized (LOCK) {
+                return PACKS.size();
+            }
+        } catch (Throwable e) {
+            return 0;
+        }
+    }
+
+    /** 【code 1024 / P1-8】已预取多少条轨（设置页读数用）。 */
+    public static int tracks() {
+        try {
+            ensureIndexLoaded();
+            int n = 0;
+            synchronized (LOCK) {
+                for (Pack p : PACKS.values()) {
+                    n += p.tracks.size();
+                }
+            }
+            return n;
+        } catch (Throwable e) {
+            return 0;
+        }
+    }
+
     /** 诊断用：现在手上有几部作品、共多少条轨。 */
     public static String summary() {
         try {
-            ensureIndexLoaded();
-            int works;
-            int tracks = 0;
-            synchronized (LOCK) {
-                works = PACKS.size();
-                for (Pack p : PACKS.values()) {
-                    tracks += p.tracks.size();
-                }
-            }
-            return works + " works / " + tracks + " tracks";
+            return works() + " works / " + tracks() + " tracks";
         } catch (Throwable e) {
             return "?";
         }

@@ -147,6 +147,38 @@ public final class Protocol {
     /** 【code 1007】字幕缓存占用字节数（{@link #ACTION_SUBTITLE_CACHE_STATS} 携带，long）。 */
     public static final String EXTRA_CACHE_BYTES = "cache_bytes";
 
+    /**
+     * 【code 1024 / P1-8】本进程启动以来**按强键命中**的次数（{@link #ACTION_SUBTITLE_CACHE_STATS} 携带，int）。
+     *
+     * <p>与 {@link #EXTRA_CACHE_MISSES} 一起构成设置页那行「命中 18/24 轨」。
+     * 两个都**含歧义放弃**（作品维强约束下主动放弃也算一次未命中），
+     * 所以「命中/总请求」能真实反映离线可播的比例。
+     */
+    public static final String EXTRA_CACHE_HITS = "cache_hits";
+
+    /** 【code 1024 / P1-8】本进程启动以来没命中的次数（同上，int）。 */
+    public static final String EXTRA_CACHE_MISSES = "cache_misses";
+
+    /** 【code 1024 / P1-8】已预取几部作品（作品文件树抓到过、字幕已落本地；int）。 */
+    public static final String EXTRA_PREFETCH_WORKS = "prefetch_works";
+
+    /** 【code 1024 / P1-8】已预取多少条轨（同上，int）。 */
+    public static final String EXTRA_PREFETCH_TRACKS = "prefetch_tracks";
+
+    /**
+     * 【code 1024 / P1-5】宿主上屏行与自算行「对得上」的样本数（int）。
+     *
+     * <p>口径见 {@code hook.HostLineSync}：两侧都非空才算一次样本，交集非空算对上。
+     * 这三个数只用于观测（本站不做「宿主行优先」），攒够数据再决定要不要接管渲染。
+     */
+    public static final String EXTRA_LINE_MATCHED = "line_matched";
+
+    /** 【code 1024 / P1-5】两侧都非空、却一句都没对上的样本数（int）。 */
+    public static final String EXTRA_LINE_MISMATCHED = "line_mismatched";
+
+    /** 【code 1024 / P1-5】总共比对了多少次（int）。 */
+    public static final String EXTRA_LINE_SAMPLES = "line_samples";
+
     // ── 标识与包名 ──────────────────────────────────────────────────────
 
     /** {@link #EXTRA_TAG} 的宿主取值。 */
@@ -194,6 +226,9 @@ public final class Protocol {
                 EXTRA_DISMISS_REASON, EXTRA_LINE, EXTRA_ENABLED,
                 EXTRA_DURATION_MS, EXTRA_PLAYING, EXTRA_PONG_BUILD,
                 EXTRA_CACHE_COUNT, EXTRA_CACHE_BYTES,
+                EXTRA_CACHE_HITS, EXTRA_CACHE_MISSES,
+                EXTRA_PREFETCH_WORKS, EXTRA_PREFETCH_TRACKS,
+                EXTRA_LINE_MATCHED, EXTRA_LINE_MISMATCHED, EXTRA_LINE_SAMPLES,
         };
         seen.clear();
         for (String e : extras) {

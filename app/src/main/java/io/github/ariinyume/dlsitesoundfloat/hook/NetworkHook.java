@@ -26,12 +26,15 @@ import io.github.ariinyume.dlsitesoundfloat.util.NetLogFile;
 import io.github.ariinyume.dlsitesoundfloat.util.Shape;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.zip.GZIPInputStream;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
@@ -773,7 +776,16 @@ public class NetworkHook {
             if (data.length == 0 || data.length > limit) {
                 return null;
             }
-            return decodeUtf8(data, 0, data.length);
+            // 【code 1024】压缩态正文就地解压 —— 见 {@link #maybeGunzip}。
+            byte[] plain = maybeGunzip(data, limit);
+            if (plain == null || plain.length == 0) {
+                return null;
+            }
+            // 【code 1024】解完还要判「像不像文本」—— 见 {@link #looksTextual}。
+            if (!looksTextual(plain)) {
+                return null;
+            }
+            return decodeUtf8(plain, 0, plain.length);
         } catch (Throwable e) {
             if (!sPeekErrLogged) {
                 sPeekErrLogged = true;
@@ -781,6 +793,118 @@ public class NetworkHook {
             }
             return null;
         }
+    }
+
+    /** 【code 1024】已经解压过几次（只为「第一次」落一行常开日志）。 */
+    private static int sGunzipCount = 0;
+    /** 【code 1024】已经因为「不像文本」丢弃过几次（同上）。 */
+    private static int sNonTextDrops = 0;
+    /** 【code 1024】解压后超限只提示一次。 */
+    private static boolean sGunzipLimitLogged = false;
+
+    /**
+     * 【code 1024】gzip 魔数 {@code 1F 8B} ⇒ 就地解压；否则原样返回。
+     *
+     * <h3>── 为什么必须要这一步（真机日志实证）──</h3>
+     * 同一个响应在 okhttp 的多道拦截层会各 {@code build()} 一次：<b>先构建的是压缩态</b>
+     * （网络拦截层拿到的原始正文），后构建的才是解压态（桥接层把 gzip 源包掉之后）。
+     * 1023 的预取器碰上的是<b>先构建的那几次</b>：
+     * <pre>
+     *   [Diag] saved ziptree_…_RJ01664000.json (7934 B)     ← 压缩正文（4143 字节，按文本解成替换字符）
+     *   [Prefetch] offer failed: JSONException: Value ï¿½À€À€… cannot be converted to JSONObject
+     *   …同一份响应第 4 次才是 29447 B 的解压正文，预取才成功
+     * </pre>
+     * 也就是说整部作品能不能预取到，取决于「这一次恰好读到解压的那一份」——
+     * <b>运气不是能力</b>。解压这一步把运气变成确定性：压缩态与解压态都能读出原文。
+     *
+     * <p>安全性：只读我们自己 clone 出来的副本，宿主的流一个字节都没动；
+     * 解压后超过 {@code limit} 一律放弃（字幕 JSON 不可能这么大）。
+     *
+     * @return 解压后的字节；{@code null} = gzip 但解不开（半截数据 / 不是完整 member）
+     */
+    private static byte[] maybeGunzip(byte[] data, long limit) {
+        if (data.length < 2 || (data[0] & 0xFF) != 0x1F || (data[1] & 0xFF) != 0x8B) {
+            return data;                        // 不是 gzip ⇒ 原样交给下游
+        }
+        GZIPInputStream in = null;
+        try {
+            in = new GZIPInputStream(new ByteArrayInputStream(data));
+            ByteArrayOutputStream bos = new ByteArrayOutputStream(Math.max(1024, data.length * 4));
+            byte[] buf = new byte[8192];
+            long total = 0L;
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                total += n;
+                if (total > limit) {
+                    if (!sGunzipLimitLogged) {
+                        sGunzipLimitLogged = true;
+                        XposedCompat.log(TAG + " gunzip dropped (inflated > limit=" + limit + ")");
+                    }
+                    return null;
+                }
+                bos.write(buf, 0, n);
+            }
+            byte[] out = bos.toByteArray();
+            if (out.length == 0) {
+                return null;
+            }
+            if (sGunzipCount++ == 0) {
+                XposedCompat.log(TAG + " peek: gzip body inflated " + data.length
+                        + " B -> " + out.length + " B (compressed layer taps now readable)");
+            }
+            return out;
+        } catch (Throwable e) {
+            // 半截 gzip member（peek 的字节数不够）⇒ 这次放弃，等下一次完整的
+            return null;
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+    }
+
+    /**
+     * 【code 1024】这段字节像不像文本（JSON / XML / 纯文本）。
+     *
+     * <p>判据刻意宽松（坏字节占比 &lt; 2% 即算文本）：目的只有一个 ——
+     * <b>把二进制挡在所有下游解析器之外</b>。1023 的日志里，一次次「把压缩字节按文本解成
+     * 一串替换字符、再交给 JSON 解析、抛异常、记一条 DEGRADED」全是这一层缺失造成的噪声，
+     * 而它污染的是自检表（指标错了比没指标更糟）。
+     *
+     * <p>只扫前 4KB：判「是不是文本」不需要看完整正文，而大正文全扫一遍纯属浪费。
+     */
+    private static boolean looksTextual(byte[] data) {
+        int n = Math.min(data.length, 4096);
+        if (n <= 0) {
+            return false;
+        }
+        int bad = 0;
+        for (int i = 0; i < n; i++) {
+            int b = data[i] & 0xFF;
+            if (b == 0x09 || b == 0x0A || b == 0x0D) {
+                continue;                       // 制表 / 换行
+            }
+            if (b < 0x20) {
+                bad++;                          // 其它控制字符 ⇒ 二进制特征
+                continue;
+            }
+            if (b < 0x80) {
+                continue;                       // ASCII 可打印
+            }
+            if (b <= 0xF4) {
+                continue;                       // 合法的 UTF-8 首字节或续字节
+            }
+            bad++;                              // 0xF5..0xFF：UTF-8 里非法
+        }
+        boolean ok = bad * 100 <= n * 2;
+        if (!ok && sNonTextDrops++ == 0) {
+            XposedCompat.log(TAG + " peek dropped: body looks binary (" + bad + "/" + n
+                    + " control bytes) -> not passed to parsers");
+        }
+        return ok;
     }
 
     /**

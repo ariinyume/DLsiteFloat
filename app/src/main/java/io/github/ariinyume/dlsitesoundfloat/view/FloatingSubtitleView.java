@@ -40,14 +40,15 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import io.github.ariinyume.dlsitesoundfloat.config.RemoteConfig;
+import io.github.ariinyume.dlsitesoundfloat.config.SubtitleConfig;
 import io.github.ariinyume.dlsitesoundfloat.data.SubtitleCue;
 import io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository;
 
 import java.util.List;
 
 import io.github.ariinyume.dlsitesoundfloat.util.BackdropBlur;
+import io.github.ariinyume.dlsitesoundfloat.util.HostStyleProbe;
 import io.github.ariinyume.dlsitesoundfloat.util.I18n;
-import io.github.ariinyume.dlsitesoundfloat.util.NetState;
 import io.github.ariinyume.dlsitesoundfloat.util.Utils;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
@@ -331,6 +332,15 @@ public class FloatingSubtitleView extends FrameLayout {
      */
     private volatile SubtitleStyle style = null;
 
+    /**
+     * 【code 1024 / P1-7】算 {@link #style} 时用的**宿主样式版本号**。
+     *
+     * <p>「跟随宿主」打开后，宿主样式要等它第一次真渲染字幕才采到（抓屏顺手采），
+     * 所以样式对象必须能在运行中随采样更新 —— 用 {@link HostStyleProbe#revision()}
+     * 判「宿主的样子变了没」，变了就在下一次 {@link #refreshStyle()} 里重算。
+     */
+    private volatile int styleHostRev = -1;
+
     // ── 【2.2.12 / code 1003】面板背后的「真实模糊」──
     //
     //   🔴 code 1003 起，「背景统计」整段（宿主窗口采样 + 过渡缓冲 + 留底基线）**已整体删除**：
@@ -419,7 +429,11 @@ public class FloatingSubtitleView extends FrameLayout {
                     || RemoteConfig.get().liquidGlassTransparency != cur.liquidGlassTransparency
                     || RemoteConfig.get().liquidGlassBackdropLum != cur.liquidGlassBackdropLum
                     || (RemoteConfig.get().floatWindowColor & 0x00FFFFFF)
-                    != (cur.panelColorTop & 0x00FFFFFF)) {
+                    != (cur.panelColorTop & 0x00FFFFFF)
+                    // 【code 1024 / P1-7】宿主样式采到了 / 变了（跟随开关打开时才有意义）：
+                    //   同一条自愈路径顺手把字号与文字色对回来，免得「开关打开后要等重启」。
+                    || (RemoteConfig.get().followHostStyle
+                    && HostStyleProbe.revision() != styleHostRev)) {
                 LogGate.debug(TAG, " style stale (view=" + cur.liquidGlass
                         + "/" + cur.liquidGlassBlurPct
                         + " config=" + RemoteConfig.get().liquidGlass
@@ -466,11 +480,32 @@ public class FloatingSubtitleView extends FrameLayout {
     private SubtitleStyle style() {
         SubtitleStyle s = style;
         if (s == null) {
-            s = SubtitleStyle.of(RemoteConfig.get(),
-                    getContext().getResources().getDisplayMetrics());
+            s = buildStyle();
             style = s;
+            styleHostRev = HostStyleProbe.revision();
         }
         return s;
+    }
+
+    /**
+     * 【code 1024 / P1-7】按当前配置（必要时含**宿主样式**）算一份绘制参数。
+     *
+     * <p>只在「用户打开了跟随宿主」且「真的采到了宿主样式」时才把宿主字号/文字色传下去；
+     * 其余情况与旧行为逐字节一致（走 {@code SubtitleStyle.of(c, dm)} 那个重载）。
+     * 采不到（还没渲染过字幕 / 采样值离谱被 {@code HostStyleProbe} 丢掉）就静默不跟 ——
+     * 打开一个开关绝不该让字幕变成默认样式。
+     */
+    private SubtitleStyle buildStyle() {
+        android.util.DisplayMetrics dm = getContext().getResources().getDisplayMetrics();
+        SubtitleConfig cfg = RemoteConfig.get();
+        if (cfg.followHostStyle && HostStyleProbe.known()) {
+            float sp = HostStyleProbe.textSizeSp(dm);
+            if (sp > 0f) {
+                int color = HostStyleProbe.colorUsable() ? HostStyleProbe.textColor() : 0;
+                return SubtitleStyle.of(cfg, dm, sp, color);
+            }
+        }
+        return SubtitleStyle.of(cfg, dm);
     }
 
     /**
@@ -481,10 +516,10 @@ public class FloatingSubtitleView extends FrameLayout {
      * （设置页保存后广播 {@code ACTION_CONFIG_CHANGED} → hook 侧 {@code RemoteConfig.reload()}）。
      */
     private void refreshStyle() {
-        SubtitleStyle s = SubtitleStyle.of(RemoteConfig.get(),
-                getContext().getResources().getDisplayMetrics());
+        SubtitleStyle s = buildStyle();
         SubtitleStyle old = style;
         style = s;
+        styleHostRev = HostStyleProbe.revision();
         if (old == null || !old.sameAs(s)) {
             // 【2.3.0】面板底色也来自配置：色变了就重建背景（init 里紧接着那次
             // applyPanelBackground 已经按新样式建过，这里只在**运行中改色**时补一次）。
@@ -906,9 +941,10 @@ public class FloatingSubtitleView extends FrameLayout {
             pendingTravelFromCue = -1;
             cancelScrollAnim();
             hint.setVisibility(VISIBLE);
-            // 【code 1022 / P0-4】离线态单列一句：宿主下载只下音频不下字幕，
-            //   飞行模式下播已下载作品时，用户需要知道「这不是坏了，只是没缓存」。
-            hint.setText(NetState.isOffline() ? I18n.offlineNoCacheHint() : I18n.noSubtitles());
+            // 【code 1024】离线与弱网一律只说「无字幕」（Ari 指令：表达要简单）。
+            //   1022 那句「离线 · 无字幕缓存（联网播放一次即可缓存）」已随文案函数一并删除 ——
+            //   字幕后端没变：离线时照样先查磁盘缓存、再查作品预取池，命中就正常显示。
+            hint.setText(I18n.noSubtitles());
             scrollView.setVisibility(GONE);
             container.removeAllViews();
             lastHintVisible = true;

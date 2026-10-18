@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
+import io.github.ariinyume.dlsitesoundfloat.util.HostStyleProbe;
 import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 
@@ -565,6 +566,11 @@ public class SubtitleViewHook {
             } catch (Throwable ignored) {
             }
         }
+        // 【code 1024 / P1-5】宿主上屏行 vs 自算行的一致性观测（**只统计、不改渲染**）。
+        //   权威行本来就在手上（{@code r.liveLines} 的判据就是「文本 ∈ cue 列表」），
+        //   本轮开始把它与「我们自算该显示的行」比对，为「宿主行优先」那一版攒数据。
+        //   口径与「为什么先只观测」见 {@link HostLineSync} 类头。
+        HostLineSync.observe(r.liveLines, repo.getCurrentSubtitles());
         return r;
     }
 
@@ -1084,6 +1090,13 @@ public class SubtitleViewHook {
                                 && repo.isKnownSubtitleText(t)
                                 && !r.liveLines.contains(t)) {
                             r.liveLines.add(t);
+                            // 【code 1024 / P1-7】「这条控件就是宿主正在显示的字幕」——
+                            //   顺手把它长什么样记下来（字号 / 文字色），供「跟随宿主样式」用。
+                            //   只认 TextView：RN 的 Text 就是 TextView 的子类，其它控件即使
+                            //   文本命中 cue 列表也没有样式可跟。见 {@link HostStyleProbe}。
+                            if (v instanceof TextView) {
+                                HostStyleProbe.offer((TextView) v);
+                            }
                         }
                     }
                 }

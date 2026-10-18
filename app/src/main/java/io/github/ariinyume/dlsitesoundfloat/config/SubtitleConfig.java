@@ -213,6 +213,22 @@ public final class SubtitleConfig {
      */
     public static final String K_EXPERIMENTAL_ENABLED = "experimental_enabled";
 
+    /**
+     * 【code 1024 / P1-7】「跟随宿主字幕样式」开关（默认**关**）。
+     *
+     * <p>口径：开启后，悬浮窗的**字号与文字色**改为取宿主字幕控件的实际值
+     * （抓屏时顺手采到的，见 {@code util.HostStyleProbe}），其余外观参数（字重 / 行距 /
+     * 阴影 / 面板底色）仍用本模块自己的配置。读不到宿主样式（还没渲染过字幕）时
+     * 静默退回用户自己的配置，绝不会因为「跟随」而变成默认样式。
+     *
+     * <p>为什么默认关：这是**改变既有用户观感**的开关 —— 打开它，用户此前调好的字号会被
+     * 宿主的值顶掉。体检报告建议默认开（减少重复调参），本项目按「升级不改变观感」的既有
+     * 纪律选默认关，并把它摆在排版卡里，一眼能找到。
+     *
+     * <p>⚠️ 键名冻结（PRD §FR-09 规则 4）：本键为新增键，旧配置读不到时回落默认值（关），天然兼容。
+     */
+    public static final String K_FOLLOW_HOST_STYLE = "follow_host_style";
+
     // ==================================================================
     // 枚举取值（PRD §十「范围/枚举」列）
     // ==================================================================
@@ -397,6 +413,14 @@ public final class SubtitleConfig {
      */
     public boolean experimentalEnabled = false;
 
+    /**
+     * 【code 1024 / P1-7】「跟随宿主字幕样式」（默认**关**）。语义见 {@link #K_FOLLOW_HOST_STYLE}。
+     *
+     * <p>只影响悬浮窗的**字号与文字色**：其余外观（字重/行距/阴影/面板）仍是本模块的配置。
+     * 与「实验性功能」总闸无关 —— 它是一个正经的排版选项，不受实验卡开关连带。
+     */
+    public boolean followHostStyle = false;
+
     public SubtitleConfig() {
     }
 
@@ -440,6 +464,7 @@ public final class SubtitleConfig {
         c.debugLog = debugLog;
         c.subtitleCacheEnabled = subtitleCacheEnabled;
         c.experimentalEnabled = experimentalEnabled;
+        c.followHostStyle = followHostStyle;
         return c;
     }
 
@@ -474,6 +499,7 @@ public final class SubtitleConfig {
                 && debugLog == o.debugLog
                 && subtitleCacheEnabled == o.subtitleCacheEnabled
                 && experimentalEnabled == o.experimentalEnabled
+                && followHostStyle == o.followHostStyle
                 && eq(uiLanguage, o.uiLanguage);
     }
 
@@ -583,6 +609,7 @@ public final class SubtitleConfig {
             o.put(K_DEBUG_LOG, debugLog);
             o.put(K_SUBTITLE_CACHE_ENABLED, subtitleCacheEnabled);
             o.put(K_EXPERIMENTAL_ENABLED, experimentalEnabled);
+            o.put(K_FOLLOW_HOST_STYLE, followHostStyle);
         } catch (Throwable ignored) {
             // JSONObject.put 只在传 null 键时抛，本方法不传 null
         }
@@ -631,6 +658,7 @@ public final class SubtitleConfig {
         c.debugLog = o.optBoolean(K_DEBUG_LOG, c.debugLog);
         c.subtitleCacheEnabled = o.optBoolean(K_SUBTITLE_CACHE_ENABLED, c.subtitleCacheEnabled);
         c.experimentalEnabled = o.optBoolean(K_EXPERIMENTAL_ENABLED, c.experimentalEnabled);
+        c.followHostStyle = o.optBoolean(K_FOLLOW_HOST_STYLE, c.followHostStyle);
         c.clamp();
         return c;
     }
@@ -670,6 +698,7 @@ public final class SubtitleConfig {
         e.putBoolean(K_DEBUG_LOG, debugLog);
         e.putBoolean(K_SUBTITLE_CACHE_ENABLED, subtitleCacheEnabled);
         e.putBoolean(K_EXPERIMENTAL_ENABLED, experimentalEnabled);
+        e.putBoolean(K_FOLLOW_HOST_STYLE, followHostStyle);
     }
 
     /** 从 SharedPreferences 读；未写过的键（{@code contains == false}）保留默认值。 */
@@ -709,6 +738,7 @@ public final class SubtitleConfig {
         c.debugLog = p.getBoolean(K_DEBUG_LOG, c.debugLog);
         c.subtitleCacheEnabled = p.getBoolean(K_SUBTITLE_CACHE_ENABLED, c.subtitleCacheEnabled);
         c.experimentalEnabled = p.getBoolean(K_EXPERIMENTAL_ENABLED, c.experimentalEnabled);
+        c.followHostStyle = p.getBoolean(K_FOLLOW_HOST_STYLE, c.followHostStyle);
         c.clamp();
         return c;
     }
@@ -775,7 +805,8 @@ public final class SubtitleConfig {
                 + " bdLum=" + liquidGlassBackdropLum
                 + " debugLog=" + debugLog
                 + " subtitleCache=" + subtitleCacheEnabled
-                + " experimental=" + experimentalEnabled;
+                + " experimental=" + experimentalEnabled
+                + " followHostStyle=" + followHostStyle;
     }
 
     @Override

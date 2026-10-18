@@ -47,6 +47,14 @@ public final class SubtitleStyle {
 
     /** 活动行基准字号（sp）—— legacy {@code BASE_TEXT_SP = 17f}。 */
     public static final float BASE_TEXT_SP = 17f;
+    /**
+     * 【code 1024 / P1-7】「跟随宿主字幕样式」时基准字号的夹取区间（sp）。
+     *
+     * <p>12sp 以下在 1272×2772 的机器上几乎看不清，30sp 以上会把悬浮窗撑成两三行；
+     * 夹取只是兜底 —— 正常宿主字幕落在 16~24sp 之间。
+     */
+    public static final float HOST_SIZE_MIN_SP = 12f;
+    public static final float HOST_SIZE_MAX_SP = 30f;
     /** 降级镜像行字号（sp）—— legacy {@code renderMirrored} 里的 18f（本轮不暴露给用户）。 */
     public static final float MIRROR_TEXT_SP = 18f;
     /** 行内左右内边距（dp）—— legacy {@code LINE_PAD_H_DP = 2}。 */
@@ -197,19 +205,40 @@ public final class SubtitleStyle {
     public final int liquidGlassBackdropLum;
 
     private SubtitleStyle(SubtitleConfig c, DisplayMetrics dm) {
+        this(c, dm, 0f, 0);
+    }
+
+    /**
+     * @param hostSizeSp 【code 1024 / P1-7】宿主字幕字号（sp；{@code 0} = 不跟）。
+     *                   打开「跟随宿主字幕样式」且采到了宿主样式时由渲染端传进来，
+     *                   它替换 {@link #BASE_TEXT_SP} 作为**基准字号** —— 于是「非活动行缩放」
+     *                   与「活动行放大」两档换算对宿主字号同样成立，不是简单覆盖最终结果。
+     * @param hostColor  宿主字幕文字色（ARGB；{@code 0} = 不跟）。
+     */
+    private SubtitleStyle(SubtitleConfig c, DisplayMetrics dm, float hostSizeSp, int hostColor) {
         float density = (dm == null || dm.density <= 0f) ? 1f : dm.density;
         SubtitleConfig cfg = c == null ? SubtitleConfig.defaults() : c;
 
         // ── 字号 ──────────────────────────────────────────────────────
-        this.activeSizeSp = BASE_TEXT_SP * cfg.activeScale;
+        // 【code 1024】「跟随宿主」只换基准字号，两档换算逻辑一字不改。
+        //   夹在 [HOST_SIZE_MIN_SP, HOST_SIZE_MAX_SP]：抓屏是按「文本命中 cue 列表」认字幕的，
+        //   万一某个大字号控件里恰好有同样文案，不夹的话悬浮窗会突然变成巨字。
+        float base = BASE_TEXT_SP;
+        if (hostSizeSp > 0f) {
+            base = Math.min(Math.max(hostSizeSp, HOST_SIZE_MIN_SP), HOST_SIZE_MAX_SP);
+        }
+        this.activeSizeSp = base * cfg.activeScale;
         this.mirrorSizeSp = MIRROR_TEXT_SP;
         this.inactiveSizeSp = cfg.inactiveScaleEnabled
-                ? BASE_TEXT_SP * (cfg.inactiveScalePct / 100f)
-                : BASE_TEXT_SP;
+                ? base * (cfg.inactiveScalePct / 100f)
+                : base;
 
         // ── 颜色与不透明度 ────────────────────────────────────────────
-        this.activeColor = cfg.subtitleColor;
-        this.inactiveColor = cfg.subtitleColor;
+        // 【code 1024】跟随宿主时只取它的**文字色**；不透明度仍由「高亮强度」决定
+        //   （透明度过低的宿主颜色不采信，调用方会传 0 进来）。
+        int textColor = (hostColor != 0) ? hostColor : cfg.subtitleColor;
+        this.activeColor = textColor;
+        this.inactiveColor = textColor;
         this.activeAlpha = cfg.activeHighlight / 100f;
         this.inactiveAlpha = INACTIVE_ALPHA;
 
@@ -276,6 +305,18 @@ public final class SubtitleStyle {
     /** 「配置 + 屏幕密度」→ 绘制参数（唯一换算入口）。 */
     public static SubtitleStyle of(SubtitleConfig c, DisplayMetrics dm) {
         return new SubtitleStyle(c, dm);
+    }
+
+    /**
+     * 【code 1024 / P1-7】「配置 + 屏幕密度 + 宿主样式」→ 绘制参数。
+     *
+     * <p>设置页的预览**不**走这个重载（设置页在模块自己的进程里，读不到宿主控件），
+     * 所以打开「跟随宿主」时预览与真实悬浮窗会不一致 —— 这是跨进程的硬限制，
+     * 设置页那一行的小字已经写明。
+     */
+    public static SubtitleStyle of(SubtitleConfig c, DisplayMetrics dm,
+                                   float hostSizeSp, int hostColor) {
+        return new SubtitleStyle(c, dm, hostSizeSp, hostColor);
     }
 
     // ==================================================================

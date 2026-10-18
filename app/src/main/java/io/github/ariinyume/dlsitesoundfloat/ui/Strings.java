@@ -255,6 +255,23 @@ public enum Strings {
     CACHE_USAGE("已缓存 %1$d 轨 · 占用 %2$s / %3$s",
             "已快取 %1$d 軌 · 佔用 %2$s / %3$s",
             "%1$d track(s) cached · %2$s of %3$s used"),
+    /**
+     * 【code 1024 / P1-8】缓存读数第二行之一：{@code 命中 %1$d/%2$d 轨}。
+     *
+     * <p>分母是「按强键查缓存的**次数**」，不是轨数 —— 同一条轨离线播两次会算两笔。
+     * 这里刻意不写「轨」以外的单位，避免用户把它当成「作品里有多少轨」。
+     */
+    CACHE_HIT_LINE("命中 %1$d/%2$d 次", "命中 %1$d/%2$d 次", "hit %1$d/%2$d lookups"),
+    /** 【code 1024 / P1-8】缓存读数第二行之二：{@code 预取 %1$d 部 %2$d 轨}。 */
+    PREFETCH_LINE("预取 %1$d 部 / %2$d 轨", "預取 %1$d 部 / %2$d 軌",
+            "prefetched %1$d work(s) / %2$d track(s)"),
+    /**
+     * 【code 1024 / P1-5】缓存读数第二行之三：{@code 上屏行一致 %1$d/%2$d}。
+     *
+     * <p>「上屏行」= 宿主自己显示的那几句字幕。这一段是**观测数据**：
+     * 只统计不一致、不改变渲染（见 {@code hook.HostLineSync}）。
+     */
+    LINE_SYNC_LINE("上屏行一致 %1$d/%2$d", "上屏行一致 %1$d/%2$d", "host-line match %1$d/%2$d"),
     /** 尚未拿到宿主应答时的占位读数（首帧，通常 100ms 内会被真实读数替换）。 */
     CACHE_USAGE_LOADING("正在读取缓存占用…", "正在讀取快取佔用…", "Reading cache usage…"),
     /**
@@ -343,6 +360,18 @@ public enum Strings {
     ALIGN_RIGHT("右对齐", "靠右", "Right"),
     LINE_SPACING("字幕间行距", "字幕間行距", "Line spacing"),
     WRAP_SPACING("长字幕内换行额外行距", "長字幕內換行額外行距", "Wrap extra spacing"),
+    /**
+     * 【code 1024 / P1-7】「跟随宿主字幕样式」开关（排版卡，摆在换行额外行距下方）。
+     *
+     * <p>只跟**字号与文字色**：字重 / 行距 / 阴影 / 面板色仍是本页的配置。
+     * 默认关 —— 打开它会让宿主的值顶掉用户已调好的字号。
+     */
+    FOLLOW_HOST_STYLE("跟随宿主字幕样式", "跟隨宿主字幕樣式", "Follow host subtitle style"),
+    /** 该开关下方的小字说明（写清「跟什么、不跟什么」，以及设置页预览不跟的原因）。 */
+    FOLLOW_HOST_STYLE_HINT("字号与文字色跟随宿主字幕；其余排版仍按本页设置。预览区不跟随（与宿主不同进程，读不到宿主样式）",
+            "字號與文字色跟隨宿主字幕；其餘排版仍依本頁設定。預覽區不跟隨（與宿主不同程序，讀不到宿主樣式）",
+            "Font size and text color follow the host; other typography stays as configured here. "
+                    + "The preview does not follow (different process, no access to host views)"),
     RESET_TYPO("恢复字幕排版默认设置", "恢復字幕排版預設設定", "Reset typography defaults"),
     /**
      * v1.4 §16.3：已删除「字重」整行，小字同步去掉（不再有 dangling 引用）。

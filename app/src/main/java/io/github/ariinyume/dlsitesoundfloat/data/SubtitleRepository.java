@@ -1658,7 +1658,11 @@ public class SubtitleRepository implements LineSource {
         }
         io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.Hit hit;
         try {
-            hit = io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.take(durMs);
+            // 【code 1024】带上「当前作品键」—— 预取池的身份只有毫秒时长，多部作品同值时会
+            //   撞车。作品键是「宿主写在这份 JSON 的 URL 里的作品路径」，最强的一维证据；
+            //   给不出来时由预取池自己判「候选唯一才取、有歧义就放弃」（作品维强约束）。
+            hit = io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.take(
+                    durMs, freshWorkKey());
         } catch (Throwable t) {
             return false;
         }

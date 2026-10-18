@@ -45,7 +45,6 @@ import io.github.ariinyume.dlsitesoundfloat.BuildConfig;
 import io.github.ariinyume.dlsitesoundfloat.config.RemoteConfig;
 import io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository;
 import io.github.ariinyume.dlsitesoundfloat.util.I18n;
-import io.github.ariinyume.dlsitesoundfloat.util.NetState;
 import io.github.ariinyume.dlsitesoundfloat.view.LiquidGlassDrawable;
 import io.github.ariinyume.dlsitesoundfloat.util.StatusBarSubtitleBridge;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
@@ -4235,10 +4234,11 @@ public class ActivityButtonHook {
         //   文案见 {@link I18n}（语言在进程内只判定一次，切换系统语言会重建 App）。
         final String floatText;
         if (noSub) {
-            // 【code 1022 / P0-4】「离线 + 本轨无缓存」单列一态：
-            //   宿主下载只下音频不下字幕，用户下了作品、飞行模式一播，旧文案只会说「无字幕」，
-            //   与本音轨本来就没字幕完全无法区分。判定用 NetState（只读系统联网状态）。
-            floatText = NetState.isOffline() ? I18n.offlineNoCache() : I18n.noSub();
+            // 【code 1024】离线与弱网一律回退到「无字幕」（Ari 指令：表达要简单）——
+            //   1022 曾把「离线且本轨无缓存」单列一态、配一句专用文案，本轮连同文案函数
+            //   一并删除。字幕后端没有变化：离线时照样先查磁盘缓存、再查作品预取池，
+            //   命中就正常显示；没命中才走到这里，与「本音轨本来就没字幕」同一个说法。
+            floatText = I18n.noSub();
         } else if (repo.isFloatingWindowOpen()) {
             floatText = I18n.floatingOn();
         } else {

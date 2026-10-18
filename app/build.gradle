@@ -311,8 +311,20 @@ def appVersionTag = '2.3.5'
 //      用于反推「字幕文件名 = optimized/<md5>.json」的算法，为「下载时同步缓存字幕」探路。
 //   ⚠️ 本轮 Ari 指令**升语义版本号** ⇒ versionName / tag 2.3.3 升 2.3.4、
 //      versionCode 推到 1022、label 推到 1018.1（tag 进了 APK 文件名，必须 clean 重出包）。
-def appVersionCode = 1023
-def appVersionCodeLabel = '1018.2'
+// 【code 1024】预取真跑通（gzip 正文）+ 作品维强约束 + P1 三项（上屏行观测 / 样式跟随 / 命中率）
+//   ① 「下载时同步缓存字幕」在 1023 只跑了一半：真机日志里同一份 ziptree 被读到 4 次，
+//      前 3 次是 4143 B 的**压缩正文**（`offer failed: JSONException`），第 4 次才是
+//      29447 B 的解压正文 ⇒ 预取靠「碰运气第几次是解压的那份」。本轮在 peek 侧识别
+//      gzip 并就地解压，预取第一次就拿到完整正文。
+//   ② 作品维强约束：缓存身份键只有 (tc, durMs, idx)，跨作品同值就会互相顶掉；预取池
+//      按毫秒时长匹配，多部作品同值时会**随便挑一部**。两处都补上「作品维」，无证据时
+//      宁可放弃命中，也不放来路不明的台词。
+//   ③ P1-5 宿主上屏行观测（只统计不接管）、P1-7 样式跟随宿主（可选开关，默认关）、
+//      P1-8 缓存命中率与整作品预取读数（复用既有跨进程统计广播）。
+//   ⚠️ 本轮 Ari 指令：版本号保持 2.3.5 不变，只升 code ⇒ versionCode 推到 1024、
+//      label 推到 1018.3。
+def appVersionCode = 1024
+def appVersionCodeLabel = '1018.3'
 def appVersionName = '2.3.5'
 
 android {

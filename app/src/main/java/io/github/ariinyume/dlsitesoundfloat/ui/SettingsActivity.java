@@ -402,6 +402,30 @@ public class SettingsActivity extends AppCompatActivity {
     private long mCacheBytes;
     /** 【code 1007】宿主是否被探测到在运行（null = 还没探测出来）。 */
     private Boolean mCacheHostAlive;
+
+    /**
+     * 【code 1024 / P1-8】命中率与预取进度读数（{@code -1} = 还没收到宿主回执）。
+     *
+     * <p>这四个数字都在**宿主进程**里（缓存索引 `hitCount/missCount`、预取池
+     * `works/tracks`），设置页只能靠 {@code ACTION_SUBTITLE_CACHE_STATS} 这条广播拿到，
+     * 所以与占用读数一样要留一份缓存：切语言会整页重建，不留就等于「切一次语言读数归零」。
+     */
+    private int mCacheHits = -1;
+    private int mCacheMisses = -1;
+    private int mPrefetchWorks = -1;
+    private int mPrefetchTracks = -1;
+    /** 【code 1024 / P1-5】上屏行一致性观测的样本数（{@code -1} = 还没收到）。 */
+    private int mLineSamples = -1;
+    private int mLineMatched = -1;
+    private int mLineMismatched = -1;
+
+    /**
+     * 【code 1024 / P1-7】排版卡里的「跟随宿主字幕样式」开关行。
+     *
+     * <p>默认关：打开它等于让宿主的字号/文字色顶掉用户自己调好的值，
+     * 所以不随升级自动打开（与「升级不改变观感」的既有纪律一致）。
+     */
+    private SwitchRow mRowFollowHost;
     /** 【2.2.9 / code 1003】「液态玻璃」开关行（液态玻璃卡首行）。 */
     private SwitchRow mRowLiquidGlass;
     /** 【2.2.11b】「模糊强度」滑条行（只在液态玻璃开启时显示）。 */
@@ -1612,6 +1636,25 @@ public class SettingsActivity extends AppCompatActivity {
                     markDirty();
                 });
 
+        // 【code 1024 / P1-7】「跟随宿主字幕样式」开关（体检报告 P1-7）。
+        //
+        // 位置：紧跟在「长字幕内换行额外行距」之后、悬浮窗颜色之前 —— 它跟的是**字号与文字色**，
+        //   与上面两行同属「文字怎么排」，放在颜色行前面读起来是一条线。
+        // 默认关：打开它等于让宿主的值顶掉用户已调好的字号，不能随升级悄悄改变观感；
+        //   而且设置页预览区跟不了（跨进程读不到宿主控件），只能靠真实悬浮窗看效果，
+        //   小字里已经写明这一点。
+        LinearLayout followRoot = new LinearLayout(this);
+        followRoot.setOrientation(LinearLayout.VERTICAL);
+        mRowFollowHost = addSwitchRow(followRoot, Strings.FOLLOW_HOST_STYLE,
+                this::onFollowHostStyleToggled);
+        TextView followHint = new TextView(this);
+        followHint.setText(Strings.FOLLOW_HOST_STYLE_HINT.get(mLang));
+        followHint.setTextAppearance(R.style.TextAppearance_DLsiteFloat_Hint);
+        followHint.setTextColor(attr(com.google.android.material.R.attr.colorOnSurfaceVariant, Color.GRAY));
+        followHint.setPadding(0, 0, 0, dp(6));
+        followRoot.addView(followHint);
+        parent.addView(followRoot);
+
         // §3.1.5：悬浮窗颜色 —— **必须在「长字幕内换行额外行距」的正下方**（需求给的位置）。
         // 半透明预览：色板圆点画的是「面板**顶部**实际不透明度叠加后的效果」（≈57%），
         // 而不是实心基色 —— 用户要能一眼看出「这个颜色会让面板透出后面的壁纸」。
@@ -1626,6 +1669,18 @@ public class SettingsActivity extends AppCompatActivity {
         mPanelColorBody = panelRow.body;
 
         mHintTypo = addResetRow(parent, Strings.RESET_TYPO, this::resetTypoGroup);
+    }
+
+    /**
+     * 【code 1024 / P1-7】「跟随宿主字幕样式」被翻转（属于**草稿**改动，仍需保存）。
+     *
+     * <p>只改草稿、不立刻生效 —— 与其余配置行一致（保存后经 {@code ACTION_CONFIG_CHANGED}
+     * 广播下发，宿主进程重算样式并重画）。宿主进程读不到宿主控件时（还没播过字幕），
+     * 打开开关也不会报错，只是继续用用户自己的字号。
+     */
+    private void onFollowHostStyleToggled(boolean enabled) {
+        mDraft.followHostStyle = enabled;
+        markDirty();
     }
 
     /**
@@ -2083,7 +2138,14 @@ public class SettingsActivity extends AppCompatActivity {
                     return;
                 }
                 applyCacheStats(i.getIntExtra(ConfigBus.EXTRA_CACHE_COUNT, 0),
-                        i.getLongExtra(ConfigBus.EXTRA_CACHE_BYTES, 0L));
+                        i.getLongExtra(ConfigBus.EXTRA_CACHE_BYTES, 0L),
+                        i.getIntExtra(ConfigBus.EXTRA_CACHE_HITS, -1),
+                        i.getIntExtra(ConfigBus.EXTRA_CACHE_MISSES, -1),
+                        i.getIntExtra(ConfigBus.EXTRA_PREFETCH_WORKS, -1),
+                        i.getIntExtra(ConfigBus.EXTRA_PREFETCH_TRACKS, -1),
+                        i.getIntExtra(ConfigBus.EXTRA_LINE_SAMPLES, -1),
+                        i.getIntExtra(ConfigBus.EXTRA_LINE_MATCHED, -1),
+                        i.getIntExtra(ConfigBus.EXTRA_LINE_MISMATCHED, -1));
             }
         };
         try {
@@ -2099,9 +2161,19 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /** 收到宿主回执后刷新占用读数（并兑现「清除成功」提示）。 */
-    private void applyCacheStats(int count, long bytes) {
+    private void applyCacheStats(int count, long bytes,
+                                 int hits, int misses,
+                                 int prefetchWorks, int prefetchTracks,
+                                 int lineSamples, int lineMatched, int lineMismatched) {
         mCacheCount = Math.max(0, count);
         mCacheBytes = Math.max(0L, bytes);
+        mCacheHits = hits;
+        mCacheMisses = misses;
+        mPrefetchWorks = prefetchWorks;
+        mPrefetchTracks = prefetchTracks;
+        mLineSamples = lineSamples;
+        mLineMatched = lineMatched;
+        mLineMismatched = lineMismatched;
         renderCacheUsage();
         if (mPendingClearToast) {
             mPendingClearToast = false;
@@ -2120,13 +2192,59 @@ public class SettingsActivity extends AppCompatActivity {
             return;
         }
         if (mCacheCount >= 0) {
-            mCacheUsage.setText(Strings.CACHE_USAGE.format(mLang, mCacheCount,
+            StringBuilder sb = new StringBuilder();
+            sb.append(Strings.CACHE_USAGE.format(mLang, mCacheCount,
                     fmtBytes(mCacheBytes), fmtBytes(SubtitleCache.LIMIT_BYTES_DEF)));
+            // 【code 1024 / P1-8】第二行：命中率（本进程启动以来）+ 预取进度。
+            //   两个都没有（宿主刚启动、还没换过轨）就不加这一行，不占地方也不撒谎。
+            String extra = cacheStatsExtraLine();
+            if (extra != null) {
+                sb.append('\n').append(extra);
+            }
+            mCacheUsage.setText(sb.toString());
         } else if (Boolean.FALSE.equals(mCacheHostAlive)) {
             mCacheUsage.setText(Strings.CACHE_USAGE_OFF.get(mLang));
         } else {
             mCacheUsage.setText(Strings.CACHE_USAGE_LOADING.get(mLang));
         }
+    }
+
+    /**
+     * 【code 1024 / P1-8】缓存读数的第二行：命中比 + 预取进度 + 上屏行一致性。
+     *
+     * <p>口径（都来自宿主进程的既有计数，不由设置页自己猜）：
+     * <ul>
+     *   <li><b>命中</b>：{@code hitCount/(hitCount+missCount)} —— 分母是「按强键查缓存的次数」，
+     *       含作品维强约束下主动放弃的那几次（那也是「离线时拿不到」）；</li>
+     *   <li><b>预取</b>：已抓到作品文件树的部数与轨数 —— 整作品预取**没有单独入口**，
+     *       宿主取作品文件树时就已经抓完，这里只是把结果读出来；</li>
+     *   <li><b>上屏行</b>：宿主实际显示的行与自算行对上的比例（P1-5 只统计、不接管渲染）。
+     *       一行都还没比过时不显示这一段。</li>
+     * </ul>
+     */
+    private String cacheStatsExtraLine() {
+        StringBuilder sb = new StringBuilder();
+        int hits = Math.max(0, mCacheHits);
+        int misses = Math.max(0, mCacheMisses);
+        int total = hits + misses;
+        if (total > 0) {
+            sb.append(Strings.CACHE_HIT_LINE.format(mLang, hits, total));
+        }
+        if (mPrefetchTracks > 0) {
+            if (sb.length() > 0) {
+                sb.append(" · ");
+            }
+            sb.append(Strings.PREFETCH_LINE.format(mLang,
+                    Math.max(0, mPrefetchWorks), mPrefetchTracks));
+        }
+        if (mLineSamples > 0) {
+            if (sb.length() > 0) {
+                sb.append(" · ");
+            }
+            sb.append(Strings.LINE_SYNC_LINE.format(mLang,
+                    Math.max(0, mLineMatched), mLineSamples));
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     /**
@@ -3062,6 +3180,8 @@ public class SettingsActivity extends AppCompatActivity {
             setSegmented(mRowAlign, alignIndex(mDraft.textAlign));
             setSlider(mRowLineSpacing, Math.round(mDraft.lineSpacingDp * 2));
             setSlider(mRowWrapSpacing, Math.round(mDraft.wrapExtraSpacingDp * 2));
+            // 【code 1024 / P1-7】跟随宿主字幕样式（默认关；只跟字号与文字色）
+            setSwitch(mRowFollowHost, mDraft.followHostStyle);
             // 状态栏字幕功能：真值来自草稿，但 SystemUI 未授权时会被 applyStatusbarSwitchEnabled
             // 覆盖成「关闭 + 置灰」（那个方法自己会再置一次 mSyncing）
             setSwitch(mRowStatusbar, mDraft.statusbarSubtitleEnabled);
@@ -3155,6 +3275,9 @@ public class SettingsActivity extends AppCompatActivity {
         mDraft.wrapExtraSpacingDp = SubtitleConfig.WRAP_SPACING_DEF;
         // §3.1.5：「恢复默认」小字里已列出「悬浮窗颜色 黑色」，这里必须真的把它恢复，
         // 否则小字写的是什么、按下去变的却是另一套（文案与行为必须一致）
+        // 【code 1024 / P1-7】「跟随宿主字幕样式」也归排版卡管 ⇒ 恢复默认时一并关掉
+        //   （默认关；不恢复的话「恢复默认设置」之后还会跟着宿主走，与文案对不上）
+        mDraft.followHostStyle = false;
         mDraft.floatWindowColor = SubtitleConfig.FLOAT_WINDOW_COLOR_DEF;
         syncWidgets();
         toast(Strings.RESET_DONE.get(mLang));

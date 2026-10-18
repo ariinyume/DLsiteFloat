@@ -87,6 +87,20 @@ public final class ConfigBus {
     public static final String EXTRA_CACHE_COUNT = Protocol.EXTRA_CACHE_COUNT;
     /** 【code 1007】缓存占用字节数（{@link #ACTION_SUBTITLE_CACHE_STATS} 携带）。 */
     public static final String EXTRA_CACHE_BYTES = Protocol.EXTRA_CACHE_BYTES;
+    /** 【code 1024 / P1-8】本进程启动以来按强键命中的次数。 */
+    public static final String EXTRA_CACHE_HITS = Protocol.EXTRA_CACHE_HITS;
+    /** 【code 1024 / P1-8】本进程启动以来没命中的次数（含歧义放弃）。 */
+    public static final String EXTRA_CACHE_MISSES = Protocol.EXTRA_CACHE_MISSES;
+    /** 【code 1024 / P1-8】已预取几部作品。 */
+    public static final String EXTRA_PREFETCH_WORKS = Protocol.EXTRA_PREFETCH_WORKS;
+    /** 【code 1024 / P1-8】已预取多少条轨。 */
+    public static final String EXTRA_PREFETCH_TRACKS = Protocol.EXTRA_PREFETCH_TRACKS;
+    /** 【code 1024 / P1-5】上屏行比对：总样本数。 */
+    public static final String EXTRA_LINE_SAMPLES = Protocol.EXTRA_LINE_SAMPLES;
+    /** 【code 1024 / P1-5】上屏行比对：对上过几次。 */
+    public static final String EXTRA_LINE_MATCHED = Protocol.EXTRA_LINE_MATCHED;
+    /** 【code 1024 / P1-5】上屏行比对：一句都没对上过几次。 */
+    public static final String EXTRA_LINE_MISMATCHED = Protocol.EXTRA_LINE_MISMATCHED;
 
     /** PONG 携带的模块构建号（与 {@code BuildConfig.VERSION_CODE} 同源，用于版本一致性告警）。 */
     public static final String EXTRA_BUILD = Protocol.EXTRA_BUILD;
@@ -450,6 +464,36 @@ public final class ConfigBus {
             Intent out = new Intent(ACTION_SUBTITLE_CACHE_STATS);
             out.putExtra(EXTRA_CACHE_COUNT, count);
             out.putExtra(EXTRA_CACHE_BYTES, bytes);
+            // 【code 1024 / P1-8】顺带把「命中率」与「预取进度」带出去 ——
+            //   这两个数字都在宿主进程里（缓存索引与预取索引），设置页只能靠这条广播拿到。
+            //   ⚠️ 老版本 App 会忽略不认识的 extra ⇒ 双向兼容，不动 PROTOCOL_VERSION。
+            try {
+                io.github.ariinyume.dlsitesoundfloat.data.SubtitleCache cache =
+                        io.github.ariinyume.dlsitesoundfloat.data.SubtitleCache.get();
+                out.putExtra(EXTRA_CACHE_HITS, cache.hitCount());
+                out.putExtra(EXTRA_CACHE_MISSES, cache.missCount());
+            } catch (Throwable ignored) {
+                // 缓存没就绪 ⇒ 不带（设置页按「未知」显示）
+            }
+            try {
+                out.putExtra(EXTRA_PREFETCH_WORKS,
+                        io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.works());
+                out.putExtra(EXTRA_PREFETCH_TRACKS,
+                        io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.tracks());
+            } catch (Throwable ignored) {
+                // 预取索引没就绪 ⇒ 同上
+            }
+            // 【code 1024 / P1-5】上屏行一致性观测的累计计数（只统计、不接管渲染）
+            try {
+                out.putExtra(EXTRA_LINE_SAMPLES,
+                        io.github.ariinyume.dlsitesoundfloat.hook.HostLineSync.samples());
+                out.putExtra(EXTRA_LINE_MATCHED,
+                        io.github.ariinyume.dlsitesoundfloat.hook.HostLineSync.matched());
+                out.putExtra(EXTRA_LINE_MISMATCHED,
+                        io.github.ariinyume.dlsitesoundfloat.hook.HostLineSync.mismatched());
+            } catch (Throwable ignored) {
+                // 同上
+            }
             ctx.sendBroadcast(out);
             logDebug("[host] cache stats sent: " + count + " entr(ies), " + bytes + " bytes");
         } catch (Throwable t) {
