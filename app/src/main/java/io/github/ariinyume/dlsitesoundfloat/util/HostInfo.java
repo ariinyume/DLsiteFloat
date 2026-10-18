@@ -135,4 +135,65 @@ public final class HostInfo {
                 + " (code " + sVersionCode + ")"
                 + (sVerified ? " verified" : " unverified");
     }
+
+    // ==================================================================
+    // 【code 1023 / P0-1 修复】设置页读取通道
+    // ==================================================================
+
+    /**
+     * 设置页专用：在**当前进程**直接读宿主包信息。
+     *
+     * <h3>为什么不能复用上面的静态字段（1022 真机的 bug）</h3>
+     * 上面那套 {@code sVersionName / sVersionCode / sVerified} 只在<b>宿主进程</b>里被
+     * {@link #init} 写过一次；设置页跑在<b>模块自己的进程</b>（{@code io.github...dlsitesoundfloat}），
+     * 那是另一份静态字段，永远是初始值 ⇒ 界面显示 {@code 宿主版本 ? · 未验证}。
+     * 而同期宿主日志里明明写着 {@code versionName=2.22.0 (code 612) verified=yes}——
+     * 一次「跨进程读静态变量」的低级错误。
+     *
+     * <p>真机日志还纠了一个假设：宿主 {@code versionCode} 是 <b>612</b>，不是 {@code 2220}。
+     * ⇒ 任何「用 versionName 推 versionCode」的写法都是错的，只能分开读。
+     *
+     * <h3>包可见性</h3>
+     * Android 11+ 读别的包需要清单里 {@code <queries>} 声明（见 AndroidManifest），
+     * 否则抛 {@code NameNotFoundException} —— 1022 那一版就是栽在这里：代码写了、
+     * 清单没写，于是静默落到 {@code "?"}。
+     *
+     * @param ctx     任意 Context（设置页的即可）
+     * @param hostPkg 宿主包名
+     * @return 读不到时返回 {@link Info#UNKNOWN}
+     */
+    public static Info readInCurrentProcess(Context ctx, String hostPkg) {
+        if (ctx == null || hostPkg == null) {
+            return Info.UNKNOWN;
+        }
+        try {
+            PackageInfo pi = ctx.getPackageManager().getPackageInfo(hostPkg, 0);
+            String name = pi.versionName == null ? "" : pi.versionName;
+            return new Info(name, pi.versionCode, VERIFIED_VERSION.equals(name));
+        } catch (Throwable e) {
+            // 宿主未安装 / 包可见性未声明 / ROM 限制：一律降级成「未知」，绝不抛给 UI
+            XposedCompat.log(TAG + " readInCurrentProcess failed (" + hostPkg + "): " + e);
+            return Info.UNKNOWN;
+        }
+    }
+
+    /** 一次「读到的宿主版本」快照（不可变）。 */
+    public static final class Info {
+        public static final Info UNKNOWN = new Info("", -1, false);
+
+        public final String versionName;
+        public final int versionCode;
+        public final boolean verified;
+
+        Info(String versionName, int versionCode, boolean verified) {
+            this.versionName = versionName;
+            this.versionCode = versionCode;
+            this.verified = verified;
+        }
+
+        /** 读到了版本号没有（决定 UI 显示数字还是问号）。 */
+        public boolean known() {
+            return versionName != null && versionName.length() > 0;
+        }
+    }
 }

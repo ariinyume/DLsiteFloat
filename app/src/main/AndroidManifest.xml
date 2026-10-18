@@ -5,6 +5,23 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!--
+      【code 1023 / P0-1 真因】包可见性（Android 11+ 的 package visibility）。
+
+      设置页要显示「宿主版本」，读的是宿主包的 PackageInfo。但设置页跑在**模块自己的进程**里，
+      而 Android 11 起 `getPackageInfo(其它包)` 默认返回 NameNotFoundException —— 除非在清单里
+      用 `<queries>` 显式声明「我会查这个包」。
+
+      实测（1022 真机）：`HostInfo` 在宿主进程里读得完全正确
+      （`versionName=2.22.0 (code 612) verified=yes`），可设置页那一行仍显示 `? · 未验证`，
+      原因就是这里少了这段声明 —— 两次读数落在两个进程、两套权限上。
+
+      ⚠️ 只声明这一条，不要用 QUERY_ALL_PACKAGES（那会把整机包列表暴露给模块，且上架审核要理由）。
+    -->
+    <queries>
+        <package android:name="jp.co.eisys.dlsitesound" />
+    </queries>
+
+    <!--
       libxposed 现代 API（2.0.0 起）：
         · 不再需要 xposedmodule / xposeddescription / xposedminversion / xposedscope 四个 meta-data。
         · 模块列表里的「模块名」取 android:label，「简介」取 android:description。

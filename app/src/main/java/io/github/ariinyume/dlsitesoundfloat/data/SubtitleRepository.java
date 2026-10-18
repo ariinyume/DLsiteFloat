@@ -975,7 +975,10 @@ public class SubtitleRepository implements LineSource {
         // 【code 1012】云端优先：在线时**不**主动读本地 —— 交给下面原流程等宿主的云端 JSON，
         //   只有等不到（见 resolvePendingTrack 的兜底）才回退本地。仅当**已确认离线**时直接读，
         //   免得飞行模式下干等一整个裁决窗（3~15s）才出字幕。
-        if (isOffline() && tryResumeFromDisk(where, newIdentity, newSelection)) {
+        //   【code 1023】离线时多一条兜底：磁盘缓存没命中就读「作品文件树预取池」
+        //   （下载/进作品时已经把整部作品的字幕抓到本地，见 {@code ZiptreePrefetch}）。
+        if (isOffline() && (tryResumeFromDisk(where, newIdentity, newSelection)
+                || tryResumeFromPrefetch(where, newIdentity, newSelection))) {
             return;
         }
         // 【code 1014】本轨盘上是否已有可用缓存 —— 决定「云端优先」等多久（见下面的 grace 分级）。
@@ -1629,6 +1632,48 @@ public class SubtitleRepository implements LineSource {
     }
 
     /**
+     * 【code 1023 / P0-4 落地】离线兜底第二级：从「作品文件树预取池」取一份。
+     *
+     * <h3>── 为什么它必须排在 {@link #tryResumeFromDisk} 之后 ──</h3>
+     * 磁盘缓存用的是**强身份键**（{@code tc×10^12 + durMs×10^3 + idx}），是最硬的证据；
+     * 预取池只用**毫秒级时长**匹配（预取时拿不到宿主的 {@code trackCount}，见
+     * {@link io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch} 类头）。
+     * 两者都可能命中时，永远让强键先说话。
+     *
+     * <h3>── 为什么这里敢只凭时长认轨 ──</h3>
+     * 预取的时长来自作品文件树里 {@code audio.optimized.duration}（秒，两位小数），
+     * 而当前身份键里的时长来自宿主状态 Map 的 {@code duration}——真机实测两者是同一个数字
+     * （278.64 → 278640ms，7/7 全中）。跨轨误配还要求「同一部作品内两轨时长差 &lt; 250ms」，
+     * 而同一作品里时长相同的那几条恰恰是**不同语言版本的同一条轨**（真机 RJ01353000：
+     * 5471/14079/16859 各出现两次），取哪一份都是这条轨的字幕。
+     *
+     * <p>取到后走 {@link #loadFromJson(String, String, boolean)} 的正常加载路径
+     * （{@code fromDisk=false}）⇒ 它会自己 stage 落盘、自己刷 UI 观测者，
+     * 下一次换回本轨就走强键命中，不必再扫预取池。
+     */
+    private boolean tryResumeFromPrefetch(String where, long newIdentity, long newSelection) {
+        long durMs = PlaylistKey.identityDurationMs(newIdentity);
+        if (durMs <= 0L) {
+            return false;
+        }
+        io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.Hit hit;
+        try {
+            hit = io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.take(durMs);
+        } catch (Throwable t) {
+            return false;
+        }
+        if (hit == null) {
+            return false;
+        }
+        XposedCompat.log("[DLsiteSoundFloat] [code 1023] prefetch HIT on track change via " + where
+                + " | identity=" + newIdentity + " selection=" + newSelection
+                + " | dur=" + durMs + "ms -> " + hit.name
+                + " (work=" + hit.workKey + ") -> resume from PREFETCH");
+        loadFromJson(hit.text, hit.workKey, false);
+        return true;
+    }
+
+    /**
      * 【code 1019】进程冷启动后「第一个作品的第一个音轨」的**只取缓存**入口。
      *
      * <h3>── 为什么必须有它 ──</h3>
@@ -1652,7 +1697,9 @@ public class SubtitleRepository implements LineSource {
             if (!cacheUsable()) {
                 return;
             }
-            if (tryResumeFromDisk(where + " [seeded idx=" + idx + "]", identity, selection)) {
+            if (tryResumeFromDisk(where + " [seeded idx=" + idx + "]", identity, selection)
+                    || tryResumeFromPrefetch(where + " [seeded idx=" + idx + "]",
+                            identity, selection)) {
                 XposedCompat.log("[DLsiteSoundFloat] [code 1019] seeded first track ->"
                         + " resumed from LOCAL cache (idx=" + idx
                         + " selection=" + selection + ")");

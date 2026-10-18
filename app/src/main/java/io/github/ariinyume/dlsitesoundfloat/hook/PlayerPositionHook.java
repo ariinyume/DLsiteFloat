@@ -168,14 +168,27 @@ public class PlayerPositionHook {
     private static volatile boolean sSawPlaylistMap = false;
 
     /**
-     * 【code 1022 / P0-3】状态 Map 的「必备键」—— 只用于**键体检**，不参与取值。
+     * 【code 1023 / P0-3 修复】状态 Map 的「必备键」—— 只用于**键体检**，不参与取值。
      *
-     * <p>键名是 Hermes 字符串常量（R8 不改字符串池），所以跨混淆版本稳定；
-     * 但宿主真改了字段名时，旧代码只会「静默不更新」——用户看到字幕不动、日志干干净净。
-     * 有了这张表，第一次拿到 Map 就能判断「键还全不全」，缺了就显式降级。
+     * <h3>为什么 1022 那一版必然误报（真机日志实证）</h3>
+     * 1022 用一张**合并**的六键表（{@code currentTime/duration/playing/playbackState/
+     * trackCount/currentIndex}）去体检<b>所有</b>状态 Map。但宿主有**两种形状**：
+     * <pre>
+     *   AudioPlaylist → {trackCount, currentIndex, currentTime, duration, playbackState, …} 16 键
+     *   AudioPlayer   → {currentTime, duration, playing, playbackState, isLive, …}    17 键
+     * </pre>
+     * {@code AudioPlayer} 结构上就不可能有 {@code trackCount / currentIndex}
+     * ⇒ 只要它的 Map 先到（真机就是先到），体检必然报
+     * {@code AUDIO_STATUS: HIT -> DEGRADED (missing keys: trackCount,currentIndex)}，
+     * 而实际上字幕、进度、换轨全都正常。**指标错了，警报比没有警报更糟**（铁律 11）。
+     *
+     * <h3>现在的口径</h3>
+     * 只体检 {@code AudioPlaylist} 形状（唯一能同时给出 {@code trackCount}+{@code duration}
+     * 的通道，也是磁盘缓存身份键的唯一来源），键表相应去掉 {@code playing}
+     * （列表用 {@code playbackState} 表达播放态，本来就没有 {@code playing}）。
      */
     private static final String[] WANT_KEYS = {
-            "currentTime", "duration", "playing", "playbackState", "trackCount", "currentIndex"
+            "trackCount", "currentIndex", "currentTime", "duration", "playbackState"
     };
 
     /** 键体检是否已做过（每个进程一次即可）。 */
@@ -255,8 +268,10 @@ public class PlayerPositionHook {
         //   【code 978】补上实例标识与 String 实际值（见 dumpStatusMap）。
         dumpStatusMap(m, where, inst);
 
-        // 【code 1022 / P0-3】键体检（每进程一次）：缺键 ⇒ 显式降级，不再「静默不动」。
-        if (!sKeysChecked) {
+        // 【code 1023 / P0-3 修复】键体检（每进程一次）：**只在 AudioPlaylist 形状上做**。
+        //   判据 = 有 trackCount（列表独有；AudioPlayer 没有）。1022 对所有 Map 都体检，
+        //   于是 AudioPlayer 的 Map 必然报缺 trackCount/currentIndex ⇒ 恒定误报 DEGRADED。
+        if (!sKeysChecked && m.get("trackCount") instanceof Number) {
             sKeysChecked = true;
             StringBuilder missing = new StringBuilder();
             for (String k : WANT_KEYS) {

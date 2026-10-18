@@ -3199,3 +3199,159 @@ versionName 2.3.3 → **2.3.4**；code 1021 → 1022；label `1015.1` → `1018.
 > 🔬 **取证下一步**：装本包 → 设置页打开「调试日志」→ 对一个多轨作品点「下载」→
 > `Android/data/jp.co.eisys.dlsitesound/files/subtitle_cache/_diag/` 里会出现 `ziptree_RJxxxx.json`，
 > 把它与各轨 `optimized/<md5>.json` 对照即可验证哈希规则。
+
+---
+
+## 2.3.5 / code 1023 —— 真机回归三修 + 「下载时同步缓存字幕」证实可行并落地
+
+> 依据：Ari 2026-10-18 21:21 导出真机日志包 + 设置页截图 + **5 份作品文件树**
+> （`ziptree_1018-*_RJ01728000 / RJ01735000 / RJ01655000 ×2 / RJ01353000`）。
+
+### 【一】宿主版本显示成 `? · 未验证`（P0-1 没生效）
+
+真机日志里宿主进程明明读对了：
+
+```
+[DLsiteSoundFloat:Host] host=jp.co.eisys.dlsitesound versionName=2.22.0 (code 612) verified=yes
+```
+
+而设置页那一行是 `宿主版本 · ? · 未验证`。**同一场会话、两个进程、两套读数**，两个根因叠在一起：
+
+1. **读错进程**：`HostInfo` 的静态字段只在宿主进程被写过一次，设置页跑在模块自己的进程，
+   读到的是另一份、永远是初始值。
+2. **清单漏了包可见性**：Android 11+ 没有 `<queries>` 声明，`getPackageInfo(宿主)` 直接抛
+   `NameNotFoundException` —— 就算把进程改对，这一条不补也照样是问号。1022 的注释写对了、
+   清单没写，等于把修复停在了半路。
+
+**修法**：清单加一条只针对宿主包名的 `<queries>`（不用 `QUERY_ALL_PACKAGES` 宽口子）；
+新增 `HostInfo.readInCurrentProcess()` 在**当前进程**直接读包信息，判定口径收在这一处，
+设置页只负责排版。顺带纠一个假设：**宿主 versionCode 是 612，不是 2220** —— 任何由
+versionName 推 versionCode 的写法都是错的。
+
+**位置**：按 Ari 要求，宿主版本行从「其他」卡片**搬进状态卡副标题第二行**：
+
+```
+v2.3.5 (code 1023) · SystemUI 已授权
+宿主 2.22.0 · 已验证
+```
+
+### 【二】P0-2 / P0-3 复核：一个在跑，一个误报
+
+**P0-2（适配自检表）确实在跑**，六条链路逐条有状态迁移：
+
+```
+NET_BUILD: UNKNOWN -> DEGRADED (hooked 1, waiting first tap) | 0/6
+NET_RN:    UNKNOWN -> HIT (readWithProgress(I,String,H))     | 1/6
+AUDIO_STATUS: UNKNOWN -> HIT (AudioPlaylist.s())             | 2/6
+NET_BUILD: DEGRADED -> HIT (first tap #1)                    | 3/6
+VIEW_PAGE: UNKNOWN -> HIT (main slider + time label)         | 4/6
+SUB_TEXT:  UNKNOWN -> HIT (text∈cues (1))                    | 4/6
+```
+
+**P0-3（状态键体检）在跑，但判据错了** —— 日志把它自己暴露了：
+
+```
+AUDIO_STATUS: HIT -> DEGRADED (missing keys: trackCount,currentIndex)
+```
+
+而字幕、进度、换轨全程正常。根因：1022 用一张**合并的六键表**去体检**所有**状态 Map，
+可宿主有两种形状 —— `AudioPlaylist` 带 `trackCount/currentIndex`，`AudioPlayer` 结构上就没有
+这两个键。所以只要播放器那份先到（真机就是先到），体检必然报缺键。**指标错了比没有指标更糟。**
+
+**修法**：只体检 `AudioPlaylist` 形状（判据 = 带 `trackCount`，它也是磁盘缓存身份键的唯一来源），
+必备键表去掉列表本来就没有的 `playing`；`AudioPlayer` 那份不再参与评分。
+自检表另加第七项 `PREFETCH`，并注明它与其他六项**性质不同**（那六项是适配锚点，
+它是本模块自己的能力），不进「适配是否坏了」的判断。
+
+### 【三】「下载时同步缓存字幕」—— 可行，且比预想的更简单
+
+上一轮判断「不可行」的前提是「字幕文件名 `<32位hex>.json` 只能靠猜哈希」。5 份真机文件树
+把这个前提直接推翻了：
+
+```json
+"playfile": {
+  "e80970dcebe72a8d125315cba91818e9.wav": {
+    "type": "audio",
+    "audio": {
+      "optimized": { "name": "e80970dcebe72a8d125315cba91818e9.mp3", "duration": 278.64 },
+      "vtt": "12517693b4ed97aed0aeccf78cbf63fb.vtt"        ← 这一轨的字幕文件
+    }
+  },
+  "12517693b4ed97aed0aeccf78cbf63fb.vtt": {
+    "type": "vtt",
+    "vtt": { "optimized": { "name": "12517693b4ed97aed0aeccf78cbf63fb.json", ... } }
+  }
+}
+```
+
+**宿主自己就把「哪条音轨 → 哪个字幕文件」写出来了**，一个哈希都不用算。
+三份包实测：RJ01728000 → 20 音轨/16 字幕全命中；RJ01735000 → 10/10；
+RJ01353000 → 22/22；RJ01655000 两份各 1 音轨、**0 字幕**（作品本来就没有）。
+
+**密钥也够用**：ziptree 请求本身就带 CloudFront 签名，而签名策略解出来是**作品目录级通配**：
+
+```json
+{"Statement":[{"Resource":"https://play.dl.dlsite.com/content/work/doujin/RJ01728000/RJ01727768/*",
+  "Condition":{"DateLessThan":{"AWS:EpochTime":…}}}]}
+```
+
+⇒ 同一份 query 原样拼到 `optimized/<name>` 上就是合法请求。真机日志里那 20 条字幕请求与
+ziptree 用的是同一个 `Key-Pair-Id`，路径也只差最后一段。
+
+**为什么「下载时」一定抓得到**：宿主下载或进入作品都必须先取 ziptree 才能列文件 ——
+它就是下载入口本身。用户只要在联网状态下打开过该作品，字幕就已经到本地了。
+
+### 【四】落地：预取器 + 离线时长兜底
+
+新增 `hook/ZiptreePrefetch`：拦到作品文件树就把整部作品的字幕排队下载
+（单线程后台、**离线不发起**、单作品 4MB 上限、最多 8 部作品 LRU），
+并把「音轨时长 → 字幕文件名」写成文本索引，重启后仍能命中。
+
+**为什么不直接写缓存**：磁盘缓存的身份键是 `tc×10¹² + durMs×10³ + idx`，其中 `trackCount`
+是**宿主播放列表**的轨数（真机 7），而文件树里是 20 个音轨条目（含子目录与台本）——
+两个口径推不出来。所以预取器只负责「把文件抢到本地」，落缓存交给真正知道 `tc/idx` 的那一刻：
+
+`SubtitleRepository.onTrackChanged` 的离线兜底从「磁盘缓存」扩成两级 ——
+先强键（磁盘缓存），再**毫秒级时长**（预取池），命中后走正常加载路径、由它自己落盘，
+下一次换回本轨就是强键命中。首轨冷启动那条只取缓存的入口同步补上这一级。
+
+**为什么敢只凭时长认轨**：预取时长来自 `audio.optimized.duration`，与宿主状态 Map 的
+`duration` 是同一个数字的两份副本 —— 真机 RJ01728000 七轨逐条比对，`278.64 → 278640ms`
+**7/7 全中**；文件树顺序也恰好就是播放列表 `idx` 顺序（同样 7/7）。容差 250ms 只用来兜浮点抖动。
+同一作品内时长相同的那几条，恰恰是**同一轨的不同语言版本**，取哪份都是这条轨的字幕。
+
+**P0-4 的离线文案不回退**：可行性已被证实且已实现，所以「离线 · 无缓存 / 离线 · 无字幕缓存
+（联网播放一次即可缓存）」保留；预取没命中时仍退回旧行为。
+
+### 【不改的】
+
+抓取闸门形状与两条网络通道、换轨判据三元组、裁决窗与提前收窗、缓存身份口径与索引 schema（仍为 4、
+**不清毒**）、悬浮窗与状态栏渲染、设置页分组结构（仅去掉宿主版本那一行）—— 全部一字未动。
+
+### 【验证】
+
+- 源码层 `tools/verify_1023_src.py` → **60/60 PASS**
+- dex 层 `tools/verify_1023.py` → **62/62 PASS**（主验 1023 / 对照 1022），含清单 `<queries>`
+  真的进了安装包（aapt2 xmltree 读取，不是只看源码）
+  ⚠️ 判据修正三条：`QUERY_ALL_PACKAGES` 只该判**真的权限声明**（本轮注释里正提到它）；
+  `SubtitleCache` 判「预取器不写缓存」必须先剥注释；横幅只在**常开行**上数
+  （每轮两条同版本串，数所有恒定得 2）
+  ⚠️ 无区分力两条如实标注：`PREFETCH` 在旧包里来自 RecyclerView 的 `TRACE_*_PREFETCH_TAG`，
+  `writeIndex/readIndex` 在旧包里来自 Parcel 同名方法 ⇒ 均不入区分力判据
+- **双闭环**：`git stash -u` + clean 构建 → sha256 `6eeacfd5…9a0380`（== code 1022 交付包）；
+  `stash pop` + clean 构建 → sha256 `4ec1174c…1d6d`（== 本轮交付包；两次 apply 构建逐字节相同）
+  ⇒ 本轮改动 = 两个包之间的**唯一差异源**
+
+### 产物
+
+`DLsiteFloat-2.3.5-code1023-debug.apk`，5,638,568 B
+sha256 `4ec1174c7b6abdfde87c30039224ef70d5343983358f9240469cecf683711d6d`
+versionName 2.3.4 → **2.3.5**；code 1022 → 1023；label `1018.1` → `1018.2`
+
+> ⚠️ 升级前请确认已装版本的 code **严格小于 1023**：Android 只允许 `versionCode` 单调递增。
+> ⚠️ 索引 schema 仍为 4，升级后缓存**不清零**。
+> ⚠️ 未提交、未打 tag、未发版 —— 由 Ari 决定何时发。
+> 🔬 **本轮真机验收路径**：联网打开一部**多轨作品**（不必点下载，进作品即可）→ 日志出现
+> `[Prefetch] RJxxxx: tracks=N already=0 queued=N` → 关网/飞行模式 → 切轨，日志出现
+> `[code 1023] prefetch HIT on track change … -> resume from PREFETCH`
+> → 字幕照常显示；再回联网切一次同轨，应变成 `HIT (identity)` 强键命中。

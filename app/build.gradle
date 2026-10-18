@@ -41,7 +41,7 @@ plugins {
 //                    只是仓库内可读别名 ⇒ 改它**不必重新出包**。
 //                 ⚠️ 2026-10-14 回溯：1013~1017 都构建于 10-14，label 已由 `1008.30`
 //                    回填为 `1014.1`~`1014.5`；10-13 及更早的条目**保留旧值**（历史记录）。
-def appVersionTag = '2.3.4'
+def appVersionTag = '2.3.5'
 // ⚠️ 写成 int 字面量 925（不要写 0925 —— Groovy 可能按八进制/前导零解析）：
 //    versionCode 的**数值**是 925，管理器里显示 925，可读语义看 appVersionCodeLabel。
 // ── 版本履历（code 994 / label 1008.15）──
@@ -311,9 +311,9 @@ def appVersionTag = '2.3.4'
 //      用于反推「字幕文件名 = optimized/<md5>.json」的算法，为「下载时同步缓存字幕」探路。
 //   ⚠️ 本轮 Ari 指令**升语义版本号** ⇒ versionName / tag 2.3.3 升 2.3.4、
 //      versionCode 推到 1022、label 推到 1018.1（tag 进了 APK 文件名，必须 clean 重出包）。
-def appVersionCode = 1022
-def appVersionCodeLabel = '1018.1'
-def appVersionName = '2.3.4'
+def appVersionCode = 1023
+def appVersionCodeLabel = '1018.2'
+def appVersionName = '2.3.5'
 
 android {
     namespace 'io.github.ariinyume.dlsitesoundfloat'

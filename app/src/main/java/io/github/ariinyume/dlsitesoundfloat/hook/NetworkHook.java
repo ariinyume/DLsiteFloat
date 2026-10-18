@@ -710,6 +710,15 @@ public class NetworkHook {
                 DiagDump.logSkippedOnce();
             }
         }
+        // 【code 1023 / P0-4 落地】作品文件树 = 「下载时同步缓存字幕」的唯一入口。
+        //   宿主取 ziptree 是为了列文件（下载/进作品都要），而 ziptree 里**自己写着**
+        //   每轨的字幕文件名（audio.vtt → vtt.optimized.name），且本次请求的 CloudFront
+        //   签名 Policy 是「作品目录通配」⇒ 同一份 query 就能把整部作品的字幕全抓下来。
+        //   实测三份真机包：RJ01728000(16轨) / RJ01735000(10轨) / RJ01353000(22轨) 全命中。
+        //   ⚠️ 不受「调试日志」开关限制：这是功能，不是取证。
+        if (ZiptreePrefetch.isZiptree(urlLc)) {
+            ZiptreePrefetch.offer(url, text);
+        }
         // 截断告警：peek 只读了前 N 字节，若正文比 N 大就会读不全。
         // 字幕 JSON 是「{...}」结构 ⇒ 结尾不是 } 或 ] 且体积不小 ⇒ 很可能被截断。
         String tail = text.trim();

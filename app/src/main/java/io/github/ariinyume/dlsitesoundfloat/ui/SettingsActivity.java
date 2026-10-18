@@ -22,8 +22,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.res.Configuration;
 import android.content.pm.PackageInfo;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -1221,8 +1221,14 @@ public class SettingsActivity extends AppCompatActivity {
         String sysUiText = probing
                 ? Strings.PROBING.get(mLang)
                 : (sysUiActive ? Strings.SYSTEMUI_ON.get(mLang) : Strings.SYSTEMUI_OFF.get(mLang));
+        // 【code 1023 / P0-1 修复】状态卡副标题现在是**两行**：
+        //   第一行 = 模块自身版本 + SystemUI 授权态；
+        //   第二行 = 宿主版本 + 是否已验证（1022 那版放在「其他」卡片里，Ari 要求并入状态卡）。
+        //   ⚠️ 宿主版本必须在本进程重新读（见 HostInfo#readInCurrentProcess 类头），
+        //      不能读 HostInfo 的静态字段 —— 那是宿主进程里的另一份。
         mStatusSubtitle.setText(Strings.STATUS_SUBTITLE.format(mLang,
-                BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, sysUiText));
+                BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, sysUiText)
+                + "\n" + hostLineText());
 
         // 引导文案（PRD §12 E-01 / E-02 / E-10 + Q-6 判别态）—— 按「哪一侧没响应」分
         // 可判别的引导，而不是笼统报一句「未激活」。
@@ -1623,28 +1629,29 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /**
-     * 【code 1022 / P0-1】宿主版本行（只读）。
+     * 【code 1023 / P0-1 修复】状态卡里的「宿主版本」那一行文本。
      *
-     * <p>为什么不复用 {@code HostInfo}：那份状态活在**宿主进程**里，设置页是另一个 uid
-     * 的另一份静态字段，读不到。这里用本进程的 PackageManager 直接读宿主包信息 ——
-     * 只读、零权限、宿主没在跑也能读到（installed 即可）。
+     * <h3>1022 的两个错（真机一次爆出）</h3>
+     * <ol>
+     *   <li><b>读错进程</b>：{@code HostInfo} 的静态字段只在宿主进程被写过，设置页读到的
+     *       永远是初始值 ⇒ 界面成了 {@code ? · 未验证}，而宿主日志里明明是
+     *       {@code versionName=2.22.0 (code 612) verified=yes}。</li>
+     *   <li><b>清单漏了 {@code <queries>}</b>：Android 11+ 没有它，即使在本进程直接
+     *       {@code getPackageInfo(宿主)} 也会抛 {@code NameNotFoundException}
+     *       ⇒ 就算改对了进程也照样是问号。</li>
+     * </ol>
+     *
+     * <p>现在两处都补上，且判定口径收在 {@link HostInfo#readInCurrentProcess} 一处，
+     * 页面只负责排版。
      */
-    private void buildHostVersionRow(LinearLayout parent) {
-        String name = "?";
-        boolean verified = false;
-        try {
-            PackageInfo pi = getPackageManager().getPackageInfo(
-                    io.github.ariinyume.dlsitesoundfloat.config.Protocol.HOST_PKG, 0);
-            name = pi.versionName == null ? "?" : pi.versionName;
-            verified = HostInfo.VERIFIED_VERSION.equals(name);
-        } catch (Throwable ignored) {
-            // 宿主未安装 / 包信息不可读：保持 "?"，不影响页面其余部分
-        }
-        TextView row = makeRowLabel(Strings.HOST_VERSION);
-        row.setText(Strings.HOST_VERSION.get(mLang) + " · " + name + " · "
-                + (verified ? Strings.HOST_VERIFIED.get(mLang)
-                        : Strings.HOST_UNVERIFIED.get(mLang)));
-        parent.addView(row);
+    private String hostLineText() {
+        HostInfo.Info info = HostInfo.readInCurrentProcess(this,
+                io.github.ariinyume.dlsitesoundfloat.config.Protocol.HOST_PKG);
+        String name = info.known() ? info.versionName : "?";
+        String state = info.verified
+                ? Strings.HOST_VERIFIED.get(mLang)
+                : Strings.HOST_UNVERIFIED.get(mLang);
+        return Strings.HOST_LINE.format(mLang, name, state);
     }
 
     /**
@@ -1654,10 +1661,7 @@ public class SettingsActivity extends AppCompatActivity {
      * {@code keep_screen_on} 键保留解析兼容，只是界面不再暴露。
      */
     private void buildMiscGroup(LinearLayout parent) {
-        // 【code 1022 / P0-1】卡片第一行：宿主版本（只读）。设置页跑在模块自己的进程，
-        //   不需要宿主在线也能读它的 PackageInfo —— 所以这一行是「插件能不能跟上宿主」
-        //   最便宜的一次表态。未验证时直接告诉用户「如异常请附日志」。
-        buildHostVersionRow(parent);
+        // 【code 1023】宿主版本行已**搬进状态卡副标题第二行**（Ari 要求），本卡不再有这一行。
         buildStatusbarRow(parent);
         // 【2.2.7 / code 979】「调试日志」开关：诊断级日志的总闸。
         // 摆在「状态栏字幕功能」下方、「备份与恢复」上方（备份那排按钮仍由

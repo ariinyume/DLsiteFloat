@@ -55,7 +55,7 @@ public final class AdapterHealth {
 
     private static final String TAG = "[DLsiteSoundFloat:Health]";
 
-    /** 六条链路。名字直接进日志，保持短且可 grep。 */
+    /** 七条链路。名字直接进日志，保持短且可 grep。 */
     public enum Item {
         /** 网络通道 0：{@code Response.Builder.build()} 形状锚点。 */
         NET_BUILD,
@@ -68,7 +68,15 @@ public final class AdapterHealth {
         /** 字幕文本：宿主上屏文本与 cue 列表的语义匹配。 */
         SUB_TEXT,
         /** 状态栏：SystemUI 侧注入容器。 */
-        STATUSBAR
+        STATUSBAR,
+        /**
+         * 【code 1023 / P0-4】作品文件树预取（{@code ziptree} → 整部作品字幕）。
+         *
+         * <p>⚠️ 与上面六项**性质不同**：那六项是「宿主适配锚点」，坏了就说明插件跟不上宿主；
+         * 这一项是**本模块自己的能力**，MISS/DEGRADED 只说明「离线听不了这部作品的字幕」，
+         * 不影响在线字幕。放在最后，正是为了让它不和适配问题混为一谈。
+         */
+        PREFETCH
     }
 
     public enum State {
