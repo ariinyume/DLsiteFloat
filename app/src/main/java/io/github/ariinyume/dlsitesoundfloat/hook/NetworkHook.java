@@ -193,6 +193,18 @@ public class NetworkHook {
     private static volatile int sPeeked = 0;
     private static volatile boolean sPeekErrLogged = false;
 
+    /**
+     * 【code 1027】真正 peek 过的响应条数 —— 给通道静默自检用（见
+     * {@code AdapterHealth#tickChannelSilence}）。
+     *
+     * <p>为什么要暴露这一条：{@code NET_BUILD/NET_RN} 的 HIT 只证明「钩子挂上了」，
+     * 而历史上连废两版（964/965）的故障形态是「挂上但从不触发」—— 那种情况所有状态
+     * 都停在 DEGRADED，日志里安静得像一切正常。
+     */
+    public static int peekedCount() {
+        return sPeeked;
+    }
+
     public static void hook(ClassLoader cl, SubtitleRepository repo) {
         NetLogFile.init(repo.getAppContext());
         // 通道 0 最先装：它是 2.20.2 上唯一确定会走到的采集点

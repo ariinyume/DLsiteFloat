@@ -198,7 +198,11 @@ def main():
 
     print('\n── K 版本纪律 ──────────────────────────────────────────────')
     gradle = read(os.path.join(SRC, '..', '..', 'build.gradle'))
-    check('K1 versionCode = 1026', re.search(r'^def appVersionCode = 1026$', gradle, re.M) is not None)
+    # 【code 1027 泛化】源码层读的是**活的工作区** ⇒ 本轮判据只能写下界（铁律 82/⑬）：
+    #   「1026 的改动在不在」与「现在是第几版」是两件事，后者每轮都会变。
+    check('K1 versionCode >= 1026（下界，防后面轮次假 FAIL）',
+          re.search(r'^def appVersionCode = (\d+)$', gradle, re.M) is not None
+          and int(re.search(r'^def appVersionCode = (\d+)$', gradle, re.M).group(1)) >= 1026)
     check('K2 versionName / tag 仍是 2.3.5（未发版不动语义版本号）',
           re.search(r"^def appVersionName = '2\.3\.5'$", gradle, re.M) is not None
           and re.search(r"^def appVersionTag = '2\.3\.5'$", gradle, re.M) is not None,
@@ -211,13 +215,19 @@ def main():
           '// 【code 1026】' in gradle and 'code 1025 升 1026' in gradle)
 
     module = all_java.get('DlsiteSoundSubtitleModule.java', '')
+    # 【code 1027 泛化】后面轮次会在上面插自己的横幅 ⇒ 按「含【code 1026」定位本轮那条，
+    #   ⚠️ 不能只搜 'code 1026' —— 1027 那条横幅的收尾句里也写着「code 1026 升 1027」。
+    #   不能取「第一条 LogGate 横幅」（那是别人的）。
     banner = ''
     for ln in module.split('\n'):
-        if '==== BUILD' in ln and 'LogGate' in ln:
+        if '==== BUILD' in ln and 'LogGate' in ln and '【code 1026' in ln:
             banner = ln
             break
-    check('K5 常开标题行已到 code 1026',
-          'XposedCompat.log("[DLsiteSoundFloat] ==== BUILD 2.3.5 / code 1026");' in module)
+    live = re.search(r'XposedCompat\.log\("\[DLsiteSoundFloat\] ==== BUILD ([\d.]+) / code (\d+)"\);',
+                     module)
+    check('K5 常开标题行 >= code 1026 且 name 仍 2.3.5',
+          live is not None and int(live.group(2)) >= 1026 and live.group(1) == '2.3.5',
+          live.groups() if live else '未匹配')
     check('K6 调试横幅自报本轮两项 + 未发版',
           banner != '' and '跟随宿主字幕样式' in banner
           and '色板' in banner and '未提交、未打 tag、未发版' in banner)

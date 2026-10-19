@@ -380,8 +380,19 @@ def appVersionTag = '2.3.5'
 //      末行底距改由 `selectAppearancePage` 在**当前面可见时**各收一次（隐藏面量出的是 0）。
 //   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1026、label 推到 1019.2。
 //      版本号 2.3.5 不变、code 1025 升 1026。
-def appVersionCode = 1026
-def appVersionCodeLabel = '1019.2'
+// 【code 1027】只加诊断、不发版（Ari 2026-10-19：先改代码，不用发版）
+//   ① **上屏行一致观测加「连续次数」**：原来只记总量，`62/1632` 这种读数分不清
+//      「采样相位差」和「索引停在别处」—— 前者自己会消失、追它反而更慢，后者才需要
+//      镜像优先定位。现在前 8 次失配逐条落明细（带 streak），连续 ≥3 次（≈0.4s）
+//      另记一段 persistent，汇总行同时给 mismatch / persistent / streak 三段。
+//   ② **网络通道静默自检**：`AdapterHealth.tickChannelSilence()`，由 scan() 回调；
+//      播放页成立 ≥20s、两条网络通道仍停在 DEGRADED、且 0 条响应被 peek ⇒ 落一行
+//      NET_SILENT。只提示、不改任何 State —— 离线播放与整部命中缓存同样满足条件。
+//   ③ **渲染路径、配置项、设置页一字未动**，本轮只增加可观测性。
+//   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1027、label 推到 1019.3。
+//      版本号 2.3.5 不变、code 1026 升 1027。
+def appVersionCode = 1027
+def appVersionCodeLabel = '1019.3'
 def appVersionName = '2.3.5'
 
 android {

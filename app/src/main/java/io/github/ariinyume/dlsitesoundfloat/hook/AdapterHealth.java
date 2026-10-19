@@ -18,6 +18,8 @@
  */
 package io.github.ariinyume.dlsitesoundfloat.hook;
 
+import android.os.SystemClock;
+
 import java.util.EnumMap;
 import java.util.Map;
 
@@ -182,6 +184,21 @@ public final class AdapterHealth {
 
     private static boolean sTableLogged = false;
 
+    /** 【code 1027】播放页首次判成立的时刻（uptime 毫秒）；{@code 0} = 还没进过播放页。 */
+    private static long sPlayerPageAtMs = 0L;
+
+    /** 【code 1027】通道静默只报一次 —— 每进程一行，不刷屏。 */
+    private static boolean sSilentLogged = false;
+
+    /**
+     * 【code 1027】进了播放页多久还一条响应都没读到，就认定「通道疑似静默」。
+     *
+     * <p>20 秒是**给正常路径留的余量**：切轨后宿主发字幕 JSON 通常在 1 秒内到，
+     * 20 秒还没见过任何响应，基本只剩三种解释 —— 宿主的网络栈换了（钩子挂上但永不触发）、
+     * 全程离线、或者整部作品的字幕全在本地缓存里根本没有请求。
+     */
+    private static final long SILENT_GRACE_MS = 20_000L;
+
     /**
      * 只打一次的表 —— 挂在「首次判出播放页」那一刻。
      *
@@ -194,5 +211,50 @@ public final class AdapterHealth {
         }
         sTableLogged = true;
         logTable(why);
+    }
+
+    /**
+     * 【code 1027】通道静默自检 —— 补上「钩子挂上但从不触发」这个盲区。
+     *
+     * <h3>为什么需要</h3>
+     * {@link #mark} 只在**状态变化**时落日志，所以「钩子装好了、但宿主一次都没调用」
+     * 这种故障在日志里只剩一句 {@code NET_BUILD: UNKNOWN -> DEGRADED (hooked, waiting first tap)}，
+     * 之后再无下文 —— 用户看到的却是「字幕一直不出来」。964/965 两版就是这么废掉的
+     * （见铁律：钩子挂上 ≠ 钩子会触发）。
+     *
+     * <h3>判据</h3>
+     * 播放页已成立 ≥ {@link #SILENT_GRACE_MS}、两条网络通道仍停在 {@code DEGRADED}
+     * （= 挂上了但没命中过）、且**一条响应都没被 peek 到** ⇒ 怀疑通道失效。
+     * 三项缺一不可：把「没进播放页」「已经 MISS（自己会报）」「peek 到了（活的）」全都排除掉。
+     *
+     * <h3>口径</h3>
+     * <b>只落一行日志、不改任何状态</b>：离线播放、整部命中本地缓存时同样满足前三项，
+     * 那是正常的 —— 所以措辞写「疑似」，不冒充结论，更不去动 {@link State}。
+     *
+     * @param peekedResponses {@code NetworkHook#peekedCount()}（真正 peek 过的响应条数）
+     */
+    public static synchronized void tickChannelSilence(int peekedResponses) {
+        if (sSilentLogged || get(Item.VIEW_PAGE) != State.HIT) {
+            return;
+        }
+        long now = SystemClock.uptimeMillis();
+        if (sPlayerPageAtMs == 0L) {
+            sPlayerPageAtMs = now;
+            return;
+        }
+        long held = now - sPlayerPageAtMs;
+        if (held < SILENT_GRACE_MS) {
+            return;
+        }
+        boolean pending = get(Item.NET_BUILD) == State.DEGRADED
+                || get(Item.NET_RN) == State.DEGRADED;
+        if (!pending || peekedResponses > 0) {
+            return;
+        }
+        sSilentLogged = true;
+        XposedCompat.log(TAG + " NET_SILENT: 播放页已 " + (held / 1000L)
+                + "s，两条网络通道仍 DEGRADED、0 条响应被读到 —— 疑似通道失效"
+                + "（宿主换网络栈 / 全程离线 / 整部命中本地缓存都会这样）"
+                + "；仅提示，不改判据。table: " + summary());
     }
 }

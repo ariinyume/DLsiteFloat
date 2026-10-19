@@ -271,7 +271,11 @@ def main():
     check('两侧都非空才算样本（不拿空窗充数）',
           re.search(r'hostLines == null \|\| hostLines\.isEmpty\(\)', sync) is not None
           and re.search(r'selfLines == null \|\| selfLines\.isEmpty\(\)', sync) is not None)
-    check('有首次不一致的留证日志', 'MISMATCH (first): host=' in sync)
+    # 【code 1027 泛化】code 1027 把「只记第一次」改成「前 N 次逐条 + 成串单记」，
+    #   文案由 MISMATCH (first) 变为 MISMATCH #n / MISMATCH PERSISTENT。
+    #   这里守语义不守字面：要有 MISMATCH 留证，且必须写明不接管渲染。
+    check('有不一致留证日志（且写明不改渲染）',
+          'MISMATCH' in sync and 'rendering NOT changed' in sync)
     check('有汇总节流（不是每帧一行）',
           re.search(r'SUMMARY_INTERVAL_MS = \d+_000L', sync) is not None)
     check('三个读数出口（样本 / 对得上 / 对不上）',

@@ -66,6 +66,19 @@ import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
  * 字幕常常是多行（日文一行、译文一行），宿主与我们的行序可能不同，逐行对齐会造出假不一致。
  * 只在「宿主显示了、而我们一句都没有对上」时才记 mismatch。
  *
+ * <h3>── 【code 1027】失配还要看「连续了几次」 ──</h3>
+ * 只看总比例是不够的，两种失配的修法完全相反：
+ * <ul>
+ *   <li><b>streak 恒为 1</b> —— 每次换行正好采到一帧。宿主按自己的节奏重绘，我们按位置
+ *       轮询刷新，任何一帧都可能落在「它已经换了、我们还没换」的缝里。这类失配**自己会消失**，
+ *       去追它只会把渲染拖成宿主的上一次采样（更糟）。</li>
+ *   <li><b>streak ≥ {@link #PERSISTENT_STREAK}</b> —— 连续 0.4 秒以上都对不上，
+ *       说明索引真的停在别处（换轨后没接上 / 边界判据不一致）。这才是「镜像优先定位」
+ *       要解决的场景。</li>
+ * </ul>
+ * 因此本轮把「连续次数」也打进日志：前 {@link #DETAIL_MAX} 次失配逐条落明细，
+ * 之后只在「第一次成串」时再落一行，汇总行同时给出 persistent 段数。**渲染仍一字未动。**
+ *
  * <p>线程模型：只在宿主进程内被 {@code scan()} 调用（单线程为主，计数器用 synchronized
  * 兜住偶发的并发扫描），不持有任何 View 引用。
  */
@@ -79,10 +92,28 @@ public final class HostLineSync {
     /** 一条日志里最多带多少个字符（防长句把日志撑爆）。 */
     private static final int PREVIEW_CHARS = 40;
 
+    /** 【code 1027】逐条落明细的失配上限（再多就只是刷屏，汇总行已经够判断）。 */
+    private static final int DETAIL_MAX = 8;
+
+    /**
+     * 【code 1027】「成串」的门槛：连续这么多次失配才算「索引真的停在别处」。
+     *
+     * <p>抓屏约 7 次/秒 ⇒ 3 次 ≈ 0.4 秒。短于这个量级的失配是采样相位差，
+     * 长于它的才是定位问题 —— 两者的修法相反，不能混成一个比例看。
+     */
+    private static final int PERSISTENT_STREAK = 3;
+
     private static int sSamples = 0;
     private static int sMatched = 0;
     private static int sMismatched = 0;
-    private static boolean sFirstMismatchLogged = false;
+    /** 【code 1027】已逐条落过多少条明细。 */
+    private static int sDetailLogged = 0;
+    /** 【code 1027】当前连续失配次数（对上一次就归零）。 */
+    private static int sMissStreak = 0;
+    /** 【code 1027】历史上「成串失配」发生过几段。 */
+    private static int sPersistentEpisodes = 0;
+    /** 【code 1027】第一段成串失配的明细只落一次。 */
+    private static boolean sPersistentLogged = false;
     private static long sLastSummaryMs = 0L;
 
     private HostLineSync() {
@@ -124,16 +155,14 @@ public final class HostLineSync {
                 sSamples++;
                 if (any) {
                     sMatched++;
+                    sMissStreak = 0;
                 } else {
                     sMismatched++;
-                    if (!sFirstMismatchLogged) {
-                        sFirstMismatchLogged = true;
-                        XposedCompat.log(TAG + " MISMATCH (first): host=\"" + preview(firstHost)
-                                + "\" self=" + preview(selfLines.get(0))
-                                + " | hostLines=" + hostLines.size()
-                                + " selfLines=" + selfLines.size()
-                                + " -> observe only, rendering NOT changed");
+                    sMissStreak++;
+                    if (sMissStreak == PERSISTENT_STREAK) {
+                        sPersistentEpisodes++;
                     }
+                    logMismatchLocked(firstHost, hostLines.size(), selfLines);
                 }
                 maybeLogSummaryLocked();
             }
@@ -157,13 +186,47 @@ public final class HostLineSync {
         return sMismatched;
     }
 
-    /** 一行摘要（日志 / 设置页读数用）。 */
+    /**
+     * 一行摘要（日志 / 设置页读数用）。
+     *
+     * <p>【code 1027】加两段：{@code persistent} = 成串失配发生过几段（真正要修的那种），
+     * {@code streak} = 当下连续失配几次（1 = 正在缝里，≥3 = 停住了）。
+     */
     public static synchronized String summary() {
         if (sSamples == 0) {
             return "no sample yet";
         }
         return "line sync " + sMatched + "/" + sSamples + " matched"
-                + " (mismatch " + sMismatched + ")";
+                + " (mismatch " + sMismatched
+                + ", persistent " + sPersistentEpisodes
+                + ", streak " + sMissStreak + ")";
+    }
+
+    /**
+     * 【code 1027】失配明细 —— 前 {@link #DETAIL_MAX} 次逐条落，之后只在第一段「成串」时补一行。
+     *
+     * <p>带 {@code streak} 是为了让读数能自证类型：恒为 1 ⇒ 采样相位差（不用修）；
+     * 到 3 ⇒ 索引停住了（才值得上镜像优先）。这一步的成本是几行日志，
+     * 收益是**不必再靠猜**。
+     */
+    private static void logMismatchLocked(String hostFirst, int hostCount, List<String> selfLines) {
+        boolean detailed = sDetailLogged < DETAIL_MAX;
+        boolean firstPersistent = sMissStreak == PERSISTENT_STREAK && !sPersistentLogged;
+        if (!detailed && !firstPersistent) {
+            return;
+        }
+        if (detailed) {
+            sDetailLogged++;
+        }
+        if (firstPersistent) {
+            sPersistentLogged = true;
+        }
+        XposedCompat.log(TAG + (firstPersistent ? " MISMATCH PERSISTENT" : " MISMATCH #" + sDetailLogged)
+                + " (streak=" + sMissStreak + ", episodes=" + sPersistentEpisodes + ")"
+                + ": host=\"" + preview(hostFirst) + "\""
+                + " self=" + preview(selfLines.get(0))
+                + " | hostLines=" + hostCount + " selfLines=" + selfLines.size()
+                + " -> observe only, rendering NOT changed");
     }
 
     // ==================================================================

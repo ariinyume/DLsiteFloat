@@ -573,6 +573,9 @@ public class SubtitleViewHook {
         //   现在改用 {@link SubtitleRepository#selfComputedLines()}：只读
         //   currentCueIndex（纯本地按秒区间推算，不走镜像回退），与宿主证据彻底分开。
         HostLineSync.observe(r.liveLines, repo.selfComputedLines());
+        // 【code 1027】通道静默自检：O(1)，只在「播放页已成立且通道疑似哑火」时落一行。
+        //   放在这里是因为 scan() 是播放页内**唯一**确定会周期性跑到的点。
+        AdapterHealth.tickChannelSilence(NetworkHook.peekedCount());
         return r;
     }
 
