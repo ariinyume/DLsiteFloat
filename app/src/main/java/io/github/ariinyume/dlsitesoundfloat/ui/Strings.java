@@ -248,17 +248,6 @@ public enum Strings {
     /** 【code 1003】液态玻璃卡「恢复默认」行下方的小字（三语）。 */
     HINT_LIQUID_GLASS("全部设置为 50%", "全部設定為 50%", "All set to 50%"),
     /** 【code 1003】液态玻璃卡「恢复默认」按钮标签（三语）。 */
-    /**
-     * 【code 1025 / P1-1 + P2-2】字幕外观卡的**唯一**一条重置。
-     *
-     * <p>P2-2 的口径：重置只作用于**所在卡片内的设置项**（不做全局重置）。
-     * 三卡合一后，颜色 / 行态 / 排版同属一张卡 ⇒ 它们共用这一条，
-     * 原来那三条（RESET_MAIN / RESET_INACTIVE / RESET_TYPO）不再上屏。
-     */
-    RESET_APPEARANCE("恢复字幕外观默认设置", "恢復字幕外觀預設設定", "Reset appearance defaults"),
-    HINT_APPEARANCE("颜色 · 行态 · 排版一并回到默认，不影响预览窗与面板",
-            "顏色 · 行態 · 排版一併回到預設，不影響預覽窗與面板",
-            "Color, lines and layout all back to defaults — preview and panel untouched"),
     RESET_LIQUID_GLASS("恢复液态玻璃默认设置", "恢復液態玻璃預設設定", "Reset liquid glass defaults"),
     /** 「液态玻璃」开关下方的常驻说明小字（三语）：同时说明「面板颜色会被锁定」。 */
     LIQUID_GLASS_HINT("悬浮窗面板与播放页字幕按钮改为玻璃质感；开启后「悬浮窗颜色」不可调整",
@@ -359,16 +348,14 @@ public enum Strings {
     /** 语义 = 活动行不透明度（50–100%，拍板 Q-4）。 */
     ACTIVE_HIGHLIGHT("活动行不透明度", "活動行不透明度", "Active line opacity"),
     ACTIVE_SCALE("主字幕放大倍数", "主字幕放大倍數", "Active line scale"),
-    RESET_MAIN("恢复主字幕默认设置", "恢復主字幕預設設定", "Reset main subtitle defaults"),
     /**
-     * 固定文案（拍板 MSU-08）：展示默认值，不随上方设置变化。
+     * 【code 1026 / Ari 指令】颜色面自己的「恢复默认」（只重置本面 6 项）。
      *
-     * ⚠️ v1.4 §16.3 已**删除「字重」整行**，故本小字不再提字重（否则留下 dangling 引用，
-     * 用户会去找一个界面上根本不存在的控件）。阴影强度默认值同时由 80% 回调为 50%。
+     * <p>上一版把三条并成一条「恢复字幕外观默认设置」，本轮按指令拆回三条：
+     * 每个面各管自己那一组，**不再一键把整张卡都拉回默认**。
+     * 三条下方的小字说明同时删除（文案见 CHANGELOG 1026）。
      */
-    HINT_MAIN("主字幕颜色 白色、阴影颜色 黑色、阴影强度 50%、阴影半径 10%、不透明度 100%、放大倍数 ×1.0",
-            "主字幕顏色 白色、陰影顏色 黑色、陰影強度 50%、陰影半徑 10%、不透明度 100%、放大倍數 ×1.0",
-            "Color White · Shadow Black · Strength 50% · Radius 10% · Opacity 100% · Scale ×1.0"),
+    RESET_MAIN("恢复字幕颜色默认设置", "恢復字幕顏色預設設定", "Reset subtitle color defaults"),
 
     // ── 非活动行（PRD §FR-05）─────────────────────────────────────────
     BLUR_ENABLED("模糊非活动行", "模糊非活動行", "Blur inactive lines"),
@@ -376,10 +363,8 @@ public enum Strings {
     BLUR_RADIUS("模糊半径", "模糊半徑", "Blur radius"),
     INACTIVE_SCALE_ENABLED("缩放非活动行", "縮放非活動行", "Scale inactive lines"),
     INACTIVE_SCALE_PCT("缩放比例", "縮放比例", "Scale ratio"),
-    RESET_INACTIVE("恢复非活动行字幕默认设置", "恢復非活動行字幕預設設定", "Reset inactive line defaults"),
-    HINT_INACTIVE("模糊非活动行 开启、模糊半径 3.0px、缩放非活动行 开启、缩放比例 90%",
-            "模糊非活動行 開啟、模糊半徑 3.0px、縮放非活動行 開啟、縮放比例 90%",
-            "Blur On · Radius 3.0px · Scale On · Ratio 90%"),
+    /** 【code 1026】行态面自己的「恢复默认」（只重置模糊与缩放这两组）。 */
+    RESET_INACTIVE("恢复行态默认设置", "恢復行態預設設定", "Reset line state defaults"),
     ON("开启", "開啟", "On"),
     OFF("关闭", "關閉", "Off"),
 
@@ -390,30 +375,8 @@ public enum Strings {
     ALIGN_RIGHT("右对齐", "靠右", "Right"),
     LINE_SPACING("字幕间行距", "字幕間行距", "Line spacing"),
     WRAP_SPACING("长字幕内换行额外行距", "長字幕內換行額外行距", "Wrap extra spacing"),
-    /**
-     * 【code 1024 / P1-7】「跟随宿主字幕样式」开关（排版卡，摆在换行额外行距下方）。
-     *
-     * <p>只跟**字号与文字色**：字重 / 行距 / 阴影 / 面板色仍是本页的配置。
-     * 默认关 —— 打开它会让宿主的值顶掉用户已调好的字号。
-     */
-    FOLLOW_HOST_STYLE("跟随宿主字幕样式", "跟隨宿主字幕樣式", "Follow host subtitle style"),
-    /** 该开关下方的小字说明（写清「跟什么、不跟什么」，以及设置页预览不跟的原因）。 */
-    FOLLOW_HOST_STYLE_HINT("字号与文字色跟随宿主字幕；其余排版仍按本页设置。预览区不跟随（与宿主不同进程，读不到宿主样式）",
-            "字號與文字色跟隨宿主字幕；其餘排版仍依本頁設定。預覽區不跟隨（與宿主不同程序，讀不到宿主樣式）",
-            "Font size and text color follow the host; other typography stays as configured here. "
-                    + "The preview does not follow (different process, no access to host views)"),
+    /** 【code 1026】排版面自己的「恢复默认」（含悬浮窗颜色这一项，它归这一面管）。 */
     RESET_TYPO("恢复字幕排版默认设置", "恢復字幕排版預設設定", "Reset typography defaults"),
-    /**
-     * v1.4 §16.3：已删除「字重」整行，小字同步去掉（不再有 dangling 引用）。
-     *
-     * ⚠️ 悬浮窗颜色这一段按 PRD §16.6 第 5 行 + 验收 N-09 的原文写成**「悬浮窗颜色 黑色」**
-     * （三语分别是「悬浮窗颜色 黑色」/「懸浮窗顏色 黑色」/「Floating window color Black」），
-     * **不要写色值** `#0E1420`：用户看的是「默认是什么颜色」，不是十六进制码，
-     * 而且默认色如果将来调整，色值文案会变成一份需要手工同步的第二真相。
-     */
-    HINT_TYPO("对齐 居中、字幕间行距 0 dp、长字幕内换行额外行距 0 dp、悬浮窗颜色 黑色",
-            "對齊 置中、字幕間行距 0 dp、長字幕內換行額外行距 0 dp、懸浮窗顏色 黑色",
-            "Align Center · Line spacing 0 dp · Wrap extra 0 dp · Floating window color Black"),
     /** v1.4 §3.1.5：新增「悬浮窗颜色」行的标签（摆在换行额外行距下方）。 */
     FLOAT_WINDOW_COLOR("悬浮窗颜色", "懸浮窗顏色", "Panel color"),
 

@@ -138,7 +138,6 @@ def main():
     fview = read(jp('view/FloatingSubtitleView.java'))
     style = read(jp('view/SubtitleStyle.java'))
     abtn = read(jp('hook/ActivityButtonHook.java'))
-    probe = read(jp('util/HostStyleProbe.java'))
     sync = read(jp('hook/HostLineSync.java'))
     viewhook = read(jp('hook/SubtitleViewHook.java'))
     config = read(jp('config/SubtitleConfig.java'))
@@ -289,33 +288,14 @@ def main():
           re.search(r'HostLineSync\.observe\(r\.liveLines,\s*repo\.\w+\(\)\);',
                     viewhook) is not None)
 
-    print('E2 P1-7 样式跟随宿主')
-    check('HostStyleProbe 采样入口接在拿到宿主字幕控件的同一处',
-          re.search(r'if \(v instanceof TextView\) \{\s*\n\s*HostStyleProbe\.offer\(\(TextView\) v\);',
-                    viewhook) is not None)
-    check('采样有量级闸（离谱读数不采信）',
-          re.search(r'MIN_PX\s*=', probe) is not None and re.search(r'MAX_PX\s*=', probe) is not None)
-    check('只在变化时推进 revision（否则悬浮窗每帧重画）',
-          re.search(r'boolean changed = .*?if \(changed\)', probe, re.S) is not None)
-    check('字号换算除的是 scaledDensity（sp 口径）',
-          re.search(r'scaledDensity', probe) is not None)
-    check('颜色有可用性判定（alpha 太低算不可用）',
-          re.search(r'public static boolean colorUsable\(\)', probe) is not None)
-    check('SubtitleStyle 有带宿主值的重载',
-          re.search(r'public static SubtitleStyle of\(SubtitleConfig c, DisplayMetrics dm,\s*\n\s*'
-                    r'float hostSizeSp, int hostColor\)', style) is not None)
-    check('宿主字号夹在区间内（抓屏靠字号认字幕，不能失控）',
-          'HOST_SIZE_MIN_SP' in style and 'HOST_SIZE_MAX_SP' in style
-          and re.search(r'Math\.min\(Math\.max\(hostSizeSp, HOST_SIZE_MIN_SP\), HOST_SIZE_MAX_SP\)',
-                        style) is not None)
-    check('宿主色不可用则回落用户自己的配置',
-          re.search(r'int textColor = \(hostColor != 0\) \? hostColor : cfg\.subtitleColor;', style) is not None)
-    check('悬浮窗样式对象由一个入口造（读不到就静默不跟）',
-          re.search(r'private SubtitleStyle buildStyle\(\)', fview) is not None
-          and re.search(r'cfg\.followHostStyle && HostStyleProbe\.known\(\)', fview) is not None)
-    check('样式自愈判据含「宿主样式变了」',
-          re.search(r'RemoteConfig\.get\(\)\.followHostStyle\s*\n\s*&& HostStyleProbe\.revision\(\) != styleHostRev',
-                    fview) is not None)
+    print('E2 P1-7 样式跟随宿主（code 1026 已整体删除）')
+    # 【code 1026 / Ari 指令】这一项从配置键一路删到渲染分支，历史判据随之**反转**：
+    #   只要代码里再冒出探针类 / 跟随键 / 宿主字号夹取常量，就说明删除被回退了。
+    check('P1-7 已整体删除（采样、重载、读口、开关行全无）',
+          'HostStyleProbe' not in viewhook and 'HostStyleProbe' not in fview
+          and 'HOST_SIZE_MIN_SP' not in style and 'hostSizeSp' not in style
+          and 'followHostStyle' not in config and 'followHostStyle' not in remote
+          and 'mRowFollowHost' not in settings)
 
     print('E3 P1-8 命中率与预取读数')
     check('缓存有命中/未命中计数',
@@ -348,36 +328,6 @@ def main():
           re.search(r'private String cacheStatsExtraLine\(\)', settings) is not None)
     check('接收器按七个 extra 取值',
           all(('ConfigBus.' + e) in settings for e in extras))
-
-    print('E4 跟随开关的配置链路（七处一律补齐，漏一处 = 滑了没反应）')
-    check('键常量存在且名字是 follow_host_style',
-          re.search(r'K_FOLLOW_HOST_STYLE = "follow_host_style"', config) is not None)
-    check('字段默认关（不随升级改变既有观感）',
-          re.search(r'public boolean followHostStyle = false;', config) is not None)
-    for label, pat in (
-            ('拷贝构造', r'c\.followHostStyle = followHostStyle;'),
-            ('sameParametersAs', r'&& followHostStyle == o\.followHostStyle'),
-            ('toJson', r'o\.put\(K_FOLLOW_HOST_STYLE, followHostStyle\)'),
-            ('fromJson', r'c\.followHostStyle = o\.optBoolean\(K_FOLLOW_HOST_STYLE'),
-            ('writeTo', r'e\.putBoolean\(K_FOLLOW_HOST_STYLE, followHostStyle\)'),
-            ('readFrom', r'c\.followHostStyle = p\.getBoolean\(K_FOLLOW_HOST_STYLE'),
-            ('summary', r'" followHostStyle=" \+ followHostStyle')):
-        check('七处接线：%s' % label, re.search(pat, config) is not None)
-    check('RemoteConfig 有读口（悬浮窗走它）',
-          re.search(r'public static boolean followHostStyle\(\)', remote) is not None)
-    check('设置页有开关行并接回调',
-          re.search(r'mRowFollowHost = addSwitchRow\(followRoot, Strings\.FOLLOW_HOST_STYLE,\s*\n\s*'
-                    r'this::onFollowHostStyleToggled\)', settings) is not None)
-    check('回调写草稿并标脏',
-          re.search(r'private void onFollowHostStyleToggled\(boolean enabled\) \{\s*\n\s*'
-                    r'mDraft\.followHostStyle = enabled;\s*\n\s*markDirty\(\);', settings) is not None)
-    check('syncWidgets 会回填开关状态',
-          'setSwitch(mRowFollowHost, mDraft.followHostStyle);' in settings)
-    check('恢复默认会把它关掉',
-          'mDraft.followHostStyle = false;' in settings)
-    check('开关文案 + 小字是三语且写明「预览区不跟随」',
-          re.search(r'FOLLOW_HOST_STYLE\("[^"]*",\s*\n?\s*"[^"]*",\s*\n?\s*"[^"]*"\)', strings) is not None
-          and '预览区不跟随' in strings)
 
     # ---------- F 边界 ----------
     print('F 本轮不动的边界')

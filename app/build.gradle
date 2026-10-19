@@ -361,8 +361,27 @@ def appVersionTag = '2.3.5'
 //      绝不回退镜像）替换之；两侧来源的固有限制写进 HostLineSync 类头。
 //   ⚠️ versionName 保持 2.3.5（未发版就不动语义版本号），只升 code ⇒ versionCode 推到
 //      1025、label 推到 1019.1。
-def appVersionCode = 1025
-def appVersionCodeLabel = '1019.1'
+// 【code 1026】删「跟随宿主字幕样式」+ 色板去红蓝（Ari 2026-10-19 指令）
+//   ① **整体删除 P1-7「跟随宿主字幕样式」**（1024 引入、1025 才上屏）：删 util/HostStyleProbe
+//      整个类、SubtitleConfig 的 `follow_host_style` 键与字段、RemoteConfig 的读取口、
+//      SubtitleViewHook 的采样调用、SubtitleStyle 的 4 参重载与宿主字号夹取常量、
+//      FloatingSubtitleView 的宿主样式版本号与 `buildStyle()` 分支、设置页那一行开关与
+//      它的三语小字、以及只为它画的 `ic_ui_sync`。
+//      留一个开关比删掉更糟：宿主真正上屏的那一份样式没有稳定可读语义（抓屏只看得到
+//      「这一帧命中 cue 的那几个 TextView」），跟着它走的结果是「有时像、有时不像」。
+//   ② **三张色板各删红与蓝**：主字幕 / 阴影（commonPalette）8 → 6（白/黑/绿/橙/青/紫）、
+//      悬浮窗（panelPalette）8 → 6（深蓝黑/白/绿/橙/青/紫）。红在深色面板上偏刺眼、
+//      蓝与默认深蓝黑糊成一片。旧配置里存着红/蓝的不迁移 —— 色板行末的「自定义色环」
+//      会接住它们（值不在预设表里就点亮环），颜色照旧渲染，不会被打回默认。
+//   ③ **恢复默认拆回三条**（同日补改）：上一版 P2-2 把颜色 / 行态 / 排版并成一条
+//      「恢复字幕外观默认设置」，一键整卡拉默认。现按 Ari 指令拆回：
+//      颜色面「恢复字幕颜色默认设置」/ 行态面「恢复行态默认设置」/ 排版面「恢复字幕排版默认设置」，
+//      每条只重置自己那一面；三条下方解释小字删除；统一容器 `group_appearance_reset` 删除。
+//      末行底距改由 `selectAppearancePage` 在**当前面可见时**各收一次（隐藏面量出的是 0）。
+//   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1026、label 推到 1019.2。
+//      版本号 2.3.5 不变、code 1025 升 1026。
+def appVersionCode = 1026
+def appVersionCodeLabel = '1019.2'
 def appVersionName = '2.3.5'
 
 android {

@@ -430,14 +430,6 @@
                         android:layout_height="wrap_content"
                         android:orientation="vertical"
                         android:visibility="gone" />
-
-                    <!-- 【code 1025 / P2-2】本卡的唯一一条「恢复默认」：
-                         只重置本卡内的设置项（颜色 / 行态 / 排版），不做全局重置。 -->
-                    <LinearLayout
-                        android:id="@+id/group_appearance_reset"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 

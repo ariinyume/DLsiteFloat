@@ -236,22 +236,6 @@ public final class RemoteConfig {
         }
     }
 
-    /**
-     * 【code 1024 / P1-7】「跟随宿主字幕样式」是否开启（默认关）。
-     *
-     * <p>语义 = 用户是否在排版卡打开了「跟随宿主字幕样式」。开 ⇒ 悬浮窗的字号与文字色
-     * 取宿主字幕控件的实际值（{@code util.HostStyleProbe} 抓屏时采到的）；
-     * 关或读不到宿主样式 ⇒ 完全按用户自己的配置渲染。读配置出异常时回落 {@code false}
-     * （= 默认关），行为与改动前一致。
-     */
-    public static boolean followHostStyle() {
-        try {
-            return get().followHostStyle;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
     /** 强制重读（收到配置变更广播时调用）。 */
     public static void reload() {
         synchronized (LOCK) {

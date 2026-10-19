@@ -29,10 +29,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 脚本 → (类别, 一句话说明它验什么)
 # ⚠️ 说明必须与脚本内部判据一致；改判据时同步改这里，否则索引表本身就会骗人。
 SCRIPTS = [
+    ('verify_1026_src.py', '源码层',
+     'code 1026 删「跟随宿主字幕样式」（类/键/字段/读取口/采样/重载/常量/开关行/图标全链绝迹）、'
+     '三张色板各去红蓝（6 项 + 顺序 + 自定义色环兜底）、恢复默认拆回三条（各管一面、无小字、无统一容器）、'
+     '版本纪律（code 1026 / label 只守形态 / 履历收尾 / 横幅自报 + 禁字符）、边界四条（37 项）'),
+    ('verify_1026.py', 'dex 字节码层',
+     'code 1026：aapt2 versionCode=1026/targetSdk=36、探针类与配置键在产物里**消失**'
+     '（HostStyleProbe / follow_host_style / :HostStyle / styleHostRev / textSizeSp / colorUsable）、'
+     'drawable/ic_ui_sync 去包、保持型五条、横幅自报 code 1026（20 项 / 8 个区分力锚）'),
     ('verify_pathdata.py', '资源层',
      '矢量图 pathData **语法**校验 —— 这一层没有编译期校验：写错照样编译绿灯、设置页直接打不开。'
      '核对手段：白名单命令字母、按 SVG 规范逐命令校验参数个数、数字可解析性、坐标量级粗检；'
-     '覆盖全仓 drawable（33 条 pathData / 25 个文件，当前 0 失败）'),
+     '覆盖全仓 drawable（31 条 pathData / 24 个文件，当前 0 失败）'),
     ('verify_1025_src.py', '源码层',
      'code 1025 平台与设置页现代化：SDK/依赖/AGP+Gradle 档位、签名三档属性名（含「v3 没有 v3SigningEnabled」）、'
      'edge-to-edge insets（挂监听/覆盖 systemBars+displayCutout/不消费/系统栏明暗随底色/调用点在 setContentView 之后）、'
@@ -42,7 +50,7 @@ SCRIPTS = [
      '边界（页头 scroll 非 enterAlways / 底栏真实占位 / 卡内无分隔线 / 吸顶 5dp / 滑块 16-4-44 / 语言胶囊自绘）、'
      '版本纪律、I 组设置页 P1 三项（三卡合一+切面零重建 / 行头查表原语 + 14 枚图标 / 状态卡降噪）、'
      'P2 三项（Snackbar 带撤销 / 三组重置收敛成一条 / 联动动效但口径仍 GONE）、'
-     'P1-5 观测改纯自算、常开横幅自报本轮三项且正文无禁用字符（94 项）'),
+     'P1-5 观测改纯自算、常开横幅自报本轮三项且正文无禁用字符（94 项；I3c 图标数随 1026 删 sync 改为 13、I2/I2b 的重置口径已随 1026 反转，两处均按「历史轮次事实 + 现行状态」改写）'),
     ('verify_1025.py', 'dex 字节码层',
      'code 1025：aapt2 versionCode=1025/versionName=2.3.5/**targetSdk=36**/compileSdk=36、'
      'apksigner 带 --min-sdk-version 23 时 **v1+v2+v3 全 true**（对照包 1024 在同参数下 Missing MANIFEST.MF ⇒ 双向判据）、'
@@ -173,6 +181,8 @@ SCRIPTS = [
 # ⚠️ 只有**真正解析 APK/dex** 的脚本才登记在这里。
 #   不接包的脚本（如源码层校验、真机日志校验）不要登记，否则会被误判成「缺参数」。
 NEEDS_APK = {
+    'verify_1026.py': (1026, 1025),   # <apk_1026> <apk_1025 上一版>
+    'verify_1025.py': (1025, 1024),   # 补登记：上一轮漏了，默认路径会随 code 改名失效
     'verify_1024.py': (1024, 1023),   # <apk_1024> <apk_1023 上一版>
     'verify_1007.py': (1017, 1006, 1011),
     'verify_1021.py': (1021, 1020, 1011),   # <apk_1021> <apk_1020 上一版> <apk_1011 反向固定>

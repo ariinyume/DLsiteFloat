@@ -59,6 +59,17 @@ def read(p):
 def has(text, needle):
     return needle in text
 
+def _one_call(src, handler, resetter):
+    """判 handler 方法体里只调用了指定的 resetter（不越界到别的面）。"""
+    i = src.find('private void %s()' % handler)
+    if i < 0:
+        return False
+    j = src.find('    }' + chr(10), i)
+    body = src[i:j if j > 0 else i + 400]
+    others = [r for r in ('resetMainValues', 'resetInactiveValues', 'resetTypoValues')
+              if r != resetter and r + '();' in body]
+    return resetter + '();' in body and not others
+
 
 def block_after(text, anchor, open_ch='{'):
     """从 anchor 起取一个花括号配平的块（源码层判据要落在**方法/类体**里，不是全文）。"""
@@ -302,7 +313,10 @@ def main():
     check('H1 tag == name（L12：tag 决定 APK 文件名，最易漏）',
           tag and name and tag.group(1) == name.group(1),
           '%s vs %s' % (tag and tag.group(1), name and name.group(1)))
-    check('H2 versionCode = 1025', code and code.group(1) == '1025')
+    # 🔴 铁律 94/⑬：源码层读的是活的工作区 => 版本号只守**下界**，不钉死本轮值
+    check('H2 versionCode >= 1025（本轮及以后）',
+          code is not None and int(code.group(1)) >= 1025,
+          code.group(1) if code else '未匹配')
     check('H3 label 形态 = 月日.当日第几版', label and re.fullmatch(r'\d{4}\.\d+', label.group(1)))
     # 🔴 铁律 94：label 的日期段跟「构建当天」（MMDD.当日第几版），跨日就会变
     #   ⇒ 只守**形态**，绝不钉具体字面值（1025 轮跨了 10-18 / 10-19 两天，实踩）
@@ -316,10 +330,11 @@ def main():
     check('I1 三卡合一：card_inactive / card_typo 两个 id 已消失',
           not has(layout, '@+id/card_inactive') and not has(layout, '@+id/card_typo')
           and not has(layout, '@+id/title_inactive') and not has(layout, '@+id/title_typo'))
-    check('I1b 卡内有 tab 条 + 三个面 + 唯一重置容器',
+    # 【code 1026】group_appearance_reset 已删（重置改回「每个面各一条」，
+    #   由各面自己的 group 收尾）=> 这里只守 tab 条与三个面。
+    check('I1b 卡内有 tab 条 + 三个面',
           has(layout, '@+id/appearance_tabs') and has(layout, '@+id/group_main')
-          and has(layout, '@+id/group_inactive') and has(layout, '@+id/group_typo')
-          and has(layout, '@+id/group_appearance_reset'))
+          and has(layout, '@+id/group_inactive') and has(layout, '@+id/group_typo'))
     check('I1c tab 三段由代码建（buildAppearanceTabs + selectAppearancePage）',
           has(activity_code, 'private void buildAppearanceTabs()')
           and has(activity_code, 'private void selectAppearancePage(int page)')
@@ -333,16 +348,19 @@ def main():
     # I2 P2-2：重置只关联单卡片（三组共用一条，且只弹一次提示）
     # ⚠️ 只判「三张卡各自的那三条」消失；**液态玻璃卡的重置必须保留**
     #    （它也是「重置只作用于本卡」，正是 P2-2 要的形态）。
-    check('I2 三张卡各自的重置行已移除（字面 RESET_MAIN/INACTIVE/TYPO 不再上屏）',
-          not has(activity_code, 'Strings.RESET_MAIN,')
-          and not has(activity_code, 'Strings.RESET_INACTIVE,')
-          and not has(activity_code, 'Strings.RESET_TYPO,')
-          and has(activity_code, 'addResetRow(mGroupAppearanceReset'))
-    check('I2b 重置三组共用一条，且 sync/提示只做一次',
-          has(activity_code, 'private void resetAppearanceGroup()')
-          and has(activity_code, 'resetMainValues();')
-          and has(activity_code, 'resetInactiveValues();')
-          and has(activity_code, 'resetTypoValues();'))
+    # 【code 1026 / Ari 指令】三条合并成一条的做法已被推翻：恢复默认改回「每个面各一条，
+    #   只管自己这一面」。=> 判据反转为「三条各自上屏、且不再有统一容器」。
+    check('I2 三个面各自的重置行都在（1026 起）',
+          has(activity_code, 'Strings.RESET_MAIN, this::onResetMain')
+          and has(activity_code, 'Strings.RESET_INACTIVE, this::onResetInactive')
+          and has(activity_code, 'Strings.RESET_TYPO, this::onResetTypo')
+          and not has(activity_code, 'mGroupAppearanceReset'))
+    # 【code 1026】三个入口各自只调自己那一组（互不越界），旧的合并入口已删。
+    check('I2b 三条重置各自只动自己那一组',
+          not has(activity_code, 'resetAppearanceGroup')
+          and _one_call(activity_code, 'onResetMain', 'resetMainValues')
+          and _one_call(activity_code, 'onResetInactive', 'resetInactiveValues')
+          and _one_call(activity_code, 'onResetTypo', 'resetTypoValues'))
     check('I2c 不做预设 chips（本轮 Ari 明确排除）',
           not has(strings, 'PRESET_') and not has(layout, 'chip'))
 
@@ -355,7 +373,9 @@ def main():
           and has(activity_code, 'private Strings supportingForRow(Strings label)'))
     icon_dir = os.path.join(SRC, 'res', 'drawable')
     icons = [n for n in os.listdir(icon_dir) if n.startswith('ic_ui_') and n.endswith('.xml')]
-    check('I3c 新增 14 枚行图标全部存在', len(icons) == 14, '实际 %d' % len(icons))
+    # 【code 1026】ic_ui_sync 随「跟随宿主字幕样式」一起删除 => 13 枚（原 14）。
+    check('I3c 行图标 13 枚（1026 起；sync 已随功能删除）',
+          len(icons) == 13 and 'ic_ui_sync.xml' not in icons, '实际 %d' % len(icons))
     bad_v = []
     for n in icons:
         txt = read(os.path.join(icon_dir, n))
@@ -413,12 +433,14 @@ def main():
     #    内容不全会造成「发了版，日志里却读不出这版改了什么」。
     module = read(os.path.join(SRC, 'java', 'io', 'github', 'ariinyume',
                                'dlsitesoundfloat', 'DlsiteSoundSubtitleModule.java'))
+    # 【code 1026】横幅是**逐轮累积**的：第一条 LogGate 横幅已经是 1026 的了
+    #   => 判「本文件里存在一条 1025 的横幅，且它自报了那三项」。
     banner_line = ''
     for ln in module.split('\n'):
-        if '==== BUILD' in ln and 'LogGate' in ln:
+        if '==== BUILD 2.3.5 / code 1025 （' in ln and 'LogGate' in ln:
             banner_line = ln
             break
-    check('I8 常开横幅自报设置页 P1/P2 与观测判据修正',
+    check('I8 1025 横幅仍自报设置页 P1/P2 与观测判据修正',
           banner_line != ''
           and '⑫设置页 P1 三项' in banner_line
           and '⑬设置页 P2 三项' in banner_line

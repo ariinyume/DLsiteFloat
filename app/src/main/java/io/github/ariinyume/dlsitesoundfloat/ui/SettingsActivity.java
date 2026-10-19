@@ -382,8 +382,6 @@ public class SettingsActivity extends AppCompatActivity {
     private final MaterialButton[] mAppearanceTabButtons = new MaterialButton[3];
     /** 当前选中的维度（0 颜色 / 1 行态 / 2 排版）。语言切换会 rebuild，靠它恢复选中态。 */
     private int mAppearancePage = 0;
-    /** 【code 1025 / P2-2】本卡唯一一条「恢复默认」的宿主（只重置本卡设置项）。 */
-    private LinearLayout mGroupAppearanceReset;
     /** 【code 1003】「液态玻璃效果调整」卡片（独立成卡，摆在「其他」之前）。 */
     private LinearLayout mGroupLiquidGlass;
     /** 【code 1015 / 2.3.2】「实验性功能」组（独立成卡，摆在液态玻璃与「其他」之间）。 */
@@ -463,13 +461,6 @@ public class SettingsActivity extends AppCompatActivity {
     private int mLineMatched = -1;
     private int mLineMismatched = -1;
 
-    /**
-     * 【code 1024 / P1-7】排版卡里的「跟随宿主字幕样式」开关行。
-     *
-     * <p>默认关：打开它等于让宿主的字号/文字色顶掉用户自己调好的值，
-     * 所以不随升级自动打开（与「升级不改变观感」的既有纪律一致）。
-     */
-    private SwitchRow mRowFollowHost;
     /** 【2.2.9 / code 1003】「液态玻璃」开关行（液态玻璃卡首行）。 */
     private SwitchRow mRowLiquidGlass;
     /** 【2.2.11b】「模糊强度」滑条行（只在液态玻璃开启时显示）。 */
@@ -518,11 +509,6 @@ public class SettingsActivity extends AppCompatActivity {
     private int mPreviewGlassRadius = -1;
     /** 状态栏字幕功能开关行（SystemUI 未授权时要整行置灰，故保留引用）。 */
     private LinearLayout mStatusbarRowRoot;
-    private TextView mHintMain;
-    private TextView mHintInactive;
-    private TextView mHintTypo;
-    /** 【code 1025 / P2-2】字幕外观卡唯一重置行的小字（三组一并回默认的说明）。 */
-    private TextView mHintAppearance;
 
     /** 配置导出 / 导入（SAF；PRD §FR-09 的备份口径）。 */
     private final ActivityResultLauncher<String> mExportLauncher =
@@ -1102,7 +1088,6 @@ public class SettingsActivity extends AppCompatActivity {
         mGroupInactive = findViewById(R.id.group_inactive);
         mGroupTypo = findViewById(R.id.group_typo);
         mAppearanceTabs = findViewById(R.id.appearance_tabs);
-        mGroupAppearanceReset = findViewById(R.id.group_appearance_reset);
         mGroupLiquidGlass = findViewById(R.id.group_liquidglass);
         mGroupExperimental = findViewById(R.id.group_experimental);
         mGroupMisc = findViewById(R.id.group_misc);
@@ -1588,7 +1573,6 @@ public class SettingsActivity extends AppCompatActivity {
         setGroupEnabled(mGroupInactive, enabled);
         setGroupEnabled(mGroupTypo, enabled);
         setGroupEnabled(mAppearanceTabs, enabled);
-        setGroupEnabled(mGroupAppearanceReset, enabled);
         setGroupEnabled(mGroupLiquidGlass, enabled);
         setGroupEnabled(mGroupMisc, enabled);
         if (mSaveButton != null) {
@@ -1704,15 +1688,9 @@ public class SettingsActivity extends AppCompatActivity {
         mGroupTypo.removeAllViews();
         buildTypoGroup(mGroupTypo);
 
-        // 【code 1025 / P1-1 + P2-2】三卡合一：卡内 tab 条、本卡唯一的一条重置，
-        //   然后把选中页恢复回去（语言切换会整页 rebuild，用户停在哪一面要留住）。
+        // 【code 1026】三卡合一仍在（卡内 tab 条 + 切面只改可见性）。
+        //   重置行改回「每个面各一条」，由各面的 buildXxxGroup 自己建，这里不再统一建。
         buildAppearanceTabs();
-        if (mGroupAppearanceReset != null) {
-            mGroupAppearanceReset.removeAllViews();
-            mHintAppearance = addResetRow(mGroupAppearanceReset,
-                    Strings.RESET_APPEARANCE, this::resetAppearanceGroup);
-            updateHintAppearance();
-        }
         selectAppearancePage(mAppearancePage);
 
         // 【code 1003】「液态玻璃效果调整」独立成卡，摆在「其他」之前。
@@ -1740,46 +1718,49 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /**
-     * v1.4 §2.1.1：色板**统一 8 预设**，且主字幕 / 阴影 / 悬浮窗三行的列表**完全相同**
-     * （白 / 黑 / 绿 / 红 / 橙 / 青 / 紫 / 深蓝）。
+     * 色板**统一 6 预设**，且主字幕 / 阴影两行的列表**完全相同**
+     * （白 / 黑 / 绿 / 橙 / 青 / 紫）。
      *
-     * ⚠️ 顺序是需求里逐字给定的，别按「好看」重排 —— Ari 是按这个顺序记位置的。
-     * ⚠️ 阴影色板的第一个也是**黑**（而不是像 v1.3 那样第一个是黑、后面接蓝橙紫棕青），
-     *    这是本版的变化点：三行共用一张表，用户不用记「这一行第几个是什么颜色」。
+     * <p>【code 1026 / Ari 指令】原表 8 色（白/黑/绿/红/橙/青/紫/深蓝），本轮**删掉红与蓝** ——
+     * 红在深色面板上偏刺眼、蓝与悬浮窗默认的深蓝黑容易糊成一片。表里只留 6 个。
+     *
+     * <p>⚠️ 旧配置里存着红/蓝的用户不会被打回默认：色板行末有「自定义色环」，
+     * 值不在预设表里就走「自定义」态（环被选中），颜色照旧渲染。
+     * ⚠️ 顺序仍是需求里给定的相对顺序，别按「好看」重排 —— Ari 是按位置记颜色的。
      */
     private int[] commonPalette() {
         return new int[]{
                 color(R.color.swatch_white), color(R.color.swatch_black), color(R.color.swatch_green),
-                color(R.color.swatch_red), color(R.color.swatch_orange), color(R.color.swatch_cyan),
-                color(R.color.swatch_purple), color(R.color.swatch_blue)};
+                color(R.color.swatch_orange), color(R.color.swatch_cyan), color(R.color.swatch_purple)};
     }
 
     private String[] commonPaletteNames() {
         return new String[]{
                 Strings.COLOR_WHITE.get(mLang), Strings.COLOR_BLACK.get(mLang), Strings.COLOR_GREEN.get(mLang),
-                Strings.COLOR_RED.get(mLang), Strings.COLOR_ORANGE.get(mLang), Strings.COLOR_CYAN.get(mLang),
-                Strings.COLOR_PURPLE.get(mLang), Strings.COLOR_BLUE.get(mLang)};
+                Strings.COLOR_ORANGE.get(mLang), Strings.COLOR_CYAN.get(mLang), Strings.COLOR_PURPLE.get(mLang)};
     }
 
     /**
-     * v1.4 §3.1.5：悬浮窗颜色色板 = **深蓝黑** + 上面那套 8 色里的后 7 个（白/绿/红/橙/青/紫/深蓝）。
+     * 悬浮窗颜色色板 = **深蓝黑** + 上面那套 6 色里的后 5 个（白/绿/橙/青/紫）。
      *
-     * ⚠️ 需求原话是「8 预设（深蓝黑/白/绿/红/橙/青/紫/深蓝）」—— 也就是把通用表里的**黑**
-     *    换成了**深蓝黑**（默认基色 {@code #0E1420}）。深蓝黑与黑在视觉上极近，
-     *    若同时出现会让色板看起来有重复项（NFR-05 要求色板不能只靠颜色区分，重复色名就是 bug）。
+     * <p>原需求是「8 预设（深蓝黑/白/绿/红/橙/青/紫/深蓝）」—— 把通用表里的**黑**
+     * 换成**深蓝黑**（默认基色 {@code #0E1420}）。深蓝黑与黑视觉上极近，同时出现会让色板
+     * 看起来有重复项（NFR-05 要求色板不能只靠颜色区分，重复色名就是 bug）。
+     *
+     * <p>【code 1026】与通用表同步删掉**红**与**蓝**（深蓝是另一支，不受影响）。
      */
     private int[] panelPalette() {
         return new int[]{
                 color(R.color.swatch_deep_blue_black), color(R.color.swatch_white),
-                color(R.color.swatch_green), color(R.color.swatch_red), color(R.color.swatch_orange),
-                color(R.color.swatch_cyan), color(R.color.swatch_purple), color(R.color.swatch_blue)};
+                color(R.color.swatch_green), color(R.color.swatch_orange),
+                color(R.color.swatch_cyan), color(R.color.swatch_purple)};
     }
 
     private String[] panelPaletteNames() {
         return new String[]{
                 Strings.COLOR_DEEP_BLUE_BLACK.get(mLang), Strings.COLOR_WHITE.get(mLang),
-                Strings.COLOR_GREEN.get(mLang), Strings.COLOR_RED.get(mLang), Strings.COLOR_ORANGE.get(mLang),
-                Strings.COLOR_CYAN.get(mLang), Strings.COLOR_PURPLE.get(mLang), Strings.COLOR_BLUE.get(mLang)};
+                Strings.COLOR_GREEN.get(mLang), Strings.COLOR_ORANGE.get(mLang),
+                Strings.COLOR_CYAN.get(mLang), Strings.COLOR_PURPLE.get(mLang)};
     }
 
     /** FR-04 主字幕 / 活动行调整（6 参数 + 恢复默认）。 */
@@ -1845,8 +1826,11 @@ public class SettingsActivity extends AppCompatActivity {
                 pages[i].setVisibility(i == page ? View.VISIBLE : View.GONE);
             }
         }
-        int onBg = attr(com.google.android.material.R.attr.colorSecondaryContainer, 0xFFE8DEF8);
-        int onFg = attr(com.google.android.material.R.attr.colorOnSecondaryContainer, 0xFF1D192B);
+        // 【code 1026】三个面各自以「恢复默认」按钮行收尾；底距只能在**本面可见时**量
+        //   （GONE 的面高度为 0，量出来是错的）⇒ 每次切面给当前面补一次收敛。
+        //   pinCardLastBottom 自带幂等：算出来与现有 margin 相同就直接返回。
+        pinAppearanceBottom(pages[page]);
+        int onBg = attr(com.google.android.material.R.attr.colorSecondaryContainer, 0xFFE8DEF8);        int onFg = attr(com.google.android.material.R.attr.colorOnSecondaryContainer, 0xFF1D192B);
         int offBg = attr(com.google.android.material.R.attr.colorSurfaceContainer, 0xFFF3EDF7);
         int offFg = attr(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF49454F);
         for (int i = 0; i < mAppearanceTabButtons.length; i++) {
@@ -1860,12 +1844,12 @@ public class SettingsActivity extends AppCompatActivity {
         }
     }
 
-    /** 【code 1025 / P2-2】本卡唯一重置行的小字（三组一并回默认的说明）。 */
-    private void updateHintAppearance() {
-        if (mHintAppearance == null) {
+    /** 【code 1026】把某个外观面的**末行**（= 它自己的恢复默认按钮行）底距收一次。 */
+    private void pinAppearanceBottom(LinearLayout group) {
+        if (group == null || group.getChildCount() == 0) {
             return;
         }
-        mHintAppearance.setText(Strings.HINT_APPEARANCE.get(mLang));
+        pinCardLastBottom(group, group.getChildAt(group.getChildCount() - 1));
     }
 
     private void buildMainGroup(LinearLayout parent) {
@@ -1917,8 +1901,9 @@ public class SettingsActivity extends AppCompatActivity {
                     markDirty();
                 });
 
-        // 【code 1025 / P2-2】本卡不再单独放重置行 —— 见 buildRows 里那条唯一的
-        //   「恢复字幕外观默认设置」（三组一并回默认）。字段 mHintMain 保留但不再赋值。
+        // 【code 1026】本面自己的恢复默认：只重置颜色 / 阴影 / 不透明度 / 放大倍数，
+        //   行态与排版一个字都不动；按钮下方不再有解释小字。
+        addResetRow(parent, Strings.RESET_MAIN, this::onResetMain, false);
     }
 
     /** FR-05 非活动行字幕调整（开关联动 + 恢复默认）。 */
@@ -1963,7 +1948,8 @@ public class SettingsActivity extends AppCompatActivity {
                     markDirty();
                 });
 
-        // 【code 1025 / P2-2】同上：非活动行不再有自己的重置行。
+        // 【code 1026】本面自己的恢复默认（只重置模糊与缩放两组）。
+        addResetRow(parent, Strings.RESET_INACTIVE, this::onResetInactive, false);
     }
 
     /**
@@ -2002,24 +1988,9 @@ public class SettingsActivity extends AppCompatActivity {
                     markDirty();
                 });
 
-        // 【code 1024 / P1-7】「跟随宿主字幕样式」开关（体检报告 P1-7）。
-        //
-        // 位置：紧跟在「长字幕内换行额外行距」之后、悬浮窗颜色之前 —— 它跟的是**字号与文字色**，
-        //   与上面两行同属「文字怎么排」，放在颜色行前面读起来是一条线。
-        // 默认关：打开它等于让宿主的值顶掉用户已调好的字号，不能随升级悄悄改变观感；
-        //   而且设置页预览区跟不了（跨进程读不到宿主控件），只能靠真实悬浮窗看效果，
-        //   小字里已经写明这一点。
-        LinearLayout followRoot = new LinearLayout(this);
-        followRoot.setOrientation(LinearLayout.VERTICAL);
-        mRowFollowHost = addSwitchRow(followRoot, Strings.FOLLOW_HOST_STYLE,
-                this::onFollowHostStyleToggled);
-        TextView followHint = new TextView(this);
-        followHint.setText(Strings.FOLLOW_HOST_STYLE_HINT.get(mLang));
-        followHint.setTextAppearance(R.style.TextAppearance_DLsiteFloat_Hint);
-        followHint.setTextColor(attr(com.google.android.material.R.attr.colorOnSurfaceVariant, Color.GRAY));
-        followHint.setPadding(0, 0, 0, dp(6));
-        followRoot.addView(followHint);
-        parent.addView(followRoot);
+        // 【code 1026】「跟随宿主字幕样式」已整体移除 —— 上一版它就在这个位置。
+        //   删除原因见 CHANGELOG 1026：宿主真正上屏的那一份样式并没有稳定可读的语义，
+        //   与其留一个「看起来在跟、实际经常跟不到」的开关，不如把字号交回用户自己。
 
         // §3.1.5：悬浮窗颜色 —— **必须在「长字幕内换行额外行距」的正下方**（需求给的位置）。
         // 半透明预览：色板圆点画的是「面板**顶部**实际不透明度叠加后的效果」（≈57%），
@@ -2034,19 +2005,8 @@ public class SettingsActivity extends AppCompatActivity {
         mPanelColorLabel = panelRow.label;
         mPanelColorBody = panelRow.body;
 
-        // 【code 1025 / P2-2】同上：排版不再有自己的重置行。
-    }
-
-    /**
-     * 【code 1024 / P1-7】「跟随宿主字幕样式」被翻转（属于**草稿**改动，仍需保存）。
-     *
-     * <p>只改草稿、不立刻生效 —— 与其余配置行一致（保存后经 {@code ACTION_CONFIG_CHANGED}
-     * 广播下发，宿主进程重算样式并重画）。宿主进程读不到宿主控件时（还没播过字幕），
-     * 打开开关也不会报错，只是继续用用户自己的字号。
-     */
-    private void onFollowHostStyleToggled(boolean enabled) {
-        mDraft.followHostStyle = enabled;
-        markDirty();
+        // 【code 1026】本面自己的恢复默认（含悬浮窗颜色，它归排版面管）。
+        addResetRow(parent, Strings.RESET_TYPO, this::onResetTypo, false);
     }
 
     /**
@@ -3592,8 +3552,6 @@ public class SettingsActivity extends AppCompatActivity {
             setSegmented(mRowAlign, alignIndex(mDraft.textAlign));
             setSlider(mRowLineSpacing, Math.round(mDraft.lineSpacingDp * 2));
             setSlider(mRowWrapSpacing, Math.round(mDraft.wrapExtraSpacingDp * 2));
-            // 【code 1024 / P1-7】跟随宿主字幕样式（默认关；只跟字号与文字色）
-            setSwitch(mRowFollowHost, mDraft.followHostStyle);
             // 状态栏字幕功能：真值来自草稿，但 SystemUI 未授权时会被 applyStatusbarSwitchEnabled
             // 覆盖成「关闭 + 置灰」（那个方法自己会再置一次 mSyncing）
             setSwitch(mRowStatusbar, mDraft.statusbarSubtitleEnabled);
@@ -3612,9 +3570,6 @@ public class SettingsActivity extends AppCompatActivity {
         } finally {
             mSyncing = false;
         }
-        updateHintMain();
-        updateHintInactive();
-        updateHintTypo();
         updatePreview();
         // 回灌完再按探测结果修一次状态栏开关的可用性（顺序不能颠倒：
         // 上面刚把它设成草稿值，会被这里按授权状态覆盖，这正是我们想要的优先级）
@@ -3659,15 +3614,28 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /**
-     * 【code 1025 / P1-1 + P2-2】字幕外观卡**唯一**的重置入口。
+     * 【code 1026 / Ari 指令】字幕外观卡的三条重置：**每个面只管自己那一组**。
      *
-     * <p>三卡合一之后，颜色 / 行态 / 排版同属一张卡，用户按下的那条「恢复字幕外观默认设置」
-     * 必须一次把它们都拉回默认 —— 但**只提示一次**（原来三张卡各弹一次 toast）。
-     * 因此把三个旧方法拆成「只改值」的 {@code resetXxxValues()}，副作用统一收到这里。
+     * <p>上一版（1025）是三条并一条「恢复字幕外观默认设置」，一次把颜色 / 行态 / 排版
+     * 全部拉回默认；本轮按指令拆回三条，各自只动所在面的字段 —— 在「颜色」面按重置，
+     * 行态与排版一个字都不许变。三条的按钮下方小字说明也一并删除。
+     *
+     * <p>拆成「只改值」的 {@code resetXxxValues()} 仍然保留：三个入口的副作用
+     * （回灌控件 + 提示）完全一样，收口在一处，将来改提示也只改一条。
      */
-    private void resetAppearanceGroup() {
+    private void onResetMain() {
         resetMainValues();
+        syncWidgets();
+        toast(Strings.RESET_DONE.get(mLang));
+    }
+
+    private void onResetInactive() {
         resetInactiveValues();
+        syncWidgets();
+        toast(Strings.RESET_DONE.get(mLang));
+    }
+
+    private void onResetTypo() {
         resetTypoValues();
         syncWidgets();
         toast(Strings.RESET_DONE.get(mLang));
@@ -3701,38 +3669,8 @@ public class SettingsActivity extends AppCompatActivity {
         mDraft.wrapExtraSpacingDp = SubtitleConfig.WRAP_SPACING_DEF;
         // §3.1.5：「恢复默认」小字里已列出「悬浮窗颜色 黑色」，这里必须真的把它恢复，
         // 否则小字写的是什么、按下去变的却是另一套（文案与行为必须一致）
-        // 【code 1024 / P1-7】「跟随宿主字幕样式」也归排版卡管 ⇒ 恢复默认时一并关掉
-        //   （默认关；不恢复的话「恢复默认设置」之后还会跟着宿主走，与文案对不上）
-        mDraft.followHostStyle = false;
+        // 【code 1026】「跟随宿主字幕样式」已移除，恢复默认不再需要关它。
         mDraft.floatWindowColor = SubtitleConfig.FLOAT_WINDOW_COLOR_DEF;
-    }
-
-    // ==================================================================
-    // 小字说明（PRD DK-04：内容 = 该组默认值）
-    // ==================================================================
-
-    private void updateHintMain() {
-        if (mHintMain == null) {
-            return;
-        }
-        // 固定文案（拍板 MSU-08）：展示默认值，不随草稿值变化。
-        mHintMain.setText(Strings.HINT_MAIN.get(mLang));
-    }
-
-    private void updateHintInactive() {
-        if (mHintInactive == null) {
-            return;
-        }
-        // 固定文案（拍板 INA-06）：展示默认值，不随草稿值变化。
-        mHintInactive.setText(Strings.HINT_INACTIVE.get(mLang));
-    }
-
-    private void updateHintTypo() {
-        if (mHintTypo == null) {
-            return;
-        }
-        // 固定文案（拍板 TYP-08）：展示默认值，不随草稿值变化。
-        mHintTypo.setText(Strings.HINT_TYPO.get(mLang));
     }
 
     private String alignLabel(String v) {
@@ -3815,9 +3753,6 @@ public class SettingsActivity extends AppCompatActivity {
         if (mSyncing) {
             return;
         }
-        updateHintMain();
-        updateHintInactive();
-        updateHintTypo();
         updatePreview();
     }
 
@@ -4031,9 +3966,6 @@ public class SettingsActivity extends AppCompatActivity {
         }
         if (label == Strings.WRAP_SPACING) {
             return R.drawable.ic_ui_wrap;
-        }
-        if (label == Strings.FOLLOW_HOST_STYLE) {
-            return R.drawable.ic_ui_sync;
         }
         if (label == Strings.FLOAT_WINDOW_COLOR || label == Strings.LIQUID_GLASS) {
             return R.drawable.ic_ui_panel;
@@ -4500,6 +4432,20 @@ public class SettingsActivity extends AppCompatActivity {
      * @return 小字 TextView（供实时刷新）
      */
     private TextView addResetRow(LinearLayout parent, Strings label, Runnable onReset) {
+        return addResetRow(parent, label, onReset, true);
+    }
+
+    /**
+     * 【code 1026】带「要不要小字」开关的重载。
+     *
+     * <p>{@code showHint == false} 时**不建小字**，按钮行自己就是卡片末行 ——
+     * 字幕外观的三条重置（颜色 / 行态 / 排版）按 Ari 指令都走这一档：
+     * 恢复默认只管自己那一面，列举默认值的解释小字一并去掉。
+     *
+     * @return 小字 TextView；{@code showHint == false} 时返回 {@code null}
+     */
+    private TextView addResetRow(LinearLayout parent, Strings label, Runnable onReset,
+                                 boolean showHint) {
         beginRow(parent);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.HORIZONTAL);
@@ -4526,6 +4472,14 @@ public class SettingsActivity extends AppCompatActivity {
         root.addView(reset);
 
         parent.addView(root);
+
+        if (!showHint) {
+            // 没有小字 ⇒ 这一排按钮就是本面的末行。
+            // ⚠️ 这里**不能**当场量底距：三个面在构建时只有一个是 VISIBLE，其余是 GONE
+            //   （量出来高度为 0，会算出一个离谱的 margin 且永远不再纠正）。
+            //   底距统一由 selectAppearancePage 在「本面已经可见」时补一次。
+            return null;
+        }
 
         TextView hint = new TextView(this);
         hint.setTextAppearance(R.style.TextAppearance_DLsiteFloat_Hint);
