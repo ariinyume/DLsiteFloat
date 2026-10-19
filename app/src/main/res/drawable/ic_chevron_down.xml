@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  【code 1025 / 设计审查 P0-③】预览条右侧的展开/收起箭头（Material Icons `expand_more`）。
+
+  · 颜色写白色占位，实际着色由布局里的 `app:tint="?attr/colorPrimary"` 决定
+    （与 rest 的图标同一口径：不在 drawable 里写死主题色，否则动态取色会失效）。
+  · 收起态由代码旋转 180°（SettingsActivity#applyPreviewCollapsed），本文件只提供「向下」。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7.41,8.59L12,13.17l4.59,-4.58L18,10l-6,6 -6,-6z" />
+</vector>

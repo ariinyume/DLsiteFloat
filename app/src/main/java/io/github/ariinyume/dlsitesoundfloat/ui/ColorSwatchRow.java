@@ -26,7 +26,6 @@ import android.graphics.RectF;
 import android.graphics.SweepGradient;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.LinearLayout;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -62,12 +61,44 @@ import io.github.ariinyume.dlsitesoundfloat.util.Utils;
  *    既比色点大一圈、又不直观 —— 用例 4.1.1 与 4.3 都在骂这件事。
  * ② **棋盘格只在色点圆内**，不再铺满整行（用例 6.8：底纹不要出现在卡片其他区域）。
  *    旧实现是 {@code dispatchDraw} 里铺整行，棋盘会从色点之间透出来，很脏。
+ *
+ * ── 【code 1025 / 设计审查 P0-②】从「固定宽单行」改成「弹性换行网格」────────
+ *
+ * 【为什么必须改】旧实现给每枚色点钉死 {@code 34dp × 34dp}、单行排过去：
+ *   9 枚预设 + 1 枚自定义环 = **10 × 34 = 340dp**，而 360dp 屏的卡片内可用宽只有
+ *   ≈296dp（360 − 左右外边距 32 − 卡片内边距 32）⇒ **溢出 44dp，最后两枚被裁掉**。
+ *   本机是 428dp 宽，可用 ≈364dp > 340dp ⇒ 一直没复现，这是一个只在窄屏出现的缺陷。
+ *   同时 34dp 也低于 M3 的 48dp 最小触摸目标（审查稿 P0-① 的另一半）。
+ *
+ * 【改法】本类不再继承 {@link android.widget.LinearLayout}，改成**自己量、自己摆**的
+ *   {@link ViewGroup}：每枚色点占一个正方形格子，格子边长取
+ *     {@code clamp(可用宽 / 数量, 48dp, 56dp)}
+ *   —— 塞得下就一行（宽屏上格子最多 56dp，不会把色点摊得满屏都是），
+ *   塞不下就**自动换行**（360dp 屏：6 + 4 两行；428dp 屏：7 + 3 两行），
+ *   每行水平居中。永远不会溢出，触摸热区恒 ≥ 48dp。
+ *
+ * ⚠️ 两条不能碰的既有观感：
+ *   ① 色点圆的直径仍是 {@link #SWATCH_DOT_DP} = 22dp（**格子变大、圆不变**）——
+ *      审查稿要的是热区，不是把色点吹大；视觉重量与「恢复默认」胶囊仍是同一档。
+ *   ② 自定义色环与预设色点**同格同径**（用例 4.1.1 点名过「大一圈」是缺陷）。
  */
-public class ColorSwatchRow extends LinearLayout {
+public class ColorSwatchRow extends ViewGroup {
 
-    /** 色块点击热区边长（dp）—— 参考稿紧凑化（原 42dp 六块放不下单行）。 */
-    private static final int SWATCH_TOUCH_DP = 34;
-    /** 色块圆直径（dp）。 */
+    /**
+     * 色点格子的最小边长（dp）= 点击热区下限。
+     *
+     * 【code 1025】34 → **48**：M3 的最小触摸目标。这条同时修掉「点不准」与
+     * 「窄屏溢出」两个问题 —— 见类头。
+     */
+    private static final int SWATCH_TOUCH_DP = 48;
+    /**
+     * 色点格子的最大边长（dp）。
+     *
+     * 宽屏（平板 / 折叠屏展开）上「可用宽 / 数量」可能到 80dp 以上，若直接用理想值，
+     * 色点会被摊成一条稀稀拉拉的线。封顶 56dp 让一行仍是一簇。
+     */
+    private static final int SWATCH_MAX_CELL_DP = 56;
+    /** 色块圆直径（dp）—— 与格子大小**无关**，格子只负责热区。 */
     private static final int SWATCH_DOT_DP = 22;
     /** 半透明预览模式下棋盘格的格子边长（dp）。 */
     private static final int CHECKER_CELL_DP = 4;
@@ -105,8 +136,80 @@ public class ColorSwatchRow extends LinearLayout {
 
     public ColorSwatchRow(Context context) {
         super(context);
-        setOrientation(HORIZONTAL);
-        setGravity(android.view.Gravity.CENTER_VERTICAL);
+        // 【code 1025】不再有 orientation / gravity：本类自己量、自己摆（见 onMeasure/onLayout）。
+    }
+
+    // ==================================================================
+    // 【code 1025】弹性换行网格：自己量、自己摆
+    // ==================================================================
+
+    /**
+     * 当前生效的格子边长（px）—— 由 {@link #onMeasure} 算出、{@link #onLayout} 复用来摆位。
+     *
+     * ⚠️ 必须存成字段：onMeasure 与 onLayout 是两次独立回调，宽高可能在不同批次里被问，
+     *    两边各算一遍会在「测量时的可用宽」与「布局时的实际宽」不一致时错位（例如
+     *    横竖屏切换的那一帧）。这里以测量结果为准，布局只认它。
+     */
+    private int cellPx;
+
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        final int count = getChildCount();
+        final int widthMode = MeasureSpec.getMode(widthMeasureSpec);
+        final int widthSize = MeasureSpec.getSize(widthMeasureSpec);
+        final int padH = getPaddingLeft() + getPaddingRight();
+        final int avail = Math.max(0, widthSize - padH);
+
+        final int minCell = dp(SWATCH_TOUCH_DP);
+        final int maxCell = dp(SWATCH_MAX_CELL_DP);
+
+        if (count == 0) {
+            cellPx = minCell;
+            setMeasuredDimension(resolveSize(minCell + padH, widthMeasureSpec),
+                    resolveSize(getPaddingTop() + getPaddingBottom(), heightMeasureSpec));
+            return;
+        }
+
+        // 格子边长：能一行塞下就放宽（封顶 56dp），塞不下就退回下限并换行。
+        int ideal = widthMode == MeasureSpec.UNSPECIFIED ? minCell : avail / count;
+        cellPx = Math.max(minCell, Math.min(ideal, maxCell));
+
+        int perRow = Math.max(1, avail / cellPx);
+        int rows = (count + perRow - 1) / perRow;
+
+        final int childSpec = MeasureSpec.makeMeasureSpec(cellPx, MeasureSpec.EXACTLY);
+        for (int i = 0; i < count; i++) {
+            getChildAt(i).measure(childSpec, childSpec);
+        }
+
+        int width = widthMode == MeasureSpec.UNSPECIFIED
+                ? cellPx * count + padH
+                : widthSize;
+        int height = rows * cellPx + getPaddingTop() + getPaddingBottom();
+        setMeasuredDimension(width, resolveSize(height, heightMeasureSpec));
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        final int count = getChildCount();
+        if (count == 0) {
+            return;
+        }
+        final int cell = cellPx > 0 ? cellPx : dp(SWATCH_TOUCH_DP);
+        final int avail = Math.max(0, getWidth() - getPaddingLeft() - getPaddingRight());
+        final int perRow = Math.max(1, avail / cell);
+
+        for (int i = 0; i < count; i++) {
+            int row = i / perRow;
+            int col = i % perRow;
+            // 最后一行不满时**居中对齐**：色板是一簇圆点，左对齐会让最后一行看着「塌一边」
+            int inRow = Math.min(perRow, count - row * perRow);
+            int rowWidth = inRow * cell;
+            int startX = getPaddingLeft() + Math.max(0, (avail - rowWidth) / 2);
+            int left = startX + col * cell;
+            int top = getPaddingTop() + row * cell;
+            getChildAt(i).layout(left, top, left + cell, top + cell);
+        }
     }
 
     /**
@@ -399,7 +502,7 @@ public class ColorSwatchRow extends LinearLayout {
         }
 
         private int resolveAccent() {
-            return resolveAttrColor(com.google.android.material.R.attr.colorPrimary, Color.WHITE);
+            return resolveAttrColor(androidx.appcompat.R.attr.colorPrimary, Color.WHITE);
         }
     }
 
@@ -480,7 +583,7 @@ public class ColorSwatchRow extends LinearLayout {
             canvas.drawOval(oval, hub);
             canvas.drawOval(oval, border);
             if (isSelected()) {
-                ring.setColor(resolveAttrColor(com.google.android.material.R.attr.colorPrimary,
+                ring.setColor(resolveAttrColor(androidx.appcompat.R.attr.colorPrimary,
                         Color.WHITE));
                 float rr = r + ringWidth;
                 oval.set(cx - rr, cy - rr, cx + rr, cy + rr);

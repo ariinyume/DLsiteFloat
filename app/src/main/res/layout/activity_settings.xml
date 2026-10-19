@@ -245,18 +245,58 @@
           = 「状态卡与预览窗标题之间」的间距，也就是 §3 说的「状态卡下方」那一段。
           ⚠️ 这个 marginTop 同时承担两个角色：① 状态卡下方的留白（§3 的「下距」）；
              ② 预览卡与页头区的呼吸位。改这里不影响 AppBarLayout 的吸顶分界线（noScroll 不变）。
+
+          ── 【code 1025 / 设计审查 P0-③】标题行改成**可点开的折叠条** ────────────
+          Ari 的审查稿 §06 第三条：预览窗常驻吃掉 ≈375dp 视口，700dp 屏下滚动时
+          真正能看见的设置区只剩 ≈255dp（2.6 行）。这里让它**可收起**。
+
+          实现口径（三条，改之前必读）：
+          ① 标题与箭头**包在同一个 LinearLayout 里**，由它承载
+             `layout_scrollFlags="noScroll"`、外边距与 48dp 点击热区 ——
+             AppBarLayout 只认**直接子 View** 的 scrollFlags，所以 flags 必须挂在外层，
+             挂回里面的 TextView 会被当成「没有 flags 的普通子 View」。
+          ② 上距由 21.6dp 收到 **8dp**：外层高 48dp、文字在其中垂直居中，
+             折算「文字中心」= 8 + 24 = 32dp，与改动前的 21.6 + 半行高(≈10) ≈ 31.6dp
+             基本重合 ⇒ 状态卡到标题的**视觉间距不变**，多出来的只是点击热区。
+          ③ 折叠动作 = 预览卡的 `visibility` 切换 + 高度动画，**不动** AppBarLayout 的任何
+             scrollFlags：收起后 AppBarLayout 自然变矮，NestedScrollView 的可用高度由
+             CoordinatorLayout 重新分配，不依赖任何手工测量（与 2.1.4「底栏真实占位」
+             同一套规避时序的思路）。
         -->
-        <TextView
-            android:id="@+id/title_preview"
+        <LinearLayout
+            android:id="@+id/preview_bar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="20dp"
-            android:layout_marginTop="21.6dp"
-            android:layout_marginEnd="20dp"
-            android:textAppearance="?attr/textAppearanceTitleSmall"
-            android:textColor="?attr/colorPrimary"
-            android:textStyle="bold"
-            app:layout_scrollFlags="noScroll" />
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="16dp"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:minHeight="48dp"
+            android:orientation="horizontal"
+            app:layout_scrollFlags="noScroll">
+
+            <TextView
+                android:id="@+id/title_preview"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textAppearance="?attr/textAppearanceTitleSmall"
+                android:textColor="?attr/colorPrimary"
+                android:textStyle="bold" />
+
+            <!-- 展开/收起指示箭头：收起时旋转 180°（由 SettingsActivity#applyPreviewCollapsed 驱动） -->
+            <ImageView
+                android:id="@+id/preview_chevron"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_chevron_down"
+                app:tint="?attr/colorPrimary" />
+        </LinearLayout>
 
         <!--
           ③ 预览卡（v1.6 ③）：**三层叠加**，与真悬浮窗同构 ——
@@ -345,74 +385,60 @@
                 android:textColor="?attr/colorPrimary"
                 android:textStyle="bold" />
 
-            <!-- ④ 主字幕 / 活动行调整（PRD §FR-04） -->
+            <!-- ④ 字幕外观（【code 1025 / P1-1】三卡合一：颜色 / 行态 / 排版）
+                 原来这里是三张独立卡（主字幕 / 非活动行 / 排版）各自带一条「恢复默认」，
+                 同一件事被拆成三处、纵向多占约 560dp。现在收成一张卡 + 卡内 connected
+                 button group：三个维度同时可见、切换零成本、上下文不丢。
+                 ⚠️ 按钮由 buildAppearanceTabs() 动态生成，本容器只提供高度与横向排布。 -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/card_main"
                 style="@style/Widget.DLsiteFloat.SettingsCard">
 
                 <LinearLayout
-                    android:id="@+id/group_main"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:paddingStart="16dp"
-                    android:paddingTop="6dp"
+                    android:paddingTop="10dp"
                     android:paddingEnd="16dp"
-                    android:paddingBottom="6dp" />
-            </com.google.android.material.card.MaterialCardView>
+                    android:paddingBottom="6dp">
 
-            <!-- 「非活动行字幕调整」节标题（在卡片外） -->
-            <TextView
-                android:id="@+id/title_inactive"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="30dp"
-                android:layout_marginStart="4dp"
-                android:textAppearance="?attr/textAppearanceTitleSmall"
-                android:textColor="?attr/colorPrimary"
-                android:textStyle="bold" />
+                    <!-- 组高 40dp、段间距 2dp、圆角 full（M3E Button Group 规格） -->
+                    <LinearLayout
+                        android:id="@+id/appearance_tabs"
+                        android:layout_width="match_parent"
+                        android:layout_height="40dp"
+                        android:layout_marginBottom="6dp"
+                        android:orientation="horizontal" />
 
-            <!-- ⑤ 非活动行字幕调整（PRD §FR-05） -->
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/card_inactive"
-                style="@style/Widget.DLsiteFloat.SettingsCard">
+                    <LinearLayout
+                        android:id="@+id/group_main"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
 
-                <LinearLayout
-                    android:id="@+id/group_inactive"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:paddingStart="16dp"
-                    android:paddingTop="6dp"
-                    android:paddingEnd="16dp"
-                    android:paddingBottom="6dp" />
-            </com.google.android.material.card.MaterialCardView>
+                    <LinearLayout
+                        android:id="@+id/group_inactive"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone" />
 
-            <!-- 「字幕排版」节标题（在卡片外） -->
-            <TextView
-                android:id="@+id/title_typo"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="30dp"
-                android:layout_marginStart="4dp"
-                android:textAppearance="?attr/textAppearanceTitleSmall"
-                android:textColor="?attr/colorPrimary"
-                android:textStyle="bold" />
+                    <LinearLayout
+                        android:id="@+id/group_typo"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone" />
 
-            <!-- ⑥ 字幕排版（PRD §FR-06） -->
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/card_typo"
-                style="@style/Widget.DLsiteFloat.SettingsCard">
-
-                <LinearLayout
-                    android:id="@+id/group_typo"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:paddingStart="16dp"
-                    android:paddingTop="6dp"
-                    android:paddingEnd="16dp"
-                    android:paddingBottom="6dp" />
+                    <!-- 【code 1025 / P2-2】本卡的唯一一条「恢复默认」：
+                         只重置本卡内的设置项（颜色 / 行态 / 排版），不做全局重置。 -->
+                    <LinearLayout
+                        android:id="@+id/group_appearance_reset"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+                </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
             <!-- 【code 1003】「液态玻璃效果调整」节标题（在卡片外；独立成卡，摆在「其他」之前） -->

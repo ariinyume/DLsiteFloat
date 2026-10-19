@@ -281,8 +281,13 @@ def main():
     sync_code = strip_comments(sync)
     check('只观测不接管：类里没有 setText / addView / submit 一类写操作',
           not any(k in sync_code for k in ('setText(', 'addView(', 'invalidate()')))
+    # ⚠️ 1024 当时写的是 `repo.getCurrentSubtitles()` —— 那是**循环判据**
+    #    （它正是本模块上一帧写进去的镜像），code 1025 已改成纯自算 `repo.selfComputedLines()`。
+    #    本条只守「scan 收尾把两路数据接进观测」这条**接线**，不钉具体取值方法
+    #    （取值来源会随判据改进而变，钉死它等于每改一次判据就得回来改历史脚本）。
     check('SubtitleViewHook 的 scan 收尾接上观测',
-          'HostLineSync.observe(r.liveLines, repo.getCurrentSubtitles());' in viewhook)
+          re.search(r'HostLineSync\.observe\(r\.liveLines,\s*repo\.\w+\(\)\);',
+                    viewhook) is not None)
 
     print('E2 P1-7 样式跟随宿主')
     check('HostStyleProbe 采样入口接在拿到宿主字幕控件的同一处',

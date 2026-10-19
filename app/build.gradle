@@ -323,30 +323,106 @@ def appVersionTag = '2.3.5'
 //      P1-8 缓存命中率与整作品预取读数（复用既有跨进程统计广播）。
 //   ⚠️ 本轮 Ari 指令：版本号保持 2.3.5 不变，只升 code ⇒ versionCode 推到 1024、
 //      label 推到 1018.3。
-def appVersionCode = 1024
-def appVersionCodeLabel = '1018.3'
+// 【code 1025】平台与设置页现代化（Ari 2026-10-18 指令，四项一起做）
+//   ① **Material 1.9.0 → 1.14.0**：M3E 官方组件自 1.13 起才进 material（Expressive
+//      滑块/分段/按钮组那一族）。补齐传递依赖：appcompat 1.6.1 → 1.7.0、core 1.9.0 → 1.16.0
+//      （material 1.14.0 的 POM 要求，不显式钉会被升上去且不可复现）。
+//   ② **compileSdk / targetSdk 34 → 36**：targetSdk 35+ 起系统强制 edge-to-edge，
+//      而本页此前**一处 WindowInsets 都没有** ⇒ 升级后页头会被状态栏压住、底栏会钻进
+//      导航栏。故本轮同时给根布局接上 systemBars + displayCutout 的内边距，
+//      并把系统栏图标明暗改为按「页面大底亮度」在代码里设定（`windowLightStatusBar`
+//      在 edge-to-edge 下不再由主题可靠驱动）。
+//   ③ **签名 V1+V2+V3**：此前交付包实测只有 v2（apksigner：v1 false / v3 false）。
+//      在 `signingConfigs.debug` 上显式打开三档 —— v1 在 minSdk ≥ 24 时**默认就是关的**，
+//      必须显式写出来，光升级构建链不会自己变三档。
+//   ④ **设计审查 P0 三项**（`DLsiteFloat_设置页_M3E设计审查.html` §06）：
+//      行高 40 → 48dp、色点热区 34 → 48dp、色板改**弹性换行**（9 枚预设就已超 10dp，
+//      加上自定义环共 340dp / 可用 ≈296dp ⇒ 溢出 44dp、末两枚被裁）、
+//      预览窗可收起（一次拿回 ≈320dp 视口）。
+//   ⑤ **构建链被迫一起升**（不是可选项，是硬失败）：material 1.14.0 → androidx.core 1.16.0
+//      → AAR metadata 要求 `minAgpVersion = 8.6.0` ⇒ AGP 8.1.0 直接
+//      `checkDebugAarMetadata` 失败；AGP 8.6+ 又要求 Gradle ≥ 8.7。
+//      故 AGP 8.1.0 → **8.13.2**、Gradle 8.4 → **8.13**（本机 wrapper 缓存已有该发行包）。
+//      ⇒ 这一项**没有"只升库不升链"的走法**，是取证结论而非顺手升级。
+//   ⑥ **设置页 P1 三项**（依据 `DLsiteFloat_设置页_M3E设计审查.html`）：
+//      ①三卡合一 —— 外观 / 未激活 / 字体 收成一张卡 + 卡顶三枚分段按钮，
+//        切换只改可见性、零重建（`mAppearancePage` 跨 rebuild 保持）；
+//      ②行头图标 + 副标题 —— 14 枚 24dp 矢量图 + 查表原语 `makeRowHead`，
+//        5 个行原语调用点零改动；副标题只给 5 条容易混淆的行；
+//      ③状态卡降噪 —— 四色整卡着色 → 单色底 + 有色状态点，仅错误态保留整卡着色。
+//   ⑦ **设置页 P2 三项**（口径按 Ari 指令收窄）：
+//      ①提示统一走底部 Snackbar（含导航栏 inset 补丁 + Toast 兜底），保存可撤销；
+//      ②**三组恢复默认合并成一条**（液态玻璃卡保留自己那条）；**不做预设 chips**；
+//      ③联动显隐改 AutoTransition 180ms（口径仍是 GONE 而非置灰，回灌值仍直设）。
+//   ⑧ **P1-5 观测判据修正**：原 `HostLineSync.observe(r.liveLines, getCurrentSubtitles())`
+//      是**循环判据** —— 后者正是 `ActivityButtonHook` 上一帧写入的 liveLines 镜像，
+//      真机读数实际测的是「宿主连续两帧上屏相同率」而非「我们自算得对不对」。
+//      新增 `SubtitleRepository.selfComputedLines()`（纯自算、只读 currentCueIndex、
+//      绝不回退镜像）替换之；两侧来源的固有限制写进 HostLineSync 类头。
+//   ⚠️ versionName 保持 2.3.5（未发版就不动语义版本号），只升 code ⇒ versionCode 推到
+//      1025、label 推到 1019.1。
+def appVersionCode = 1025
+def appVersionCodeLabel = '1019.1'
 def appVersionName = '2.3.5'
 
 android {
     namespace 'io.github.ariinyume.dlsitesoundfloat'
-    compileSdk 34
-    // ⚠️ 必须显式钉 34.0.0：AGP 8.1.0 的默认 build-tools 是 **33.0.1**，而本机 toolchain
+    // ⚠️ 【code 1025】compileSdk 34 → 36。
+    //    · AGP 8.1.0 的「已测试上限」是 34，越界只会**告警**不会失败，但必须在
+    //      gradle.properties 里写 android.suppressUnsupportedCompileSdk=36，否则
+    //      AGP 会直接报错（见该文件注释）。
+    //    · androidx.core 1.16.0 的 AAR metadata 要求 compileSdk ≥ 35，material 1.14.0
+    //      又把 core 拉到 1.16.0 ⇒ compileSdk 36 是升库的硬前提，不是顺手改的。
+    compileSdk 36
+    // ⚠️ 必须显式钉版本：AGP 8.1.0 的默认 build-tools 是 **33.0.1**，而本机 toolchain
     //    里的 33.0.1 缺 `core-lambda-stubs.jar` 等文件（工作区精简时被删）→ AGP 直接报
-    //    「Installed Build Tools revision 33.0.1 is corrupted」。34.0.0 是完整的一套，
-    //    也正是 docs/build.md 里写明的构建要求。
-    buildToolsVersion '34.0.0'
+    //    「Installed Build Tools revision 33.0.1 is corrupted」。
+    //    【code 1025】34.0.0 → **36.0.0**：compileSdk 36 的 resources.arsc 要用同代 aapt2
+    //    解析，跨代（34 的 aapt2 链 android-36）在 link 阶段会报资源表版本不认识。
+    buildToolsVersion '36.0.0'
 
     defaultConfig {
         applicationId "io.github.ariinyume.dlsitesoundfloat"
         minSdk 24
-        targetSdk 34
+        // 【code 1025】targetSdk 34 → 36（Android 16）。⚠️ 35+ 起系统**强制** edge-to-edge，
+        //    本轮已同步给 SettingsActivity 接上 WindowInsets（见 setContentView 之后那段），
+        //    两者必须同批上线：只升 targetSdk 而不接 insets，页头会被状态栏压住。
+        targetSdk 36
         versionCode appVersionCode
         versionName appVersionName
     }
 
+    // ── 签名方案（【code 1025】Ari 指令：V1 + V2 + V3 全开）──────────────────
+    // 现状取证（对 code 1024 交付包跑 apksigner verify -v）：
+    //   Verified using v1 scheme (JAR signing): false
+    //   Verified using v2 scheme (APK Signature Scheme v2): true
+    //   Verified using v3 scheme (APK Signature Scheme v3): false
+    // 即「只有 v2」。
+    //
+    // ⚠️ 为什么必须显式写 v1：AGP 在 minSdk ≥ 24 时**默认关闭 v1**
+    //    （那本是「只有 API < 24 才需要」的优化），所以光升级 AGP 不会自己变三档。
+    // ⚠️ 属性名是**混合**的（AGP 8.13 实测，写错会在配置阶段直接报
+    //    "Could not find method v3SigningEnabled()"）：
+    //      v1 / v2 → 老名字 `vXSigningEnabled`
+    //      v3      → 新名字 `enableV3Signing`
+    //    只写新名字那套时，本机实测产出的包**仍然没有 JAR 签名**：
+    //    `signing-config-versions.json` 里 enableV1Signing=true，但 APK 内无
+    //    META-INF/*.SF，apksigner 报 `v1: false` ⇒ 打包链路读的是老字段。
+    // ⚠️ 只改 `debug` 这一个 signingConfig：本模块的交付包一直是 debug 签名
+    //    （无 release keystore，见 docs/build.md），不引入新密钥 = 不影响覆盖安装。
+    signingConfigs {
+        debug {
+            v1SigningEnabled true
+            v2SigningEnabled true
+            enableV3Signing true
+        }
+    }
+
     buildTypes {
         debug {
-            // 沿用默认 debug 签名
+            // 沿用 debug 签名（storeFile / 口令由 AGP 指向 ~/.android/debug.keystore）；
+            // 【code 1025】显式绑定，避免「signingConfigs.debug 改了、buildType 用的却是另一份」。
+            signingConfig signingConfigs.debug
         }
     }
 
@@ -392,9 +468,17 @@ dependencies {
     //    且不引用本模块资源 / 不依赖 Material（见 FloatingSubtitleView 类头），
     //    所以下游进程不会因为缺这些类而崩。
     // ⚠️ 首次构建需联网拉取（本机 toolchain/maven-local 里没有 androidx 制品）。
-    implementation 'com.google.android.material:material:1.9.0'
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'androidx.core:core:1.9.0'
+    // ── 【code 1025】1.9.0 → 1.14.0 ────────────────────────────────────────
+    // 升它的**唯一动机**：M3 Expressive 的官方组件自 1.13 才进 material
+    // （Expressive 滑块 / 按钮组 / 分段按钮那一族）。本页此前的 M3E 观感全是手搓的
+    // （见 SettingsActivity#applyExpressiveSlider），升库后才有「官方形态」可选。
+    // ⚠️ material 1.14.0 的 POM 要求 appcompat 1.7.0 / core 1.16.0 / activity 1.8.0，
+    //    这里**显式钉死**前两个：不钉的话由传递依赖决定版本，构建不可复现
+    //    （下次谁改了传递链，包就悄悄变了，双闭环对照会假 FAIL）。
+    // ⚠️ core 1.16.0 的 AAR metadata 要求 compileSdk ≥ 35 ⇒ 见上方的 compileSdk 36。
+    implementation 'com.google.android.material:material:1.14.0'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.core:core:1.16.0'
 
     // ── 【code 995】纯函数内核的黄金向量回归测试 ───────────────────────────────
     // CapsuleGeometry / PageFollowPolicy / AnchorDeadPolicy 是从 ActivityButtonHook

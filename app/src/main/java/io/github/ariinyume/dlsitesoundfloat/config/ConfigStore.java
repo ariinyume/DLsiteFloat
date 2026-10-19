@@ -70,6 +70,15 @@ public final class ConfigStore {
      */
     public static final String UI_PREFS_NAME = "dlsitefloat_ui";
 
+    /**
+     * 【code 1025 / 设计审查 P0-③】预览条的开合状态。
+     *
+     * ⚠️ 与 UI 语言放在同一份 prefs、但**不是** {@code SubtitleConfig} 的键：
+     *    它是纯界面偏好（既不参与渲染、也不该被 hook 侧读到），所以不进 JSON、
+     *    不发广播、不参与「恢复默认」（用户点「保存设置」不该把折叠状态重置掉）。
+     */
+    private static final String K_PREVIEW_COLLAPSED = "settings_preview_collapsed";
+
     private static volatile ConfigStore sInstance;
 
     private final Context appCtx;
@@ -186,6 +195,31 @@ public final class ConfigStore {
         } catch (Throwable t) {
             Log.w(TAG, "readUiLanguageOnly failed: " + t);
             return null;
+        }
+    }
+
+    /**
+     * 【code 1025】读预览窗是否处于折叠态（默认 false = 展开，与本次改造前一致）。
+     *
+     * 读失败/从未写过一律按「展开」—— 折叠是用户主动做的动作，缺证据时不该替他收起。
+     */
+    public boolean readPreviewCollapsed() {
+        try {
+            SharedPreferences ui = appCtx.getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE);
+            return ui.getBoolean(K_PREVIEW_COLLAPSED, false);
+        } catch (Throwable t) {
+            Log.w(TAG, "readPreviewCollapsed failed: " + t);
+            return false;
+        }
+    }
+
+    /** 【code 1025】记住预览窗开合状态（点一下即写，不等「保存设置」）。 */
+    public void savePreviewCollapsed(boolean collapsed) {
+        try {
+            appCtx.getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putBoolean(K_PREVIEW_COLLAPSED, collapsed).apply();
+        } catch (Throwable t) {
+            Log.w(TAG, "savePreviewCollapsed failed: " + t);
         }
     }
 

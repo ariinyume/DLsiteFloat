@@ -41,6 +41,26 @@ import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
  * 「比例明显偏高」时各落一行常开日志（带内容片段，能直接看出差在哪一句）；
  * ③ 把累计计数暴露出去，设置页那行缓存读数里顺带显示（见 {@code ConfigBus} 的统计广播）。
  *
+ * <h3>── 两侧的来源（【code 1025】修正过一次，务必看完） ──</h3>
+ *
+ * <ul>
+ *   <li><b>hostLines</b> = {@code ScanResult#liveLines}：扫屏得到的宿主上屏行。
+ *       它的判据是「文本 ∈ 我们已加载的 cue 表」——**已经过我们自己的表过滤**；</li>
+ *   <li><b>selfLines</b> = {@code SubtitleRepository#selfComputedLines()}：只读
+ *       {@code currentCueIndex}（纯本地「位置÷1000 → cue 区间」推算），不走镜像回退。</li>
+ * </ul>
+ *
+ * <p>🔴 **code 1024 这里传的是 {@code repo.getCurrentSubtitles()} —— 那是错的。**
+ * 该值由 {@code ActivityButtonHook} 用 {@code setCurrentSubtitles(scan.liveLines)} 写入，
+ * 即**上一帧的 hostLines** ⇒ 两边同源，测出来的是「连续两帧上屏内容相同率」。
+ * 真机读数 {@code 408/416}（mismatch 1.92%）看似卡在 P1-5 验收线（&lt;1%）附近，
+ * 实际**没有判别力**，不能用来决定「要不要切镜像优先」。
+ *
+ * <p>⚠️ <b>本指标仍有固有限制（不是 bug，是判据形状决定的）</b>：
+ * {@code liveLines} 只收「∈ 我们 cue 表」的行，所以「宿主显示了、而我们表里根本没有」
+ * 这类差异**永远不会进样本**。因此它衡量的是「双方都承认为本轨的行里，我们算得对不对」，
+ * 不是「宿主上屏内容的覆盖率」。要测后者得另开一路：不过滤地抓候选文本再比对。
+ *
  * <h3>── 判据 ──</h3>
  * 两侧都用「去首尾空白 + 折叠连续空白」归一化后比对，<b>交集非空即算一致</b> ——
  * 字幕常常是多行（日文一行、译文一行），宿主与我们的行序可能不同，逐行对齐会造出假不一致。
@@ -72,7 +92,9 @@ public final class HostLineSync {
      * 比对一次。
      *
      * @param hostLines 宿主**当前上屏**的字幕行（{@code ScanResult#liveLines}）
-     * @param selfLines 我们**自算出来该显示**的行（{@code SubtitleRepository#getCurrentSubtitles()}）
+     * @param selfLines 我们**纯自算**出来该显示的行
+     *                  （{@code SubtitleRepository#selfComputedLines()} ——
+     *                  只读 currentCueIndex，**不是**屏上镜像；见类头）
      */
     public static void observe(List<String> hostLines, List<String> selfLines) {
         try {

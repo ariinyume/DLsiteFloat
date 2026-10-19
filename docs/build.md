@@ -17,17 +17,23 @@
 ## 构建环境（开发端）
 
 - **JDK 17**
-- **Android SDK**：`platform-34` + `build-tools 34.0.0`（`compileSdk 34` / `minSdk 24` / `targetSdk 34`）
-- **Gradle 8.4** —— 仓库已内置 Gradle Wrapper（`gradlew`），无需手动安装；首次执行会自动下载 8.4 发行包（本机已有 toolchain 时建议加 `--offline`）
+- **Android SDK**：`platform-36` + `build-tools 36.0.0`（`compileSdk 36` / `minSdk 24` / `targetSdk 36`）
+  > 🔴 **code 1025 起 targetSdk = 36（Android 16）**。35+ 系统**强制** edge-to-edge，
+  > 设置页因此必须自己处理 `WindowInsets`（`SettingsActivity#applyEdgeToEdgeInsets`）——
+  > 只升 targetSdk 而漏掉 insets，症状是页头被状态栏压住、底栏钻进导航栏。
+- **Gradle 8.13** + **AGP 8.13.2** —— 仓库已内置 Gradle Wrapper（`gradlew`），首次执行会自动下载发行包
+  > 🔴 **code 1025 起必须 ≥ Gradle 8.13 / AGP 8.6**：`material 1.14.0` 把 `androidx.core` 拉到 1.16.0，
+  > 后者的 AAR metadata 写着 `minAgpVersion = 8.6.0`；而 AGP 8.6 又要求 Gradle ≥ 8.7。
+  > 旧组合（Gradle 8.4 + AGP 8.1.0）会在 `:app:checkDebugAarMetadata` 阶段**直接失败**。
 
 ### 依赖
 
 | 坐标 | 方式 | 说明 |
 | --- | --- | --- |
 | `io.github.libxposed:api:102.0.0` | `compileOnly` | **libxposed 现代 API（API 102）**。2.0.0 起取代 `de.robv.android.xposed:api:82`，两者**不可混用**。只能 `compileOnly`（打进包会与框架的 `XposedInterface` 类冲突）。发布在 **Maven Central**，首次构建需联网拉取 |
-| `com.google.android.material:material:1.9.0` | `implementation` | 设置页（`SettingsActivity`）用 MD3 组件。**必须打进包**；注入到宿主 / SystemUI 的视图一律用代码构建、不引用 Material |
-| `androidx.appcompat:appcompat:1.6.1` | `implementation` | 同上 |
-| `androidx.core:core:1.9.0` | `implementation` | 同上 |
+| `com.google.android.material:material:1.14.0` | `implementation` | 设置页（`SettingsActivity`）用 MD3 组件。**必须打进包**；注入到宿主 / SystemUI 的视图一律用代码构建、不引用 Material。⚠️ 1.13+ 才有 M3 Expressive 官方组件；⚠️ 1.14.0 的 `R.attr` **不再**声明 `colorPrimary`（那是 appcompat 的属性）⇒ 代码里取主色要用 `androidx.appcompat.R.attr.colorPrimary` |
+| `androidx.appcompat:appcompat:1.7.0` | `implementation` | 同上。⚠️ 显式钉死：不钉就由 material 的传递依赖决定，构建不可复现 |
+| `androidx.core:core:1.16.0` | `implementation` | 同上。⚠️ 它的 AAR metadata 要求 **AGP ≥ 8.6 / compileSdk ≥ 35** |
 
 > ⚠️ **`de.robv.android.xposed:api:82` 已完全移除**，连同四个 `xposed*` meta-data 一起
 > （现代 API 读 `META-INF/xposed/` 下的 `java_init.list` / `scope.list` / `module.prop`，
@@ -54,9 +60,49 @@ gradlew.bat assembleDebug --offline --no-daemon      # Windows
 gradlew.bat compileDebugJavaWithJavac --offline      # Windows
 ```
 
-> 仓库已内置 **Gradle Wrapper 8.4**（`gradlew` / `gradlew.bat` / `gradle/wrapper/`）。
-> ⚠️ 本机 Gradle 真路径是 `toolchain/gradle-8.4/gradle-8.4/bin/gradle.bat`（**嵌套一层**）；
+> 仓库已内置 **Gradle Wrapper 8.13**（`gradlew` / `gradlew.bat` / `gradle/wrapper/`）。
+> ⚠️ 本机实际使用的发行包是 wrapper 缓存里的
+> `~/.gradle/wrapper/dists/gradle-8.13-bin/<hash>/gradle-8.13/bin/gradle.bat`
+> （`toolchain/gradle-8.4/` 是**上一代**留下的，code 1025 起不再使用；
+>  `toolchain` 目录的旧路径 `gradle-8.4/gradle-8.4/bin/gradle.bat` 是**嵌套一层**的那个坑）；
 > `JAVA_HOME` / `ANDROID_HOME` 用**反斜杠**，另需 `ANDROID_SDK_ROOT`。
+
+## 签名方案（code 1025 起：V1 + V2 + V3）
+
+交付包一直是 **debug 签名**（`~/.android/debug.keystore`，无 release keystore），
+从 code 1025 起**三档签名全部打开**，配置在 `app/build.gradle` 的 `signingConfigs.debug`：
+
+```groovy
+signingConfigs {
+    debug {
+        v1SigningEnabled true      // ⚠️ 老属性名
+        v2SigningEnabled true      // ⚠️ 老属性名
+        enableV3Signing true       // ⚠️ 新属性名（没有 v3SigningEnabled 这个方法）
+    }
+}
+```
+
+🔴 **两条实测坑（都踩过）**
+
+1. **只写新名字 `enableV1Signing true` 不生效**：`signing-config-versions.json` 里写着
+   `enableV1Signing:true`，但打出来的 APK 里根本没有 `META-INF/*.SF`、apksigner 报
+   `v1: false`。打包链路读的是老字段 `v1SigningEnabled`。
+2. **`v3SigningEnabled` 不存在**：写了会在配置阶段报
+   `Could not find method v3SigningEnabled()`。v3 只有 `enableV3Signing`。
+
+⚠️ **校验时必须给 `--min-sdk-version 23`**：
+
+```bash
+apksigner verify -v --min-sdk-version 23 app/build/outputs/apk/debug/DLsiteFloat-2.3.5-code1025-debug.apk
+# Verified using v1 scheme (JAR signing): true
+# Verified using v2 scheme (APK Signature Scheme v2): true
+# Verified using v3 scheme (APK Signature Scheme v3): true
+```
+
+不加这个参数时 apksigner 按清单里的 `minSdkVersion=24` 判断「v1 用不上」，
+于是**跳过 JAR 签名校验并打印 `v1: false`** —— 这是假阴性，code 1024 的包实测就是
+「默认参数 v1:false / 强制 23 时直接报 `Missing META-INF/MANIFEST.MF`」，
+两者结合才能证明「旧包确实没有 v1」。
 
 ## 版本规则（2.0.0 起）
 

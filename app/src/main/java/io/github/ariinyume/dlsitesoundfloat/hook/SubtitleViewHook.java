@@ -566,11 +566,14 @@ public class SubtitleViewHook {
             } catch (Throwable ignored) {
             }
         }
-        // 【code 1024 / P1-5】宿主上屏行 vs 自算行的一致性观测（**只统计、不改渲染**）。
-        //   权威行本来就在手上（{@code r.liveLines} 的判据就是「文本 ∈ cue 列表」），
-        //   本轮开始把它与「我们自算该显示的行」比对，为「宿主行优先」那一版攒数据。
-        //   口径与「为什么先只观测」见 {@link HostLineSync} 类头。
-        HostLineSync.observe(r.liveLines, repo.getCurrentSubtitles());
+        // 【code 1025 / P1-5 判据修正】宿主上屏行 vs **纯自算**行（只统计、不改渲染）。
+        //   ⚠️ code 1024 这里传的是 {@code repo.getCurrentSubtitles()} —— 而那个值
+        //   正是**上一次扫描**的 {@code scan.liveLines}（ActivityButtonHook 里
+        //   setCurrentSubtitles 写进去的）⇒ 两边同源，测出来的只是「连续两帧上屏内容
+        //   相同率」，不是「我们算得对不对」。真机 408/416 那个数就是这么来的。
+        //   现在改用 {@link SubtitleRepository#selfComputedLines()}：只读
+        //   currentCueIndex（纯本地按秒区间推算，不走镜像回退），与宿主证据彻底分开。
+        HostLineSync.observe(r.liveLines, repo.selfComputedLines());
         return r;
     }
 

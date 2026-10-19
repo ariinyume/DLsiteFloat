@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 【code 1025 / P1-2】活动行不透明度 / 面板亮度：外框 + 中心提亮块
+     规格：24x24 视口、实心 path、颜色交给 ImageView.setColorFilter（onSurfaceVariant）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path android:fillColor="#FF000000" android:fillType="evenOdd"
+        android:pathData="M3,3H21V21H3Z M5,5H19V19H5Z" />
+    <path android:fillColor="#FF000000"
+        android:pathData="M8,8H16V16H8Z" />
+</vector>

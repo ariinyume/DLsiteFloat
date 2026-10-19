@@ -1,4 +1,13 @@
 // DLsiteSound Floating Subtitle Plugin - root build script
 plugins {
-    id 'com.android.application' version '8.1.0' apply false
+    // ── 【code 1025】AGP 8.1.0 → 8.13.2 ────────────────────────────────────
+    // 这次升级**不是**为了用新功能，是被依赖链逼的（取证来自
+    // `:app:checkDebugAarMetadata` 的原始报错）：
+    //   · material 1.14.0 的 POM 要求 androidx.core 1.16.0；
+    //   · core 1.16.0 的 AAR metadata 写着 `minAgpVersion = 8.6.0`；
+    //   · 而 AGP 8.6 要求 Gradle ≥ 8.7，本机 toolchain 当时钉的是 8.4 ⇒ 连带升 Gradle。
+    // 选 8.13.2 而不是 8.6：Gradle 8.13 的发行包**本机已有缓存**
+    // （~/.gradle/wrapper/dists/gradle-8.13-bin），且 8.13.2 是当前 8.x 末班车，
+    // 对 compileSdk 36 是原生支持（不再需要 suppressUnsupportedCompileSdk 兜着）。
+    id 'com.android.application' version '8.13.2' apply false
 }

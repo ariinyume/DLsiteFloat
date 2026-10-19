@@ -2286,6 +2286,41 @@ public class SubtitleRepository implements LineSource {
     }
 
     /**
+     * 【code 1025 / P1-5 判据修正】**纯自算**的当前行 —— 只读，绝不参与渲染。
+     *
+     * <h3>── 为什么不能直接用 {@link #getCurrentSubtitles()} ──</h3>
+     * 那个方法是**屏上镜像**（{@code ActivityButtonHook} 每次扫描后
+     * {@code setCurrentSubtitles(scan.liveLines)} 写进去的宿主上屏行）。
+     * 拿它当「自算行」去和「宿主行」比对 ⇒ **两边同源**，得到的永远是
+     * 「连续两帧上屏内容相同率」，而不是「我们算得对不对」。
+     * 真机 code 1024 读数 {@code 408/416} 就是这么来的（判据循环）。
+     *
+     * <h3>── 为什么不用 {@link #findCurrentCueIndex()} ──</h3>
+     * 它含一条**镜像回退**（按文本反查 cue）。那同样是宿主证据，
+     * 一旦回退就污染了「自算」这一侧。此处只认 {@link #currentCueIndex} ——
+     * 它**只由 {@code computeIndexAtSecondLocked()} 写入**（位置 + cue 区间，纯本地推算）。
+     *
+     * <p>索引为 -1（本秒落在 cue 空隙 / 尚未定位到）时返回空：宁可「自算拿不出行」，
+     * 也不拿别的来源凑数 —— 观测值失真比没有观测值更糟。
+     */
+    public List<String> selfComputedLines() {
+        synchronized (lock) {
+            if (pendingTrackDecision || previousTrackCuesHidden || cues.isEmpty()) {
+                return new ArrayList<>();
+            }
+            int idx = currentCueIndex;
+            if (idx < 0 || idx >= cues.size()) {
+                return new ArrayList<>();
+            }
+            SubtitleCue c = cues.get(idx);
+            if (c == null || c.subtitles == null || c.subtitles.isEmpty()) {
+                return new ArrayList<>();
+            }
+            return new ArrayList<>(c.subtitles);
+        }
+    }
+
+    /**
      * 当前 cue 索引。
      * 优先用播放进度算出的索引；没有进度信息时回退到「屏上文本精确匹配」。
      */

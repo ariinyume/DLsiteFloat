@@ -122,6 +122,25 @@ public enum Strings {
             "DLsiteSound floating window · status bar subtitle appearance"),
     /** 参考稿的「调整预览窗」节标题（预览卡：示例字幕随草稿参数实时变化）。 */
     PREVIEW_TITLE("调整预览窗", "調整預覽窗", "Preview"),
+    /**
+     * 【code 1025 / 设计审查 P0-③】预览条的无障碍动作名（按当前开合状态朗读）。
+     *
+     * ⚠️ 只做 {@code contentDescription}，不上屏 —— 可见文案仍然只有「调整预览窗」四个字，
+     *    箭头方向负责表达开合状态（视觉用户看箭头、读屏用户听这两个词）。
+     */
+    PREVIEW_COLLAPSE("收起预览窗", "收合預覽窗", "Collapse preview"),
+    PREVIEW_EXPAND("展开预览窗", "展開預覽窗", "Expand preview"),
+    /**
+     * 【code 1025 / P1-1】三卡合一后的卡片标题。
+     *
+     * <p>原来这里有三个节标题（主字幕 / 非活动行 / 排版）＋ 三张卡，同一件事被拆在三处。
+     * 现在只有一个标题、一张卡，卡内用 connected button group 切三个维度。
+     */
+    GROUP_APPEARANCE("字幕外观", "字幕外觀", "Subtitle appearance"),
+    /** 卡内 button group 的三段（顺序即视觉顺序，见 {@code buildAppearanceTabs}）。 */
+    TAB_COLOR("颜色", "顏色", "Color"),
+    TAB_LINE_STATE("行态", "行態", "Lines"),
+    TAB_TYPE("排版", "排版", "Layout"),
     GROUP_MAIN("主字幕 / 活动行调整", "主字幕 / 活動行調整", "Main subtitle / active line"),
     GROUP_INACTIVE("非活动行字幕调整", "非活動行字幕調整", "Inactive lines"),
     GROUP_TYPO("字幕排版", "字幕排版", "Typography"),
@@ -229,6 +248,17 @@ public enum Strings {
     /** 【code 1003】液态玻璃卡「恢复默认」行下方的小字（三语）。 */
     HINT_LIQUID_GLASS("全部设置为 50%", "全部設定為 50%", "All set to 50%"),
     /** 【code 1003】液态玻璃卡「恢复默认」按钮标签（三语）。 */
+    /**
+     * 【code 1025 / P1-1 + P2-2】字幕外观卡的**唯一**一条重置。
+     *
+     * <p>P2-2 的口径：重置只作用于**所在卡片内的设置项**（不做全局重置）。
+     * 三卡合一后，颜色 / 行态 / 排版同属一张卡 ⇒ 它们共用这一条，
+     * 原来那三条（RESET_MAIN / RESET_INACTIVE / RESET_TYPO）不再上屏。
+     */
+    RESET_APPEARANCE("恢复字幕外观默认设置", "恢復字幕外觀預設設定", "Reset appearance defaults"),
+    HINT_APPEARANCE("颜色 · 行态 · 排版一并回到默认，不影响预览窗与面板",
+            "顏色 · 行態 · 排版一併回到預設，不影響預覽窗與面板",
+            "Color, lines and layout all back to defaults — preview and panel untouched"),
     RESET_LIQUID_GLASS("恢复液态玻璃默认设置", "恢復液態玻璃預設設定", "Reset liquid glass defaults"),
     /** 「液态玻璃」开关下方的常驻说明小字（三语）：同时说明「面板颜色会被锁定」。 */
     LIQUID_GLASS_HINT("悬浮窗面板与播放页字幕按钮改为玻璃质感；开启后「悬浮窗颜色」不可调整",
@@ -404,7 +434,19 @@ public enum Strings {
     SAVE_OK("已保存", "已儲存", "Saved"),
     SAVE_NO_CHANGE("配置无变化", "設定無變更", "No changes"),
     SAVE_FAILED("保存失败：%1$s", "儲存失敗：%1$s", "Save failed: %1$s"),
+    // ── 【code 1025 / P1-2】行副标题（supporting text）────────────────────
+    //    只给「不解释就分不清」的几行。口径见 SettingsActivity.supportingForRow。
+    SUP_SHADOW_STRENGTH("数值越大，字越浮在面板上", "數值越大，字越浮在面板上",
+            "Higher = text floats further off the panel"),
+    SUP_SHADOW_RADIUS("阴影的扩散范围", "陰影的擴散範圍", "How far the shadow spreads"),
+    SUP_LINE_SPACING("多行字幕之间的空白", "多行字幕之間的空白", "Gap between subtitle lines"),
+    SUP_WRAP_SPACING("一句话折行时额外的空隙", "一句話折行時額外的空隙",
+            "Extra gap when one sentence wraps"),
+    SUP_BLUR_RADIUS("化开的范围，越大越糊", "化開的範圍，越大越糊", "Blur spread — higher is softer"),
     RESET_DONE("已恢复默认，记得保存", "已恢復預設，記得儲存", "Defaults restored — remember to save"),
+    /** 【code 1025 / P2-1】保存回执上的「撤销」动作与撤销结果。 */
+    UNDO("撤销", "復原", "Undo"),
+    UNDO_DONE("已撤销上一次保存", "已復原上一次儲存", "Last save undone"),
     LOAD_RESET("原配置文件已损坏，已重置为默认值", "原設定檔已損毀，已重設為預設值",
             "The config file was corrupted and has been reset to defaults"),
     /** PRD §12 E-05：未保存退出的二次确认（三选：保存 / 不保存 / 取消）。 */

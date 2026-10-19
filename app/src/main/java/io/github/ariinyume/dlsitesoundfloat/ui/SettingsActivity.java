@@ -18,6 +18,9 @@
  */
 package io.github.ariinyume.dlsitesoundfloat.ui;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -44,17 +47,29 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.android.material.snackbar.Snackbar;
+
+import androidx.transition.AutoTransition;
+import androidx.transition.TransitionManager;
+import androidx.transition.TransitionSet;
+
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
@@ -214,10 +229,18 @@ public class SettingsActivity extends AppCompatActivity {
      * v1.5 的行高是「被内容撑开」的：开关行被 32dp 的 MaterialSwitch 撑高、文字在
      * 垂直居中 ⇒ 文字顶边比「纯文字行」低 6dp；分段行只有文字 ⇒ 顶边就是行顶边。
      * 于是四张卡片首行的文字起始位置各不相同 —— 这正是 §2.6 报的观感。
-     * 现在**所有行**都钉一个 40dp 的最小高度并垂直居中 ⇒ 「首行文字顶边」
-     * 在任何卡片里都等于 {@code CARD_PAD_TOP_DP + (40 - 文字高)/2}，逐卡一致。
+     * 现在**所有行**都钉同一个最小高度并垂直居中 ⇒ 「首行文字顶边」
+     * 在任何卡片里都等于 {@code CARD_PAD_TOP_DP + (行高 - 文字高)/2}，逐卡一致。
+     *
+     * ── 【code 1025 / 设计审查 P0-①】40 → **48** ──────────────────────────
+     * 审查稿实测：40dp 的行高低于 M3 的 48dp 最小触摸目标，Ari 的反馈是「点不准」。
+     * 48 同时是 MD3 无障碍下限，视觉上只是行距变松（更像 M3E），不改任何交互模型。
+     * ⚠️ 只改这一个常量就能让**所有**行一起变：标签、开关行容器、滑块行表头、
+     *    恢复默认行都以它为最小高度（{@link #makeRowLabel} 是唯一来源）。
+     * ⚠️ 不跟着改 {@link #CONTROL_H_DP}(40dp)：那是**控件自身**的高度（分段按钮 /
+     *    恢复默认胶囊），M3E 的按钮组就是 40dp 高；48dp 由「行」来保证点击热区。
      */
-    private static final int ROW_MIN_H_DP = 40;
+    private static final int ROW_MIN_H_DP = 48;
     /**
      * 【2.3.2 §2.4 / §2.5】行末端小字自己的底部留白（dp）。
      *
@@ -334,10 +357,33 @@ public class SettingsActivity extends AppCompatActivity {
     private View mPreviewPanel;
     /** 预览卡容器 —— v1.6 起是普通 FrameLayout（MaterialCardView 会顶掉 setBackground）。 */
     private View mPreviewCard;
+    /**
+     * 【code 1025 / P0-③】预览条的点击容器（标题 + 箭头）与箭头本身。
+     *
+     * ⚠️ 点击热区挂在**这个容器**上，不是标题 TextView：标题只有一行字高（≈19dp），
+     *    直接给它挂点击等于把热区缩到 M3 下限的 40%。容器 minHeight 48dp。
+     */
+    private View mPreviewBar;
+    private ImageView mPreviewChevron;
+    /** 预览窗当前是否折叠（初值由 prefs 恢复；点条即翻转并落盘）。 */
+    private boolean mPreviewCollapsed;
     private TextView mHeaderSubtitle;
     private LinearLayout mGroupMain;
     private LinearLayout mGroupInactive;
     private LinearLayout mGroupTypo;
+    /**
+     * 【code 1025 / P1-1】三卡合一后的卡内 tab 条（组高 40dp）与三段按钮。
+     *
+     * <p>原来是三张独立卡 + 三个独立「恢复默认」，同一件事散在三处、纵向多占约 560dp。
+     * 现在颜色 / 行态 / 排版同处一张卡，卡内用 connected button group（三个全圆角胶囊、
+     * 段间距 2dp）切换 —— 三个维度同时可见、切换零成本、上下文不丢。
+     */
+    private LinearLayout mAppearanceTabs;
+    private final MaterialButton[] mAppearanceTabButtons = new MaterialButton[3];
+    /** 当前选中的维度（0 颜色 / 1 行态 / 2 排版）。语言切换会 rebuild，靠它恢复选中态。 */
+    private int mAppearancePage = 0;
+    /** 【code 1025 / P2-2】本卡唯一一条「恢复默认」的宿主（只重置本卡设置项）。 */
+    private LinearLayout mGroupAppearanceReset;
     /** 【code 1003】「液态玻璃效果调整」卡片（独立成卡，摆在「其他」之前）。 */
     private LinearLayout mGroupLiquidGlass;
     /** 【code 1015 / 2.3.2】「实验性功能」组（独立成卡，摆在液态玻璃与「其他」之间）。 */
@@ -356,8 +402,6 @@ public class SettingsActivity extends AppCompatActivity {
     /** 节标题（在卡片外，参考稿口径）—— 语言切换时随文案重刷。 */
     private TextView mTitlePreview;
     private TextView mTitleMain;
-    private TextView mTitleInactive;
-    private TextView mTitleTypo;
     private TextView mTitleLiquidGlass;
     /** 【code 1015 / 2.3.2】「实验性功能」卡片标题（与其余节标题同源）。 */
     private TextView mTitleExperimental;
@@ -452,7 +496,8 @@ public class SettingsActivity extends AppCompatActivity {
     private ColorSwatchRow mSwatchShadow;
     private ColorSwatchRow mSwatchPanelColor;
     /** 【2.2.9】「悬浮窗颜色」行的标签与容器：液态玻璃开启时整行置灰用。 */
-    private TextView mPanelColorLabel;
+    /** 【code 1025 / P1-2】现在是行头容器（icon + label + 副标题）；整行置灰只需 setAlpha，故收成 View。 */
+    private View mPanelColorLabel;
     private LinearLayout mPanelColorBody;
 
     // ── 【2.2.11】预览用"背景小位图"（见 applyPreviewPanel 的液态玻璃分支）──
@@ -476,6 +521,8 @@ public class SettingsActivity extends AppCompatActivity {
     private TextView mHintMain;
     private TextView mHintInactive;
     private TextView mHintTypo;
+    /** 【code 1025 / P2-2】字幕外观卡唯一重置行的小字（三组一并回默认的说明）。 */
+    private TextView mHintAppearance;
 
     /** 配置导出 / 导入（SAF；PRD §FR-09 的备份口径）。 */
     private final ActivityResultLauncher<String> mExportLauncher =
@@ -638,6 +685,10 @@ public class SettingsActivity extends AppCompatActivity {
         } catch (Throwable ignored) {
         }
         setContentView(R.layout.activity_settings);
+        // 【code 1025】targetSdk 36 ⇒ 系统**强制** edge-to-edge（Android 15 起 35 也强制）。
+        // 必须在 setContentView 之后、且在任何手工测量之前把 insets 接上，
+        // 否则这一页会「页头被状态栏压住、底栏钻进导航栏」。
+        applyEdgeToEdgeInsets();
 
         mStore = ConfigStore.get(this);
         mSaved = mStore.load();
@@ -723,12 +774,16 @@ public class SettingsActivity extends AppCompatActivity {
 
         // 节标题在**卡片外**（〈页面布局参考〉口径），由这里统一刷文案
         setTitleSafe(mTitlePreview, Strings.PREVIEW_TITLE.get(mLang));
-        setTitleSafe(mTitleMain, Strings.GROUP_MAIN.get(mLang));
-        setTitleSafe(mTitleInactive, Strings.GROUP_INACTIVE.get(mLang));
-        setTitleSafe(mTitleTypo, Strings.GROUP_TYPO.get(mLang));
+        // 【code 1025 / P1-1】三卡合一 ⇒ 只有一个节标题；卡内三段文案由
+        //   buildAppearanceTabs() 随语言重刷（rebuild 时统一重建）。
+        setTitleSafe(mTitleMain, Strings.GROUP_APPEARANCE.get(mLang));
         setTitleSafe(mTitleLiquidGlass, Strings.GROUP_LIQUID_GLASS.get(mLang));
         setTitleSafe(mTitleExperimental, Strings.GROUP_EXPERIMENTAL.get(mLang));
         setTitleSafe(mTitleMisc, Strings.GROUP_MISC.get(mLang));
+
+        // 【code 1025 / P0-③】预览条的读屏动作名也随语言重刷（否则切到英文后
+        //   它仍用旧语言的「收起预览窗」朗读，页内即时切语言这条要求就漏了一处）。
+        updatePreviewBarDescription();
 
         renderStatusCard();
     }
@@ -758,9 +813,9 @@ public class SettingsActivity extends AppCompatActivity {
     private void refreshCardTints() {
         applyPageBackground();
         int cardBg = cardBgColor();
+        // 【code 1025 / P1-1】三卡合一：card_main 现在是「字幕外观」唯一的那张卡，
+        //   card_inactive / card_typo 两个 id 已随合并消失（仍引用会编译失败）。
         tintCard(findViewById(R.id.card_main), cardBg);
-        tintCard(findViewById(R.id.card_inactive), cardBg);
-        tintCard(findViewById(R.id.card_typo), cardBg);
         tintCard(findViewById(R.id.card_liquidglass), cardBg);
         // 【code 1016】实验性卡片同样要染色 —— 原先是逐个白名单 tint，
         //   新建的卡片漏在名单外，于是它顶着 style 的默认底色、跟其余卡片对不上。
@@ -832,6 +887,9 @@ public class SettingsActivity extends AppCompatActivity {
             }
         } catch (Throwable ignored) {
         }
+        // 【code 1025】edge-to-edge 之后「系统栏区域内是哪块底色」由根布局决定，
+        // 图标明暗必须按同一个底色算 —— 见 applySystemBarAppearance 的说明。
+        applySystemBarAppearance();
     }
 
     private static void setBg(@Nullable View v, int color) {
@@ -852,7 +910,7 @@ public class SettingsActivity extends AppCompatActivity {
         styleTonalButton(mRestartButton, null);
         if (mSaveButton != null) {
             mSaveButton.setBackgroundTintList(colorStateList(
-                    attr(com.google.android.material.R.attr.colorPrimary, 0xFF6750A4)));
+                    attr(androidx.appcompat.R.attr.colorPrimary, 0xFF6750A4)));
             mSaveButton.setTextColor(colorStateList(
                     attr(com.google.android.material.R.attr.colorOnPrimary, Color.WHITE)));
         }
@@ -1037,10 +1095,14 @@ public class SettingsActivity extends AppCompatActivity {
         mPreviewBackdrop = findViewById(R.id.preview_backdrop);
         mPreviewPanel = findViewById(R.id.preview_panel);
         mPreviewCard = findViewById(R.id.preview_card);
+        mPreviewBar = findViewById(R.id.preview_bar);
+        mPreviewChevron = findViewById(R.id.preview_chevron);
         mHeaderSubtitle = findViewById(R.id.header_subtitle);
         mGroupMain = findViewById(R.id.group_main);
         mGroupInactive = findViewById(R.id.group_inactive);
         mGroupTypo = findViewById(R.id.group_typo);
+        mAppearanceTabs = findViewById(R.id.appearance_tabs);
+        mGroupAppearanceReset = findViewById(R.id.group_appearance_reset);
         mGroupLiquidGlass = findViewById(R.id.group_liquidglass);
         mGroupExperimental = findViewById(R.id.group_experimental);
         mGroupMisc = findViewById(R.id.group_misc);
@@ -1048,8 +1110,6 @@ public class SettingsActivity extends AppCompatActivity {
         // 节标题在**卡片外**（参考稿口径），由 applyStaticTexts 刷文案
         mTitlePreview = findViewById(R.id.title_preview);
         mTitleMain = findViewById(R.id.title_main);
-        mTitleInactive = findViewById(R.id.title_inactive);
-        mTitleTypo = findViewById(R.id.title_typo);
         mTitleLiquidGlass = findViewById(R.id.title_liquidglass);
         mTitleExperimental = findViewById(R.id.title_experimental);
         mTitleMisc = findViewById(R.id.title_misc);
@@ -1068,6 +1128,17 @@ public class SettingsActivity extends AppCompatActivity {
         mSaveButton.setOnClickListener(v -> doSave());
         mRestartButton.setOnClickListener(v -> confirmRestartSystemUi());
 
+        // 【code 1025 / P0-③】预览条：点一下收起 / 展开。
+        // 初值从 prefs 恢复 ⇒ 上次收起过的用户下次进来仍是收起的（这是「视口偏好」，不是临时状态）。
+        mPreviewCollapsed = mStore.readPreviewCollapsed();
+        if (mPreviewBar != null) {
+            mPreviewBar.setOnClickListener(v -> {
+                applyPreviewCollapsed(!mPreviewCollapsed, true);
+                mStore.savePreviewCollapsed(mPreviewCollapsed);
+            });
+        }
+        applyPreviewCollapsed(mPreviewCollapsed, false);
+
         // 【2.3.2】吸底栏按钮也要「夜间自动换深浅」：重启按钮走 tonal、保存按钮走 primary，
         // 两枚的 tint 都显式写死（不依赖样式继承），见 styleBottomBar()。
         styleBottomBar();
@@ -1081,6 +1152,181 @@ public class SettingsActivity extends AppCompatActivity {
         //    它依赖「底栏先量到最终高度」+「滚动区可滚动高度与预期一致」两个前提，
         //    任一不成立最后一行就会被压在栏下且滚不出来（Ari 2026-10-06 截图实证「拉不到底」）。
         //    改成真实占位后这两个前提都不再需要。
+    }
+
+    // ==================================================================
+    // 【code 1025】edge-to-edge（targetSdk 36 的强制项）与预览窗折叠
+    // ==================================================================
+
+    /**
+     * 【code 1025】把系统栏 / 刘海占用的区域让出来（targetSdk 35+ 的**强制**要求）。
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * 为什么这一轮才需要它
+     *   Android 15（API 35）起，只要 targetSdk ≥ 35，系统就**无视**
+     *   {@code windowOptOutEdgeToEdgeEnforcement}，把窗口强制铺到状态栏 / 导航栏底下；
+     *   Android 16（API 36）连这个开关都不再存在。本页此前 targetSdk 34，靠系统
+     *   「把窗口塞在系统栏之间」的旧行为活着 —— 于是布局里**一处 insets 都没有**
+     *   （全仓 grep 得到 0 处）。升 36 后如果不同步补上，症状是：
+     *   · 页头大标题被状态栏压掉半行；
+     *   · 吸底双按钮钻进导航栏 / 手势条（点不到）；
+     *   · 滚动内容在刘海机上被挖孔吃掉。
+     *
+     * 做法：只给**根布局**加内边距
+     *   根是 {@code settings_root}（垂直 LinearLayout：CoordinatorLayout + 底栏）。
+     *   给它加四边内边距后：页头上边界 = 状态栏下沿、底栏下边界 = 导航栏上沿，
+     *   而根布局的背景色会照旧铺满**整块**窗口（内边距区露的就是背景） ⇒
+     *   §3.1.3「状态栏区域与页面同色」这条老要求不受影响。
+     *
+     * ⚠️ 三条边界（别顺手改坏）：
+     *   ① **不消费** insets（返回原对象，不调 {@code consumeSystemWindowInsets()}）——
+     *      AppBarLayout / NestedScrollView 还要各自的 fitting 行为，吞掉会让吸顶与
+     *      滚动条的计算少一段。
+     *   ② 覆盖 {@code systemBars() | displayCutout()} 两组：只取 systemBars 在横屏
+     *      刘海机上左侧会被切掉。
+     *   ③ 写的是**根布局**的 padding，不碰任何子 View —— 底栏「真实占位」的既有结构
+     *      （2.1.4 那次返工的成果）完全不变。
+     */
+    private void applyEdgeToEdgeInsets() {
+        View root = findViewById(R.id.settings_root);
+        try {
+            WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        } catch (Throwable t) {
+            Log.w(TAG, "setDecorFitsSystemWindows failed: " + t);
+        }
+        if (root == null) {
+            return;
+        }
+        final int padLeft = root.getPaddingLeft();
+        final int padTop = root.getPaddingTop();
+        final int padRight = root.getPaddingRight();
+        final int padBottom = root.getPaddingBottom();
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, windowInsets) -> {
+            Insets bars;
+            try {
+                bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars()
+                        | WindowInsetsCompat.Type.displayCutout());
+            } catch (Throwable t) {
+                // 极端老系统（minSdk 24）理论上不会走到这里；兜底成「不加任何内边距」，
+                // 宁可少让一点，也不要因为一次取不到就让页面整体跳动。
+                return windowInsets;
+            }
+            v.setPadding(padLeft + bars.left, padTop + bars.top,
+                    padRight + bars.right, padBottom + bars.bottom);
+            return windowInsets;
+        });
+        ViewCompat.requestApplyInsets(root);
+    }
+
+    /**
+     * 【code 1025 / P0-③】系统栏图标的明暗 —— 与「页面大底色」同源。
+     *
+     * ⚠️ 为什么不能只靠主题里的 {@code android:windowLightStatusBar}：
+     *   edge-to-edge 之后状态栏变成透明，图标明暗虽然仍受该属性影响，但本页的
+     *   「页面大底」是**运行时**按夜间模式取色槽算出来的（{@link #pageBgColor()}），
+     *   主题里那两个布尔只跟 DayNight 走，二者在动态取色下可能不一致。
+     *   这里按同一个 {@link #isNightMode()} 显式设一遍，保证「深底配浅图标」永远成立。
+     */
+    private void applySystemBarAppearance() {
+        try {
+            View root = findViewById(R.id.settings_root);
+            WindowInsetsControllerCompat c = WindowCompat.getInsetsController(getWindow(), root);
+            if (c == null) {
+                return;
+            }
+            boolean light = !isNightMode();      // light = 深色图标（浅色底）
+            c.setAppearanceLightStatusBars(light);
+            c.setAppearanceLightNavigationBars(light);
+        } catch (Throwable t) {
+            Log.w(TAG, "applySystemBarAppearance failed: " + t);
+        }
+    }
+
+    /**
+     * 【code 1025 / P0-③】收起 / 展开预览窗。
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * 为什么值得做：审查稿实测（按源码常量累加，非截图测量）预览区 ≈375dp 常驻，
+     * 加上吸底双按钮 70dp，700dp 屏高下滚动时**真正能看见的设置区只剩 ≈255dp（2.6 行）**。
+     * 收起后 AppBarLayout 随之变矮，CoordinatorLayout 把省下的高度全部分给
+     * NestedScrollView ⇒ 一次拿回 ≈320dp 视口。
+     *
+     * @param collapsed 目标状态
+     * @param animate   false = 首帧恢复（不做动画，避免进页面时看到一次折叠动效）
+     *
+     * ⚠️ 动画只做「收起」这一个方向：
+     *   收起要把高度从实测值收到 0（否则下面内容会在动画结束的瞬间**跳**上去）；
+     *   展开时目标高度是 wrap_content，只能先量后动，而 AppBarLayout 里额外量一次
+     *   容易量出「少一段内边距」的假高度 ⇒ 改成「立刻显示 + 淡入 160ms」，
+     *   展开方向本来就是「内容往下长」，观感自然。
+     */
+    private void applyPreviewCollapsed(boolean collapsed, boolean animate) {
+        if (mPreviewCard == null) {
+            return;
+        }
+        mPreviewCollapsed = collapsed;
+        if (mPreviewChevron != null) {
+            mPreviewChevron.animate().cancel();
+            mPreviewChevron.animate()
+                    .rotation(collapsed ? 180f : 0f)
+                    .setDuration(animate ? 180L : 0L)
+                    .start();
+        }
+        updatePreviewBarDescription();
+
+        ViewGroup.LayoutParams lp = mPreviewCard.getLayoutParams();
+        if (lp == null) {
+            return;
+        }
+        if (!animate) {
+            lp.height = collapsed ? 0 : ViewGroup.LayoutParams.WRAP_CONTENT;
+            mPreviewCard.setLayoutParams(lp);
+            mPreviewCard.setAlpha(collapsed ? 0f : 1f);
+            mPreviewCard.setVisibility(collapsed ? View.GONE : View.VISIBLE);
+            return;
+        }
+
+        if (collapsed) {
+            final int from = mPreviewCard.getHeight();
+            if (mPreviewCard.getVisibility() != View.VISIBLE || from <= 0) {
+                lp.height = 0;
+                mPreviewCard.setLayoutParams(lp);
+                mPreviewCard.setVisibility(View.GONE);
+                return;
+            }
+            final ValueAnimator anim = ValueAnimator.ofInt(from, 0);
+            anim.setDuration(200L);
+            anim.setInterpolator(new DecelerateInterpolator());
+            anim.addUpdateListener(a -> {
+                lp.height = (int) a.getAnimatedValue();
+                mPreviewCard.setLayoutParams(lp);
+            });
+            anim.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+                    mPreviewCard.setLayoutParams(lp);
+                    mPreviewCard.setVisibility(View.GONE);
+                }
+            });
+            anim.start();
+        } else {
+            lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+            mPreviewCard.setLayoutParams(lp);
+            mPreviewCard.setVisibility(View.VISIBLE);
+            mPreviewCard.setAlpha(0f);
+            mPreviewCard.animate().alpha(1f).setDuration(160L).start();
+        }
+    }
+
+    /** 【code 1025】预览条的无障碍动作名（含当前开合状态，读屏用户靠它知道点下去会发生什么）。 */
+    private void updatePreviewBarDescription() {
+        if (mPreviewBar == null) {
+            return;
+        }
+        String action = (mPreviewCollapsed ? Strings.PREVIEW_EXPAND : Strings.PREVIEW_COLLAPSE)
+                .get(mLang);
+        mPreviewBar.setContentDescription(Strings.PREVIEW_TITLE.get(mLang) + " · " + action);
     }
 
     // ==================================================================
@@ -1219,28 +1465,47 @@ public class SettingsActivity extends AppCompatActivity {
         //  · 分支二（else）        = !hostAuthorized ⇒ 未激活 / 未授权引导
         boolean active = hostAuthorized;
 
+        // 【code 1025 / P1-3】状态卡降噪：**不再四色整卡**。
+        //
+        //   原来四种状态各给一块高饱和底色（primary / tertiary / error / surfaceVariant），
+        //   四块整卡色压在页顶，把下面所有白卡的层级压平了 —— 而状态本来只需要
+        //   「一个点 + 一行字」。现在的口径：
+        //     · 底色：探测中 / 已激活都走**与其它卡一致的中性底**（cardBgColor），
+        //       状态由「图标色 + 标题色」表达；
+        //     · **唯一保留整卡着色的是「未激活 / 未授权」** —— 那是需要用户动手的错误态，
+        //       值得占一块颜色（这也是设计审查里「把错误态之外的颜色收掉」的原意）。
+        //
+        //   ⚠️ 副标题**仍是两行**（模块版本+SystemUI / 宿主版本）：那是 code 1023 / P0-1
+        //   的明确需求（Ari 要求把宿主版本并入状态卡），本轮不动它的行数。
+        int neutralBg = cardBgColor();
+        int neutralOn = attr(com.google.android.material.R.attr.colorOnSurface, 0xFF1C1B1F);
         int bg;
         int on;
+        int accent;
         if (probing) {
-            bg = attr(com.google.android.material.R.attr.colorSurfaceVariant, 0xFFE7E0EC);
-            on = attr(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF49454F);
+            bg = neutralBg;
+            on = neutralOn;
+            accent = attr(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF49454F);
             mStatusTitle.setText(Strings.MODULE_UNKNOWN.get(mLang));
             mStatusIcon.setImageResource(R.drawable.ic_settings_status_unknown);
         } else if (active) {
-            bg = attr(com.google.android.material.R.attr.colorPrimaryContainer, 0xFFEADDFF);
-            on = attr(com.google.android.material.R.attr.colorOnPrimaryContainer, 0xFF21005D);
+            bg = neutralBg;
+            on = neutralOn;
+            // 「点」用主色：一眼能看出「是好的」，又不把整张卡染成紫色。
+            accent = attr(androidx.appcompat.R.attr.colorPrimary, 0xFF6750A4);
             mStatusTitle.setText(Strings.MODULE_ON.get(mLang));
             mStatusIcon.setImageResource(R.drawable.ic_settings_status_on);
         } else {
             bg = attr(com.google.android.material.R.attr.colorErrorContainer, 0xFFF9DEDC);
             on = attr(com.google.android.material.R.attr.colorOnErrorContainer, 0xFF410E0B);
+            accent = on;
             mStatusTitle.setText(Strings.MODULE_OFF.get(mLang));
             mStatusIcon.setImageResource(R.drawable.ic_settings_status_off);
         }
         mStatusCard.setCardBackgroundColor(bg);
         mStatusTitle.setTextColor(on);
         mStatusSubtitle.setTextColor(withAlpha(on, 0.8f));
-        mStatusIcon.setColorFilter(on);
+        mStatusIcon.setColorFilter(accent);
 
         String sysUiText = probing
                 ? Strings.PROBING.get(mLang)
@@ -1322,6 +1587,8 @@ public class SettingsActivity extends AppCompatActivity {
         setGroupEnabled(mGroupMain, enabled);
         setGroupEnabled(mGroupInactive, enabled);
         setGroupEnabled(mGroupTypo, enabled);
+        setGroupEnabled(mAppearanceTabs, enabled);
+        setGroupEnabled(mGroupAppearanceReset, enabled);
         setGroupEnabled(mGroupLiquidGlass, enabled);
         setGroupEnabled(mGroupMisc, enabled);
         if (mSaveButton != null) {
@@ -1437,6 +1704,17 @@ public class SettingsActivity extends AppCompatActivity {
         mGroupTypo.removeAllViews();
         buildTypoGroup(mGroupTypo);
 
+        // 【code 1025 / P1-1 + P2-2】三卡合一：卡内 tab 条、本卡唯一的一条重置，
+        //   然后把选中页恢复回去（语言切换会整页 rebuild，用户停在哪一面要留住）。
+        buildAppearanceTabs();
+        if (mGroupAppearanceReset != null) {
+            mGroupAppearanceReset.removeAllViews();
+            mHintAppearance = addResetRow(mGroupAppearanceReset,
+                    Strings.RESET_APPEARANCE, this::resetAppearanceGroup);
+            updateHintAppearance();
+        }
+        selectAppearancePage(mAppearancePage);
+
         // 【code 1003】「液态玻璃效果调整」独立成卡，摆在「其他」之前。
         if (mGroupLiquidGlass != null) {
             mGroupLiquidGlass.removeAllViews();
@@ -1505,6 +1783,91 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /** FR-04 主字幕 / 活动行调整（6 参数 + 恢复默认）。 */
+    /**
+     * 【code 1025 / P1-1】卡内 connected button group（颜色 / 行态 / 排版）。
+     *
+     * <p>规格取自设计审查 §04-01：组高 40dp、段间距 2dp、圆角 full；
+     * 选中 {@code secondaryContainer / onSecondaryContainer}，未选中
+     * {@code surfaceContainer / onSurfaceVariant}（未选中**不描边**）。
+     *
+     * <p>⚠️ 手搓而不是用官方 {@code MaterialButtonGroup}：项目现有的滑块、分段、
+     * 底栏按钮全是手搓（同一套 {@code attr()} + {@code dp()} 取色与度量），
+     * 自绘能精确对齐这套语言，也不受库版本差异影响。
+     */
+    private void buildAppearanceTabs() {
+        if (mAppearanceTabs == null) {
+            return;
+        }
+        mAppearanceTabs.removeAllViews();
+        Strings[] labels = {Strings.TAB_COLOR, Strings.TAB_LINE_STATE, Strings.TAB_TYPE};
+        for (int i = 0; i < labels.length; i++) {
+            final int page = i;
+            MaterialButton b = new MaterialButton(this);
+            b.setText(labels[i].get(mLang));
+            b.setAllCaps(false);
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+            // MaterialButton 默认最小高 48dp 会把 40dp 的组撑高 ⇒ 必须显式清零
+            b.setMinWidth(0);
+            b.setMinimumWidth(0);
+            b.setMinHeight(0);
+            b.setMinimumHeight(0);
+            b.setInsetTop(0);
+            b.setInsetBottom(0);
+            b.setStrokeWidth(0);
+            b.setCornerRadius(dp(20));
+            b.setPadding(dp(4), 0, dp(4), 0);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+            if (i > 0) {
+                lp.setMarginStart(dp(2));
+            }
+            b.setLayoutParams(lp);
+            b.setOnClickListener(v -> selectAppearancePage(page));
+            mAppearanceTabs.addView(b);
+            mAppearanceTabButtons[i] = b;
+        }
+    }
+
+    /**
+     * 【code 1025 / P1-1】切到某一面：只切换三段的可见性，**不重建任何行**。
+     *
+     * <p>零重建是这套交互的全部价值 —— 切面只是换可见性，滑块状态、滚动位置、
+     * 草稿值都不受影响（三组从一开始就已经建好，只是藏着）。
+     */
+    private void selectAppearancePage(int page) {
+        if (page < 0 || page > 2) {
+            page = 0;
+        }
+        mAppearancePage = page;
+        LinearLayout[] pages = {mGroupMain, mGroupInactive, mGroupTypo};
+        for (int i = 0; i < pages.length; i++) {
+            if (pages[i] != null) {
+                pages[i].setVisibility(i == page ? View.VISIBLE : View.GONE);
+            }
+        }
+        int onBg = attr(com.google.android.material.R.attr.colorSecondaryContainer, 0xFFE8DEF8);
+        int onFg = attr(com.google.android.material.R.attr.colorOnSecondaryContainer, 0xFF1D192B);
+        int offBg = attr(com.google.android.material.R.attr.colorSurfaceContainer, 0xFFF3EDF7);
+        int offFg = attr(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF49454F);
+        for (int i = 0; i < mAppearanceTabButtons.length; i++) {
+            MaterialButton b = mAppearanceTabButtons[i];
+            if (b == null) {
+                continue;
+            }
+            boolean on = i == page;
+            b.setBackgroundTintList(colorStateList(on ? onBg : offBg));
+            b.setTextColor(colorStateList(on ? onFg : offFg));
+        }
+    }
+
+    /** 【code 1025 / P2-2】本卡唯一重置行的小字（三组一并回默认的说明）。 */
+    private void updateHintAppearance() {
+        if (mHintAppearance == null) {
+            return;
+        }
+        mHintAppearance.setText(Strings.HINT_APPEARANCE.get(mLang));
+    }
+
     private void buildMainGroup(LinearLayout parent) {
         mSwatchSubtitle = addColorRow(parent, Strings.SUBTITLE_COLOR,
                 commonPalette(), commonPaletteNames(), () -> mDraft.subtitleColor, v -> {
@@ -1554,7 +1917,8 @@ public class SettingsActivity extends AppCompatActivity {
                     markDirty();
                 });
 
-        mHintMain = addResetRow(parent, Strings.RESET_MAIN, this::resetMainGroup);
+        // 【code 1025 / P2-2】本卡不再单独放重置行 —— 见 buildRows 里那条唯一的
+        //   「恢复字幕外观默认设置」（三组一并回默认）。字段 mHintMain 保留但不再赋值。
     }
 
     /** FR-05 非活动行字幕调整（开关联动 + 恢复默认）。 */
@@ -1563,7 +1927,9 @@ public class SettingsActivity extends AppCompatActivity {
             mDraft.inactiveBlurEnabled = v;
             // PRD §FR-05：关闭时滑块**隐藏**（占位收回，不是置灰）
             if (mRowBlurRadius != null) {
-                mRowBlurRadius.root.setVisibility(v ? View.VISIBLE : View.GONE);
+                // 【code 1025 / P2-3】联动关掉时仍然 GONE（不是置灰），但改成
+                //   「淡出 + 收高」的 180ms 动效 —— 原来直接消失，页面会猛跳一下。
+                animateRowVisibility(parent, mRowBlurRadius.root, v);
             }
             markDirty();
         });
@@ -1583,7 +1949,7 @@ public class SettingsActivity extends AppCompatActivity {
         mRowInactiveScaleEnabled = addSwitchRow(parent, Strings.INACTIVE_SCALE_ENABLED, v -> {
             mDraft.inactiveScaleEnabled = v;
             if (mRowInactiveScalePct != null) {
-                mRowInactiveScalePct.root.setVisibility(v ? View.VISIBLE : View.GONE);
+                animateRowVisibility(parent, mRowInactiveScalePct.root, v);
             }
             markDirty();
         });
@@ -1597,7 +1963,7 @@ public class SettingsActivity extends AppCompatActivity {
                     markDirty();
                 });
 
-        mHintInactive = addResetRow(parent, Strings.RESET_INACTIVE, this::resetInactiveGroup);
+        // 【code 1025 / P2-2】同上：非活动行不再有自己的重置行。
     }
 
     /**
@@ -1668,7 +2034,7 @@ public class SettingsActivity extends AppCompatActivity {
         mPanelColorLabel = panelRow.label;
         mPanelColorBody = panelRow.body;
 
-        mHintTypo = addResetRow(parent, Strings.RESET_TYPO, this::resetTypoGroup);
+        // 【code 1025 / P2-2】同上：排版不再有自己的重置行。
     }
 
     /**
@@ -2400,12 +2766,58 @@ public class SettingsActivity extends AppCompatActivity {
         if (parent == null) {
             return;
         }
+        // 【code 1025 / P2-3】一次 beginDelayedTransition 覆盖整组：总开关关掉时
+        //   卡内后续各行一起「淡出 + 收高」，而不是咔一下全没。
+        try {
+            View probe = parent.getChildAt(parent.getChildCount() - 1);
+            if (probe != null && probe.getVisibility() != vis) {
+                TransitionManager.beginDelayedTransition(parent, rowTransition());
+            }
+        } catch (Throwable ignored) {
+        }
         for (int i = 1; i < parent.getChildCount(); i++) {
             final View child = parent.getChildAt(i);
             if (child != null) {
                 child.setVisibility(vis);
             }
         }
+    }
+
+    /**
+     * 【code 1025 / P2-3】联动显隐的统一动效入口。
+     *
+     * <p>口径不变：联动关掉时控件**仍然 GONE**（设计审查 §07 明确「不要置灰」——
+     * 置灰会留下一个看得见但动不了的控件）。变的只是**怎么消失**：
+     * 用 {@link AutoTransition} 把「高度变化 + 淡入淡出」一起做，180ms。
+     *
+     * <p>⚠️ 必须判「目标可见性与当前是否相同」：不判的话每次 rebuild / 同步草稿都会
+     * 触发一次无意义的过渡，滚动时页面会抖。
+     */
+    private void animateRowVisibility(@Nullable ViewGroup sceneRoot, @Nullable View row,
+                                      boolean visible) {
+        if (row == null) {
+            return;
+        }
+        int target = visible ? View.VISIBLE : View.GONE;
+        if (row.getVisibility() == target) {
+            return;
+        }
+        try {
+            if (sceneRoot != null) {
+                TransitionManager.beginDelayedTransition(sceneRoot, rowTransition());
+            }
+        } catch (Throwable ignored) {
+        }
+        row.setVisibility(target);
+    }
+
+    /** 【code 1025 / P2-3】联动显隐共用的过渡：180ms、减速、无延迟。 */
+    private static AutoTransition rowTransition() {
+        AutoTransition tr = new AutoTransition();
+        tr.setDuration(180L);
+        tr.setOrdering(TransitionSet.ORDERING_TOGETHER);
+        tr.setInterpolator(new android.view.animation.DecelerateInterpolator());
+        return tr;
     }
     /**
      * 【2.2.9】把「悬浮窗颜色」整行置灰 / 恢复（液态玻璃开启时必须不可调）。
@@ -3246,27 +3658,41 @@ public class SettingsActivity extends AppCompatActivity {
         toast(Strings.RESET_DONE.get(mLang));
     }
 
-    private void resetMainGroup() {
+    /**
+     * 【code 1025 / P1-1 + P2-2】字幕外观卡**唯一**的重置入口。
+     *
+     * <p>三卡合一之后，颜色 / 行态 / 排版同属一张卡，用户按下的那条「恢复字幕外观默认设置」
+     * 必须一次把它们都拉回默认 —— 但**只提示一次**（原来三张卡各弹一次 toast）。
+     * 因此把三个旧方法拆成「只改值」的 {@code resetXxxValues()}，副作用统一收到这里。
+     */
+    private void resetAppearanceGroup() {
+        resetMainValues();
+        resetInactiveValues();
+        resetTypoValues();
+        syncWidgets();
+        toast(Strings.RESET_DONE.get(mLang));
+    }
+
+    /** 主字幕 / 活动行这一面的默认值（无副作用，由调用方决定何时 sync / 提示）。 */
+    private void resetMainValues() {
         mDraft.subtitleColor = SubtitleConfig.SUBTITLE_COLOR_DEF;
         mDraft.shadowColor = SubtitleConfig.SHADOW_COLOR_DEF;
         mDraft.shadowStrength = SubtitleConfig.SHADOW_STRENGTH_DEF;
         mDraft.shadowRadius = SubtitleConfig.SHADOW_RADIUS_DEF;
         mDraft.activeHighlight = SubtitleConfig.HIGHLIGHT_DEF;
         mDraft.activeScale = SubtitleConfig.ACTIVE_SCALE_DEF;
-        syncWidgets();
-        toast(Strings.RESET_DONE.get(mLang));
     }
 
-    private void resetInactiveGroup() {
+    /** 非活动行这一面的默认值。 */
+    private void resetInactiveValues() {
         mDraft.inactiveBlurEnabled = true;
         mDraft.inactiveBlurSteps = SubtitleConfig.BLUR_STEPS_DEF;
         mDraft.inactiveScaleEnabled = true;
         mDraft.inactiveScalePct = SubtitleConfig.INACTIVE_SCALE_PCT_DEF;
-        syncWidgets();
-        toast(Strings.RESET_DONE.get(mLang));
     }
 
-    private void resetTypoGroup() {
+    /** 排版这一面的默认值。 */
+    private void resetTypoValues() {
         // v1.4 §16.3：「字重」已从界面删除，但配置键保留 —— 恢复默认时**仍然把它拉回默认值**，
         // 这样用户从旧版本（可能存过 regular / bold）升上来，点恢复默认也会把它清干净。
         mDraft.fontWeight = SubtitleConfig.WEIGHT_SYSTEM;
@@ -3279,8 +3705,6 @@ public class SettingsActivity extends AppCompatActivity {
         //   （默认关；不恢复的话「恢复默认设置」之后还会跟着宿主走，与文案对不上）
         mDraft.followHostStyle = false;
         mDraft.floatWindowColor = SubtitleConfig.FLOAT_WINDOW_COLOR_DEF;
-        syncWidgets();
-        toast(Strings.RESET_DONE.get(mLang));
     }
 
     // ==================================================================
@@ -3407,8 +3831,41 @@ public class SettingsActivity extends AppCompatActivity {
             toast(Strings.SAVE_FAILED.format(mLang, err));
             return;
         }
-        mSaved = mDraft.copy();
-        toast((dirty ? Strings.SAVE_OK : Strings.SAVE_NO_CHANGE).get(mLang));
+        // 【code 1025 / P2-1】保存成功给一次「撤销」：把保存**前**的已存配置留一份快照，
+        //   点撤销就原样写回去。这是 Snackbar 换掉 Toast 的直接收益 —— 一个误触的手滑
+        //   （比如把阴影强度拖到 0 又顺手保存）不该只能靠「重新调一遍」来挽回。
+        if (dirty) {
+            final SubtitleConfig before = mSaved.copy();
+            mSaved = mDraft.copy();
+            snack(Strings.SAVE_OK.get(mLang), Strings.UNDO.get(mLang),
+                    () -> undoLastSave(before));
+        } else {
+            mSaved = mDraft.copy();
+            toast(Strings.SAVE_NO_CHANGE.get(mLang));
+        }
+    }
+
+    /**
+     * 【code 1025 / P2-1】撤销上一次保存：把快照写回存储，并把界面拉回那份值。
+     *
+     * <p>只撤销**最近一次**保存（不做多级栈）—— 这一页的保存动作低频，
+     * 多级撤销带来的状态复杂度远超它解决的问题。
+     */
+    private void undoLastSave(SubtitleConfig before) {
+        try {
+            SubtitleConfig restore = before.copy();
+            String err = mStore.save(restore);
+            if (err != null) {
+                toast(Strings.SAVE_FAILED.format(mLang, err));
+                return;
+            }
+            mSaved = restore.copy();
+            mDraft = restore.copy();
+            syncWidgets();
+            toast(Strings.UNDO_DONE.get(mLang));
+        } catch (Throwable t) {
+            Log.w(TAG, "undo failed: " + t);
+        }
     }
 
     private void handleBack() {
@@ -3458,6 +3915,178 @@ public class SettingsActivity extends AppCompatActivity {
     /** 惰性取当前草稿值（避免语言切换重建行时把旧快照传进去）。 */
     private interface IntRef {
         int get();
+    }
+
+    /**
+     * 【code 1025 / P1-2】行头：可选 leading icon + 主文案 + 可选副标题。
+     *
+     * <p>M3 list item 的结构是 leading icon + title + supporting text + trailing control；
+     * 这一页此前 32 个控件**一个图标都没有**、全页只有 4 条参数说明，
+     * 结果「阴影强度」和「阴影半径」这种一眼该分清的参数，必须读完整句才知道差别。
+     */
+    private static final class RowHead {
+        LinearLayout root;
+        TextView label;
+    }
+
+    /**
+     * 【code 1025 / P1-2】造一个行头。
+     *
+     * <p>为什么用「查表」而不是给每个 addXxxRow 加两个参数：20 多行共用这 5 个原语，
+     * 加参数要逐个改调用点（错一个就是编译失败或图标错位）；查表只在这里维护一处，
+     * 调用点一行都不用动，也不会漏。
+     *
+     * <p>尺寸：icon 20dp / {@code onSurfaceVariant}（对齐设计审查 §04-04 规格）；
+     * 副标题 11.5sp；行最小高仍是 {@link #ROW_MIN_H_DP}（带副标题时由容器兜住）。
+     */
+    private RowHead makeRowHead(Strings label) {
+        RowHead h = new RowHead();
+        h.root = new LinearLayout(this);
+        h.root.setOrientation(LinearLayout.HORIZONTAL);
+        h.root.setGravity(Gravity.CENTER_VERTICAL);
+
+        int iconRes = iconForRow(label);
+        if (iconRes != 0) {
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(iconRes);
+            icon.setColorFilter(attr(com.google.android.material.R.attr.colorOnSurfaceVariant,
+                    0xFF49454F));
+            LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(20), dp(20));
+            ilp.setMarginEnd(dp(12));
+            icon.setLayoutParams(ilp);
+            // 图标是纯装饰：读屏只念标题，不要多念一个「图片」
+            icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            h.root.addView(icon);
+        }
+
+        TextView v = new TextView(this);
+        v.setText(label.get(mLang));
+        v.setTextAppearance(R.style.TextAppearance_DLsiteFloat_RowLabel);
+        h.label = v;
+
+        Strings sup = supportingForRow(label);
+        if (sup == null) {
+            v.setMinHeight(dp(ROW_MIN_H_DP));
+            v.setGravity(Gravity.CENTER_VERTICAL);
+            h.root.addView(v, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        } else {
+            // 带副标题：主文 + 小字两行，整体仍守 48dp 触达下限
+            LinearLayout col = new LinearLayout(this);
+            col.setOrientation(LinearLayout.VERTICAL);
+            col.setGravity(Gravity.CENTER_VERTICAL);
+            col.setMinimumHeight(dp(ROW_MIN_H_DP));
+            col.addView(v, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            TextView s = new TextView(this);
+            s.setText(sup.get(mLang));
+            s.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
+            s.setTextColor(attr(com.google.android.material.R.attr.colorOnSurfaceVariant,
+                    0xFF49454F));
+            col.addView(s, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            h.root.addView(col, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        return h;
+    }
+
+    /**
+     * 【code 1025 / P1-2】行 → 图标。同一族参数共用一个图形（颜色行都用调色板、
+     * 半径类都用同心圆），既省资源又让「同类项」在视觉上自成一族。
+     *
+     * <p>返回 0 = 该行不配图标（例如位置特殊的分组容器行）。
+     */
+    private int iconForRow(Strings label) {
+        if (label == null) {
+            return 0;
+        }
+        if (label == Strings.SUBTITLE_COLOR || label == Strings.SHADOW_COLOR) {
+            return R.drawable.ic_palette;
+        }
+        if (label == Strings.SHADOW_STRENGTH) {
+            return R.drawable.ic_ui_opacity;
+        }
+        if (label == Strings.SHADOW_RADIUS) {
+            return R.drawable.ic_ui_radius;
+        }
+        if (label == Strings.ACTIVE_HIGHLIGHT) {
+            return R.drawable.ic_ui_highlight;
+        }
+        if (label == Strings.ACTIVE_SCALE || label == Strings.INACTIVE_SCALE_ENABLED
+                || label == Strings.INACTIVE_SCALE_PCT) {
+            return R.drawable.ic_ui_scale;
+        }
+        if (label == Strings.BLUR_ENABLED) {
+            return R.drawable.ic_ui_blur;
+        }
+        if (label == Strings.BLUR_RADIUS) {
+            return R.drawable.ic_ui_radius;
+        }
+        if (label == Strings.ALIGN) {
+            return R.drawable.ic_ui_align;
+        }
+        if (label == Strings.LINE_SPACING) {
+            return R.drawable.ic_ui_line_spacing;
+        }
+        if (label == Strings.WRAP_SPACING) {
+            return R.drawable.ic_ui_wrap;
+        }
+        if (label == Strings.FOLLOW_HOST_STYLE) {
+            return R.drawable.ic_ui_sync;
+        }
+        if (label == Strings.FLOAT_WINDOW_COLOR || label == Strings.LIQUID_GLASS) {
+            return R.drawable.ic_ui_panel;
+        }
+        if (label == Strings.LIQUID_GLASS_PANEL_LUM
+                || label == Strings.LIQUID_GLASS_BACKDROP_LUM) {
+            return R.drawable.ic_ui_highlight;
+        }
+        if (label == Strings.LIQUID_GLASS_TRANSPARENCY) {
+            return R.drawable.ic_ui_opacity;
+        }
+        if (label == Strings.LIQUID_GLASS_BLUR) {
+            return R.drawable.ic_ui_blur;
+        }
+        if (label == Strings.STATUSBAR_SUBTITLE) {
+            return R.drawable.ic_ui_statusbar;
+        }
+        if (label == Strings.DEBUG_LOG) {
+            return R.drawable.ic_ui_log;
+        }
+        if (label == Strings.SUBTITLE_CACHE) {
+            return R.drawable.ic_ui_cache;
+        }
+        if (label == Strings.EXPERIMENTAL_MASTER) {
+            return R.drawable.ic_ui_flask;
+        }
+        return 0;
+    }
+
+    /**
+     * 【code 1025 / P1-2】行 → 副标题。**只给真正需要区分的行**，不是每行都塞一句。
+     *
+     * <p>设计审查的原话是「副标题顺带把『阴影强度 vs 半径』讲清」—— 全量堆小字会把
+     * 版式重新塞满（这页刚靠三卡合一腾出空间）。液态玻璃那几行本来就有
+     * {@code *_HINT} 小字在行下方，这里不重复。
+     */
+    private Strings supportingForRow(Strings label) {
+        if (label == Strings.SHADOW_STRENGTH) {
+            return Strings.SUP_SHADOW_STRENGTH;
+        }
+        if (label == Strings.SHADOW_RADIUS) {
+            return Strings.SUP_SHADOW_RADIUS;
+        }
+        if (label == Strings.LINE_SPACING) {
+            return Strings.SUP_LINE_SPACING;
+        }
+        if (label == Strings.WRAP_SPACING) {
+            return Strings.SUP_WRAP_SPACING;
+        }
+        if (label == Strings.BLUR_RADIUS) {
+            return Strings.SUP_BLUR_RADIUS;
+        }
+        return null;
     }
 
     /** 滑块行：标签 + 右侧读数 + 滑块。 */
@@ -3520,7 +4149,8 @@ public class SettingsActivity extends AppCompatActivity {
      * 拿不到它上方的标签与外面的容器；而置灰要的是「标签 + 色点一起变淡」。
      */
     private static final class ColorRow {
-        TextView label;
+        /** 【code 1025 / P1-2】现在是行头容器（icon + label + 副标题），不再只是 TextView。 */
+        LinearLayout label;
         LinearLayout body;
         ColorSwatchRow swatch;
     }
@@ -3538,7 +4168,8 @@ public class SettingsActivity extends AppCompatActivity {
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
-        TextView labelView = makeRowLabel(label);
+        // 【code 1025 / P1-2】行头（icon + 主文 + 可选副标题），宽度权重仍由本行持有
+        LinearLayout labelView = makeRowHead(label).root;
         labelView.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         header.addView(labelView);
@@ -3549,7 +4180,7 @@ public class SettingsActivity extends AppCompatActivity {
         valueView.setMinHeight(dp(ROW_MIN_H_DP));
         valueView.setTextAppearance(com.google.android.material.R.style
                 .TextAppearance_Material3_LabelLarge);
-        valueView.setTextColor(attr(com.google.android.material.R.attr.colorPrimary, Color.BLACK));
+        valueView.setTextColor(attr(androidx.appcompat.R.attr.colorPrimary, Color.BLACK));
         header.addView(valueView);
         row.value = valueView;
 
@@ -3616,7 +4247,7 @@ public class SettingsActivity extends AppCompatActivity {
      *    （壁纸 Tonal Spot）与深浅色切换后重建行时会自动跟着换，不写死十六进制。
      */
     private void applyExpressiveSlider(Slider slider) {
-        int active = attr(com.google.android.material.R.attr.colorPrimary, 0xFF6750A4);
+        int active = attr(androidx.appcompat.R.attr.colorPrimary, 0xFF6750A4);
         int inactive = attr(com.google.android.material.R.attr.colorSecondaryContainer, 0xFFE8DEF8);
         // ① 16dp 粗轨道
         slider.setTrackHeight(dp(SLIDER_TRACK_H_DP));
@@ -3651,7 +4282,7 @@ public class SettingsActivity extends AppCompatActivity {
         root.setGravity(Gravity.CENTER_VERTICAL);
         root.setMinimumHeight(dp(ROW_MIN_H_DP));
 
-        TextView labelView = makeRowLabel(label);
+        LinearLayout labelView = makeRowHead(label).root;
         labelView.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(labelView);
@@ -3696,7 +4327,7 @@ public class SettingsActivity extends AppCompatActivity {
         beginRow(parent);
         SegmentedRow row = new SegmentedRow();
 
-        TextView labelView = makeRowLabel(label);
+        LinearLayout labelView = makeRowHead(label).root;
         labelView.setPadding(0, 0, 0, dp(2));
         parent.addView(labelView);
 
@@ -3739,7 +4370,7 @@ public class SettingsActivity extends AppCompatActivity {
         // 两段自己画：每次选中变化就把三段重刷一遍颜色（不依赖任何样式继承）。
         // 【code 974 §3】已选 = 深重点色（colorPrimary / colorOnPrimary）；
         //               未选 = 浅重点色（colorSecondaryContainer / colorOnSecondaryContainer）。
-        final int checkedBg = attr(com.google.android.material.R.attr.colorPrimary, 0xFF6750A4);
+        final int checkedBg = attr(androidx.appcompat.R.attr.colorPrimary, 0xFF6750A4);
         final int checkedFg = attr(com.google.android.material.R.attr.colorOnPrimary, Color.WHITE);
         final int plainBg = attr(com.google.android.material.R.attr.colorSecondaryContainer, 0xFFE8DEF8);
         final int plainFg = attr(com.google.android.material.R.attr.colorOnSecondaryContainer, 0xFF1D192B);
@@ -3808,7 +4439,7 @@ public class SettingsActivity extends AppCompatActivity {
         int initial = initialRef.get();
 
         beginRow(parent);
-        TextView labelView = makeRowLabel(label);
+        LinearLayout labelView = makeRowHead(label).root;
         labelView.setPadding(0, 0, 0, dp(6));
         parent.addView(labelView);
 
@@ -3819,6 +4450,11 @@ public class SettingsActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         ColorSwatchRow row = new ColorSwatchRow(this);
+        // 【code 1025 / P0-②】自己量宽高：必须给 MATCH_PARENT，
+        // 否则在 body（水平 LinearLayout）里只拿到 AT_MOST，量出来的宽会随着
+        // 「上一行内容」变化 —— 换行位置会跟着抖。
+        row.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         if (previewAlpha < 255) {
             // §3.1.5：色板圆点显示的是「面板顶部实际不透明度叠加后的效果」，不画实心色
             row.setTranslucentPreview(previewAlpha, showChecker);
@@ -3870,11 +4506,11 @@ public class SettingsActivity extends AppCompatActivity {
         root.setGravity(Gravity.CENTER_VERTICAL);
         root.setMinimumHeight(dp(ROW_MIN_H_DP));
 
-        TextView labelView = makeRowLabel(label);
-        labelView.setTextColor(attr(com.google.android.material.R.attr.colorPrimary, Color.BLACK));
-        labelView.setLayoutParams(new LinearLayout.LayoutParams(0,
+        RowHead head = makeRowHead(label);
+        head.label.setTextColor(attr(androidx.appcompat.R.attr.colorPrimary, Color.BLACK));
+        head.root.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        root.addView(labelView);
+        root.addView(head.root);
 
         // 【2.3.2 §1.1.1 / §1.1.2】重置按钮 = MD3 Tonal（浅容器底 + 深色字/图标），
         // 与对齐分段、导出/导入、底栏「重启系统界面」同一套视觉语言。
@@ -4294,10 +4930,68 @@ public class SettingsActivity extends AppCompatActivity {
         return String.format(Locale.ROOT, "%.1f", v);
     }
 
+    /**
+     * 【code 1025 / P2-1】页面回执统一走 Snackbar（26 处调用点共用这一个出口）。
+     *
+     * <h3>── 为什么换掉 Toast ──</h3>
+     * Toast 承载不了这两件事：① **可撤销**（保存完要给一次反悔机会）；
+     * ② **跨进程回执**（宿主那条链路的成败要能当场说清）。
+     * 而且系统 Toast 队列会被连续操作互相吞掉 —— 连点两次保存只看到一次「已保存」。
+     *
+     * <p>⚠️ anchor 用 {@code settings_root}（整页根 LinearLayout）而不是 decorView：
+     * Snackbar 会挂到它的父 FrameLayout 上，位置天然落在页面底部；
+     * 另外本页是 edge-to-edge（targetSdk 36），要给 Snackbar 自己补一段导航栏内边距，
+     * 否则它会压在系统导航条下面。
+     */
     private void toast(String msg) {
+        snack(msg, null, null);
+    }
+
+    /**
+     * 【code 1025 / P2-1】带可选动作的 Snackbar。
+     *
+     * @param actionLabel 动作文案（{@code null} = 纯提示）
+     * @param action      动作回调（点击后执行）
+     */
+    private void snack(String msg, @Nullable String actionLabel, @Nullable Runnable action) {
         try {
-            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
-        } catch (Throwable ignored) {
+            View anchor = findViewById(R.id.settings_root);
+            if (anchor == null) {
+                anchor = getWindow().getDecorView();
+            }
+            boolean withAction = actionLabel != null && action != null;
+            Snackbar sb = Snackbar.make(anchor, msg,
+                    withAction ? Snackbar.LENGTH_LONG : Snackbar.LENGTH_SHORT);
+            if (withAction) {
+                sb.setAction(actionLabel, v -> {
+                    try {
+                        action.run();
+                    } catch (Throwable ignored) {
+                    }
+                });
+            }
+            // edge-to-edge：给 Snackbar 自己补导航栏高度（它不在那层 insets 处理链里）
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.view.WindowInsets wi = getWindow().getDecorView().getRootWindowInsets();
+                    if (wi != null) {
+                        int nb = wi.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom;
+                        if (nb > 0) {
+                            View sv = sb.getView();
+                            sv.setPadding(sv.getPaddingLeft(), sv.getPaddingTop(),
+                                    sv.getPaddingRight(), sv.getPaddingBottom() + nb);
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+            sb.show();
+        } catch (Throwable t) {
+            // 窗口尚未 attach 等极端情况：退回 Toast，保证回执不丢
+            try {
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+            } catch (Throwable ignored) {
+            }
         }
     }
 }

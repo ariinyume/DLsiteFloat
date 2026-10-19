@@ -3474,3 +3474,281 @@ versionName 2.3.5 **不变**；code 1023 → **1024**；label `1018.2` → `1018
 > → 字幕照常显示；再回联网切一次同轨，应变成 `HIT (identity)` 强键命中。
 > ③ 设置页「其他」卡那行占用读数应出现「命中 x/y 次」与「预取 N 部 / M 轨」；
 > 排版卡多出「跟随宿主字幕样式」开关（默认关），打开后悬浮窗字号/文字色跟宿主走。
+
+---
+
+## 2.3.5 / code 1025 —— 平台与设置页现代化（组件库升到官方最新 M3E / 目标系统升到安卓十六 / 签名补齐三档）+ 设计审查 P0 三项 + P1 三项 + P2 三项 + 上屏行观测判据修正
+
+> 依据：Ari 2026-10-18 指令四项 —— ① `com.google.android.material:material` 升到 **1.14.0**
+> （M3E 官方组件）；② targetSdk 升 **36**（Android 16）；③ 签名改成 **V1 + V2 + V3**；
+> ④ 按 `DLsiteFloat_设置页_M3E设计审查.html` 把 **P0 三项**做完。
+> ⚠️ 本轮 Ari 口径：versionName 仍为 2.3.5，只升 code ⇒ code 1024 → **1025**、label `1018.3` → `1019.1`。
+> ➕ **同一 code 1025 内后续追加**（不另起 versionName）：设计审查 **P1 三项 + P2 三项**（Ari 明确排除「预设 chips」、重置只关联单卡片设置项）＋ **P1-5 上屏行观测判据修正**。三段见【八】【九】【十】。
+
+### 【一】组件库 1.9.0 → 1.14.0：M3E 官方组件这一族才拿到手
+
+M3E（Material 3 Expressive）的官方实现从 material **1.13** 起才进库 —— 判据是版本指纹类：
+解 AAR 的 `classes.jar` 里 `MaterialButtonGroup` / `LoadingIndicator` / `FloatingToolbarLayout`
+在 1.9.0 里**一个都没有**，1.14.0 里全在。传递依赖一并钉死（不钉会被升上去且不可复现）：
+
+| 依赖 | 旧 | 新 |
+|---|---|---|
+| `com.google.android.material:material` | 1.9.0 | **1.14.0** |
+| `androidx.appcompat:appcompat` | 1.6.1 | **1.7.0** |
+| `androidx.core:core` | 1.9.0 | **1.16.0** |
+
+**踩到一个必须记的坑**：1.14.0 的 `R.txt` 里**不再声明 `attr/colorPrimary`**
+（旧版它自己重复声明了一份，新版只留 appcompat 那一份）⇒ 全仓 7 处
+`com.google.android.material.R.attr.colorPrimary` 全部编译失败（`找不到符号`）。
+改法是从 `androidx.appcompat.R.attr.colorPrimary` 取**同一个属性**（同名同语义，只是声明方变了），
+**没有换任何色值**。7 处：`ColorSwatchRow` 2 处、`SettingsActivity` 5 处。
+
+### 【二】构建链被动升级：AGP 8.1.0 → 8.13.2、Gradle 8.4 → 8.13
+
+这一项**不是顺手升级，是硬失败逼出来的**，原始报错来自 `:app:checkDebugAarMetadata`：
+
+```
+Dependency 'androidx.core:core:1.16.0' requires AGP 8.6.0 or higher
+```
+
+链条是：`material 1.14.0` → POM 要求 `androidx.core 1.16.0` → 它的 AAR metadata 写着
+`minAgpVersion = 8.6.0` → AGP 8.6 又要求 Gradle ≥ 8.7 → 本机原钉 8.4。
+**结论：要么放弃升库，要么连构建链一起升**；选了后者。
+
+选 **AGP 8.13.2 + Gradle 8.13** 而不是刚好够用的 8.6/8.7：Gradle 8.13 的发行包
+**本机 wrapper 缓存里已有**（`~/.gradle/wrapper/dists/gradle-8.13-bin`，不必联网下载），
+且 8.13.2 是 8.x 末班车、对 compileSdk 36 原生支持，不再需要 `suppressUnsupportedCompileSdk` 兜着
+（该开关仍留在 `gradle.properties`，只作 toolchain 被回退时的兜底）。
+
+### 【三】compileSdk / targetSdk 34 → 36，配套 edge-to-edge
+
+`compileSdk 36`、`buildToolsVersion '36.0.0'`（resources.arsc 要用同代 aapt2）、`targetSdk 36`。
+
+**为什么必须同批做**：targetSdk 35+ 起系统**强制** edge-to-edge（`setDecorFitsSystemWindows`
+的「不铺满」在 35 上已被无视、36 上连开关都不存在），而这一页此前**一处 `WindowInsets` 都没有**
+（全仓检索为 0）⇒ 只升 targetSdk 会立刻变成「页头被状态栏压掉半行、底栏钻进导航栏」。
+
+- `WindowCompat.setDecorFitsSystemWindows(getWindow(), false)`；
+- 根布局接 `systemBars() | displayCutout()` 两组内边距，先记原 padding 再叠加，且
+  **返回原 insets 不消费** —— 吸顶与滚动的计算留给它们自己；
+- `WindowInsetsControllerCompat.setAppearanceLightStatusBars/NavigationBars` 按**页面大底亮度**
+  在代码里设：边到边之后状态栏透明，而这一页的底色是运行时按深浅色取色槽算出来的，
+  主题里那两个布尔只跟系统深浅色走、动态取色下对不上。
+
+### 【四】签名 V1 + V2 + V3
+
+此前交付包实测**只有 v2**（对 code 1024 包跑 `apksigner verify -v`：v1 false / v3 false）。
+在 `signingConfigs.debug` 上显式打开三档 —— **v1 在 minSdk ≥ 24 时默认就是关的**
+（那本是「只有 API < 24 才需要」的优化），所以光升构建链不会自己变三档。两个坑都踩了：
+
+1. **属性名是混合的**：v1/v2 用**老名** `v1SigningEnabled` / `v2SigningEnabled`，v3 用**新名**
+   `enableV3Signing`。只写新名那套（`enableV1Signing true`）时 `signing-config-versions.json`
+   里记着 `enableV1Signing:true`，但包里**没有** `META-INF/*.SF`、apksigner 照报 v1 false
+   ⇒ 打包链路读的是老字段。
+2. v3 **没有** `v3SigningEnabled()` 这个方法，写了会在配置阶段直接
+   `Could not find method v3SigningEnabled()`。
+
+只改 `debug` 这一个 signingConfig（本模块的交付包一直是 debug 签名，不引入新密钥
+⇒ **不影响覆盖安装**）。
+
+⚠️ **校验口径也有假阴性**：`apksigner` 在 `--min-sdk-version ≥ 24` 时会**跳过** JAR 签名校验
+并直接打印 `v1: false`。必须显式 `--min-sdk-version 23` 再验，此时旧包会报
+`Missing META-INF/MANIFEST.MF` —— 两边对照才算证明「旧包确实没有 v1、新包确实有」。
+
+### 【五】P0-① 点得准：行高 40 → 48、色点热区 34 → 48
+
+审查稿 §06 的第一条是「可点区域不达标」——48dp 是无障碍下限。
+两处常量抬到 48（`ROW_MIN_H_DP 40 → 48`、`SWATCH_TOUCH_DP 34 → 48`），
+而控件自身高度（分段按钮、恢复默认胶囊仍是 `CONTROL_H_DP = 40`）**不动** ——
+要的是**热区**，不是把所有控件都吹大。
+
+### 【六】P0-② 窄屏溢出：色板改弹性网格
+
+原来每枚色点钉死 34dp 宽、单行排过去：**9 枚预设**就已经超 10dp（306dp 对 ≈296dp 可用宽），
+加上末尾那枚自定义色环共 **10 枚 = 340dp ⇒ 溢出 44dp，最后两枚直接被裁掉**。
+本机是 428dp 宽（可用 ≈364dp > 340dp）⇒ 一直没复现，这是个**只在窄屏出现**的缺陷。
+（34dp 同时也低于 M3 的 48dp 最小触摸目标 —— 与 P0-① 是同一个病根的两种表现。）
+
+`ColorSwatchRow` 由 `LinearLayout` 改成**自己量自己摆**的 `ViewGroup`：
+
+- 格子边长 = `clamp(可用宽 / 数量, 48dp, 56dp)`（宽屏封顶 56dp，免得色点被摊成一条稀线）；
+- 塞不下就换行（`perRow = avail / cellPx`）—— 360dp 屏排成 **6 + 4** 两行，428dp 屏 **7 + 3**；
+- 每行水平居中（末行不足一行时 `startX = paddingLeft + (avail - rowWidth) / 2`）；
+- 圆的直径仍是 **22dp** —— 边长变大的是热区，不是色点本身；自定义环与预设色点**同格同径**。
+- ⚠️ `cellPx` 存成字段（测量时算、布局时复用）：`onMeasure` 与 `onLayout` 是两次独立回调，
+  两边各算一遍会在「测量可用宽 ≠ 布局实际宽」（例如横竖屏切换那一帧）时错位。
+
+### 【七】P0-③ 视口：预览窗可收起
+
+预览卡常驻吃掉 ~320dp，加上吸底的双按钮，700dp 高的屏滚动时真正能看见的设置区只剩两行半。
+
+- 预览标题 `TextView` 改成一条**可点的折叠条**（`minHeight 48dp` + 右侧箭头），
+  上距由 21.6dp 收到 8dp —— 48dp 高居中后文字中心仍在 ~32dp，**视觉间距不变**；
+- 收起走 `ValueAnimator.ofInt(from, 0)` 200ms，展开直接显示 + 160ms 淡入；箭头 `rotation(180°/0°)`；
+- 状态存进**界面偏好那份独立存储**（`dlsitefloat_ui` / 键 `settings_preview_collapsed`）：
+  **不进 `SubtitleConfig`、不发广播、不参与「恢复默认」**——它只是这一页的摆放状态；
+- 折叠只切预览卡 `visibility` + 高度动画，**不动 AppBarLayout 任何 `scrollFlags`**，
+  靠 CoordinatorLayout 重新分配高度（沿用 2.1.4「底栏真实占位」规避时序测量的思路）。
+  ⚠️ `layout_scrollFlags` 只认**直接子 View**，所以折叠条包了一层 `LinearLayout` 承载 flags。
+
+### 【八】设置页 P1 三项（设计审查 §P1）—— 三卡合一 / 行头图标 / 状态卡降噪
+
+**①三卡合一。** 原来「外观 / 未激活 / 字体排版」是三张独立卡，页面上三条节标题加三块留白，
+滚到第三张卡要点三次。现在收成**一张卡**：卡顶一条 40dp 分段条（`MaterialButton` ×3，等宽、
+圆角 full、选中 `secondaryContainer`），下面三个面共用同一个容器，切换**只改可见性、零重建**
+（`selectAppearancePage` 不碰 `buildRows`）——重建会让滑条位置与滚动锚点一起丢。
+`mAppearancePage` 存在字段上而不是重建时重算，所以锁屏回来、改完一项重绘后仍停在原面。
+⚠️ 手搓 `MaterialButton` 时必须 `setMinHeight(0)` + `setMinimumHeight(0)`：M3 按钮默认
+`minHeight 48dp`，会把 40dp 的胶囊条撑高 8dp，视觉上「条比卡顶高出一截」。
+
+**②行头图标 + 副标题。** 新增 14 枚 24dp 矢量图（`ic_ui_*`，24×24 视口、纯黑 `fillColor`、
+靠 `setColorFilter` 上色），以及一个查表原语 `makeRowHead(Strings)` —— 传文案枚举、
+回 `{icon, title, supporting, root}`。**5 个行原语（滑条/开关/分段/色点/重置）全部改用它，
+调用点零改动**：图标由文案枚举查表，不是每个调用点手传，新增行不会漏图。
+副标题只给 5 条**容易混淆**的行（阴影强度 / 阴影半径 / 行间距 / 换行间距 / 模糊半径），
+其余行不加 —— 全加等于全不加，反而把密度拉回改造前。
+
+**③状态卡降噪。** 原来四种状态各给整卡一种底色（primary/surfaceVariant/errorContainer…），
+一屏里最抢眼的是一块**并不需要看**的色块。现在统一中性底 + 一枚有色状态点，
+**只有错误态保留整卡 `errorContainer`** —— 那是真需要被看见的唯一一种。
+
+### 【九】设置页 P2 三项（口径按 Ari 收窄）—— Snackbar / 重置收敛 / 联动动效
+
+> Ari 口径：**不做预设 chips**（P2 表里的「预设 chips + 全局重置」只做后半）；
+> **重置只关联单卡片设置项**（不做全局重置）。
+
+**①Toast → Snackbar，保存可撤销。** 全部回执收口到 `snack(msg, action, runnable)` 一个出口，
+Toast 只作「连 Snackbar 都弹不出来」时的兜底。保存成功时带一个「撤销」动作：
+落盘前先把旧 `SubtitleConfig` 快照成 `before`，点撤销就整体写回 + 刷新界面。
+⚠️ targetSdk 36 已强制 edge-to-edge，Snackbar 默认会钻到导航栏底下 ⇒ 出口里统一补
+导航栏 inset（`setAnchorView` 不管用，这里没有 CoordinatorLayout）。
+
+**②三组「恢复默认」合并成一条。** 原来每张卡末尾各一条（三个 `addResetRow`），三卡合一后
+同一件事出现三次就是噪音。现在只留卡片底部一条「恢复字幕外观默认设置」，一次把三组值一起
+归位、**只 toast 一次**。副作用收口成三个 `resetXxxValues()`（只改值、不弹提示），
+`resetAppearanceGroup()` 负责编排 + 一次提示 —— 否则一次点击会连弹三条。
+液态玻璃卡**保留自己那条**重置：它是另一张卡、另一组设置项。
+
+**③联动显隐走动效。** 「模糊半径」「未激活缩放」两处开关联动原来直接 `setVisibility`，
+行会「啪」地出现/占位。现在统一走 `animateRowVisibility`（`AutoTransition` 180ms +
+`DecelerateInterpolator`）。口径仍然只有 GONE / VISIBLE 两态，**不做置灰** ——
+GONE 才真正把高度收回，置灰留着空行等于没省空间。
+⚠️ `syncWidgets()` 回灌草稿值时**仍直接设**：那里每次都同步，走动效反而会在进页面时闪一下。
+
+### 【十】P1-5 上屏行观测判据修正 —— 从「循环判据」改成「纯自算」
+
+真机读数一直是 `408/416` 这类漂亮数字，本轮发现它测的**不是**我们想测的东西：
+
+```java
+// 改前（循环判据）
+HostLineSync.observe(r.liveLines, repo.getCurrentSubtitles())
+```
+
+`getCurrentSubtitles()` 的值正是 `ActivityButtonHook` 上一帧用 `setCurrentSubtitles(scan.liveLines)`
+写进去的 —— 拿它当「我们自算的结果」，等于问「两帧宿主上屏内容一样吗」，
+回答的却是我们自己写进去的镜像。**自算与镜像永远相等，这面镜子只会照出宿主自己的稳定性。**
+
+改法是新增 `SubtitleRepository.selfComputedLines()`：**纯自算**，只读 `currentCueIndex`，
+命中 `cues.get(idx).subtitles` 就返回，任何异常路径（待裁决 / 上一轨已隐 / 越界 / 空）
+一律返回空表，**绝不回退镜像**。
+
+⚠️ 也不能用现成的 `findCurrentCueIndex()` —— 它内部含镜像回退，同样会把镜像混进来。
+⚠️ 空表的语义是「本帧没有可比的」，`HostLineSync` 据此跳过本帧，不记成 0 命中。
+⚠️ 两侧来源存在**固有限制**，已写进 `HostLineSync` 类头：`hostLines` 已过 `isKnownSubtitleText`
+过滤，所以「宿主显示了而我们表里没有」这类差异**永远不进样本** —— 一致率因此系统性偏高，
+读数只能**纵向比同一指标的走势**，不能当成「准确率」。
+
+### 【不改的】
+
+**链路层（一行没动）**：抓取闸门三层判据与两条网络通道、换轨判据与裁决窗、
+悬浮窗与状态栏渲染结构、缓存与预取链路（含 index schema 4）。
+
+**设置页里明确保留的（设计审查「别动」清单）**：卡内**无分隔线**、联动一律 GONE 而非置灰、
+滑块 16dp 轨道 + 4×44dp 竖条、预览三层不透明叠构、底栏真实占位、
+页头 `scroll`（**不用** `scroll|enterAlways`）、语言胶囊两个兄弟 View 自绘。
+
+**本轮确实变了的**（如实列出，不再说「一条没改」）：
+① 三张卡 → 一张卡 + 卡顶分段条（分组**结构**变了，这是 P1-1 的目的）；
+② 三条节标题（未激活 / 字体排版标题）→ 删除，由分段条取代；
+③ 三条重置行 → 一条；④ 回执 Toast → Snackbar；
+⑤ 每行多了图标、五条多了副标题。
+**配色与字号一套没换**，所有新控件取的都是既有主题色。
+
+### 【验证】
+
+- 源码层 `tools/verify_1025_src.py` → **94/94 PASS**
+  （A 构建配置 7 · B edge-to-edge 7 · C 签名三档 5 · D P0-① 四 · E P0-② 十一 ·
+  F P0-③ 十八 · G 边界 7 · H 版本纪律 5 · **I 设置页 P1/P2 + 判据修正 23**）
+  其中 I8 是**横幅自报**门禁：常开横幅必须写明本轮三项，且正文不得含引号/反斜杠/反引号
+  （横幅整段进 dex 串池，一个引号就能把日志截断）。
+- 产物层 `tools/verify_1025.py` → **57/57 PASS**，**36 个有区分力锚**，9 条如实标注无区分力
+  - badging：`versionCode=1025` / `versionName=2.3.5` / `minSdk=24` / `targetSdk=36` / `compileSdk=36`
+  - 签名：`apksigner --min-sdk-version 23` → **v1/v2/v3 全 true**；同参数下 code 1024 包
+    `DOES NOT VERIFY / Missing META-INF/MANIFEST.MF`（双向坐实）
+  - dex 新符号（P1/P2 十三条）：`buildAppearanceTabs` / `selectAppearancePage` /
+    `makeRowHead` / `RowHead` / `resetAppearanceGroup` / `undoLastSave` /
+    `animateRowVisibility` / `selfComputedLines` + 简繁分段文案 + 合并后重置文案 + 撤销提示
+    （全部 `new>0 / old=0`）
+  - 资源层**反向判据**：`id/card_inactive`、`id/card_typo` **本版没有、上一版有** ——
+    这才是「三张卡收成一张」的真证据（对照基准取上一版，不是最老基准包）
+  - 资源层新增：`id/appearance_tabs`、`id/group_appearance_reset`、14 枚 `drawable/ic_ui_*`
+  - ⚠️ 9 条**无区分力项如实标注**：`id/group_main|inactive|typo` 三个容器 id **两版都有**
+    （旧版每张卡内也各有一个同名容器）⇒ 只守「还在」，不伪造区分力；
+    行高 40→48 / 热区 34→48 是 UI 整型常量，javac 内联成立即数 ⇒ 不做伪造判据，
+    这两条口径改为源码层 + 真机目视。
+- 矢量图 `tools/verify_pathdata.py` → **33 条 pathData / 0 失败 / 25 个文件**
+  （`pathData` 没有编译期校验：写错照样编译绿灯、设置页直接打不开，必须脚本验）
+
+**双闭环（本轮做到了，且更正上一轮的口径）**
+
+上一轮（code 1025 首版）写的是「构建链本身就是本轮改动之一，做不了传统双闭环」。本轮补上了，
+关键是把基线口径从「新构建链构建上一版源码」换成「**上一版构建链构建上一版源码**」：
+
+| 圈 | 构建内容 | 工具链 | sha256 | 对照 |
+|---|---|---|---|---|
+| 基线 | code 1024 源码（`git checkout HEAD`） | Gradle 8.4 / AGP 8.1.0 | `e0560f23…cfbb` | == 已发布 1024 包**逐字节** |
+| 交付 | 本轮全部改动 | Gradle 8.13 / AGP 8.13.2 | `d4d1e81c…91b8` | 两次独立 clean 构建相同 |
+
+⇒ 基线圈逐字节复现上一版交付包，交付圈两次构建逐字节相同 ⇒ **两包差异只有本轮改动**。
+
+⚠️ 顺带坐实一件必须记的事：**「1024 源码 + 1025 构建链」这个组合编译不过** ——
+`ColorSwatchRow.java` 取 `com.google.android.material.R.attr.colorPrimary`，而 1.14.0 的 `R.txt`
+已不再声明它 ⇒ 直接 `找不到符号`。也就是说「升库」与「改取色来源」是**同一件原子改动**，
+不存在「只升链不改码」的中间态。
+
+- **历史脚本回归**：`run_all_verify.py` 里 `verify_1019_src` / `1020_src` / `1021_src` /
+  `1007_src` 仍 FAIL —— 已用 `git worktree` 在**干净 HEAD** 上跑同一批脚本取证：
+  **这四个在 HEAD 上本来就 FAIL**（历史脚本把当年的实现细节钉死了，且「本轮履历段」类判据
+  会被后续轮次的履历段覆盖），**不是本轮回归**。`verify_1024_src`（105/105）、
+  `1006/1005/1004_src` 本轮全 PASS。
+
+### 产物
+
+`DLsiteFloat-2.3.5-code1025-debug.apk`，**7,211,405 B**（上一版 5,649,376 B，+1.56 MB ——
+M3E 组件族与升代 androidx 带来的体积，属预期）
+sha256 `d4d1e81c9366ea296a60f29ffb7dd80568fe63f08120f8215d8c8db0343091b8`
+versionName 2.3.5 **不变**；code 1024 → **1025**；label `1018.3` → `1019.1`
+`minSdk 24` / `targetSdk 36` / `compileSdk 36`；签名 **v1 + v2 + v3 全开**
+
+> ⚠️ 升级前请确认已装版本的 code **严格小于 1025**：Android 只允许 `versionCode` 单调递增。
+> ⚠️ 签名多出 v1/v3 **不影响覆盖安装**：三档用的是同一把 debug 密钥，证书指纹未变。
+> ⚠️ 缓存、预取池、配置文件格式**全部没动**，升级后不清零、不需要重新配置。
+> ⚠️ 设置页的「预览窗收起」状态存在**界面偏好**那份独立存储里，不进配置、不参与恢复默认。
+> ⚠️ 未提交、未打 tag、未发版 —— 由 Ari 决定何时发。
+> 🔬 **本轮真机验收路径**：
+> ① 装包后**先看设置页顶部**：内容不应钻进状态栏、底部按钮不应被导航栏盖住；
+> 深浅色各切一次，状态栏/导航栏图标明暗应跟着页面底色翻。
+> ② 设置页「字幕外观」卡：顶部应是一条三段胶囊（颜色 / 行态 / 排版），
+> 点第二段只有内容变化、**页面不应闪白或跳到顶部**（零重建）；返回再进应停在原段。
+> ③ 每行左侧有图标；阴影强度、模糊半径等五行下面有一句小字说明。
+> ④ 拨「未激活时模糊」开关：下面那行应是**淡出并收高**（约 0.2 秒），不是「啪」地消失。
+> ⑤ 改任意一项 → 保存 → 底部浮出提示条并带「撤销」；点撤销应回到改前的值且界面同步。
+> ⑥ 卡片底部只有**一条**「恢复字幕外观默认设置」，点它应把三段的值一起归位、**只弹一次**提示；
+> 液态玻璃卡底部那条仍在（那是另一组）。
+> ⑦ 状态卡平时应是「浅底 + 一枚颜色点」，只有未激活/错误时才整卡着色。
+> ⑧ 设置页滚动到「字幕配色」卡：色板在窄屏（360dp 档）应**换行且末行居中**；
+> 点预览卡标题行应收起预览窗、箭头翻转，下方能多看到三行以上设置项。
+> ⑨ `apksigner verify -v --min-sdk-version 23 <apk>` 应三档全 true（装机核对口径）。
+> ⑩ 进阶（P1-5 新读数）：日志里「上屏行一致」的分子/分母应与改造前**不同** ——
+> 改造前它恒等于宿主连续两帧的相同率，改造后才是「我们自算 vs 宿主上屏」。
+

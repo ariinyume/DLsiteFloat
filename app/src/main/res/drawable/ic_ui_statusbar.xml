@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 【code 1025 / P1-2】状态栏字幕：顶部实心条（系统栏）+ 下方内容区
+     规格：24x24 视口、实心 path、颜色交给 ImageView.setColorFilter（onSurfaceVariant）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path android:fillColor="#FF000000"
+        android:pathData="M2,3H22V7H2Z" />
+    <path android:fillColor="#FF000000" android:fillType="evenOdd"
+        android:pathData="M2,9H22V21H2Z M4,11H20V19H4Z" />
+</vector>

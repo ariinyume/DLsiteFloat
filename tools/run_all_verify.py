@@ -29,6 +29,29 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 脚本 → (类别, 一句话说明它验什么)
 # ⚠️ 说明必须与脚本内部判据一致；改判据时同步改这里，否则索引表本身就会骗人。
 SCRIPTS = [
+    ('verify_pathdata.py', '资源层',
+     '矢量图 pathData **语法**校验 —— 这一层没有编译期校验：写错照样编译绿灯、设置页直接打不开。'
+     '核对手段：白名单命令字母、按 SVG 规范逐命令校验参数个数、数字可解析性、坐标量级粗检；'
+     '覆盖全仓 drawable（33 条 pathData / 25 个文件，当前 0 失败）'),
+    ('verify_1025_src.py', '源码层',
+     'code 1025 平台与设置页现代化：SDK/依赖/AGP+Gradle 档位、签名三档属性名（含「v3 没有 v3SigningEnabled」）、'
+     'edge-to-edge insets（挂监听/覆盖 systemBars+displayCutout/不消费/系统栏明暗随底色/调用点在 setContentView 之后）、'
+     'P0-① 行高 48（旧 40 代码层绝迹、CONTROL_H_DP 仍 40）、'
+     'P0-② 色板 ViewGroup 自量自摆（热区 48 / 圆点仍 22 / 上限 56 / 换行公式 / 最后一行居中）、'
+     'P0-③ 预览折叠（外层挂 scrollFlags / 标题自身无 flags / 高度动画 / prefs 双向 / 默认展开 / 不进 SubtitleConfig / 三语）、'
+     '边界（页头 scroll 非 enterAlways / 底栏真实占位 / 卡内无分隔线 / 吸顶 5dp / 滑块 16-4-44 / 语言胶囊自绘）、'
+     '版本纪律、I 组设置页 P1 三项（三卡合一+切面零重建 / 行头查表原语 + 14 枚图标 / 状态卡降噪）、'
+     'P2 三项（Snackbar 带撤销 / 三组重置收敛成一条 / 联动动效但口径仍 GONE）、'
+     'P1-5 观测改纯自算、常开横幅自报本轮三项且正文无禁用字符（94 项）'),
+    ('verify_1025.py', 'dex 字节码层',
+     'code 1025：aapt2 versionCode=1025/versionName=2.3.5/**targetSdk=36**/compileSdk=36、'
+     'apksigner 带 --min-sdk-version 23 时 **v1+v2+v3 全 true**（对照包 1024 在同参数下 Missing MANIFEST.MF ⇒ 双向判据）、'
+     'APK 内 JAR 签名三件套、三处 insets/折叠方法名 + 折叠持久化键 + 六条三语文案 + 三枚 1.13+ 库指纹只在主验包、'
+     '资源层 id/preview_bar + id/preview_chevron + drawable/ic_chevron_down 只在新包、保持型四条；'
+     'G 组设置页 P1/P2：七个新方法名 + 简繁分段文案 + 合并重置文案与副标题 + 撤销提示只在主验包、'
+     '资源层 id/appearance_tabs + id/group_appearance_reset + 14 枚 drawable/ic_ui_* 只在新包、'
+     '**反向判据** id/card_inactive|card_typo 只在对照包（三张卡收成一张的真证据）；'
+     '常量层如实标注不适用（57 项 / 36 有区分力锚）'),
     ('verify_1024_src.py', '源码层',
      'code 1024 预取跑通 + 作品维强约束 + 离线文案收口 + P1 三项：gzip 两层修法（魔数解压/文本判据/预取层结构校验，且结构校验先于离线判断）、缓存 byIdentity 桶化 + pickLocked 作品键认人 + sameWork + 索引并条、预取池 take 两参 + AMBIGUOUS 放弃、离线两句文案与两个函数剥注释后 0 处、P1-5 只观测不接管（无 setText/addView）、P1-7 采样量级闸与字号夹取、P1-8 七个 extra 三层齐（Protocol/ConfigBus/设置页）+ 跟随键七处接线、边界（INDEX_SCHEMA 仍 4 / 闸门未动 / 预取器不写缓存）、常开横幅恰好一条（105 项）'),
     ('verify_1024.py', 'dex 字节码层',

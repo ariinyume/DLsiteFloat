@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 【code 1025 / P1-2】放大倍数 / 缩放百分比：由小到大的两个方框
+     规格：24x24 视口、实心 path、颜色交给 ImageView.setColorFilter（onSurfaceVariant）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path android:fillColor="#FF000000" android:fillType="evenOdd"
+        android:pathData="M3,3H11V11H3Z M5,5H9V9H5Z" />
+    <path android:fillColor="#FF000000" android:fillType="evenOdd"
+        android:pathData="M13,13H21V21H13Z M15,15H19V19H15Z" />
+</vector>
