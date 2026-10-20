@@ -4,8 +4,8 @@
 
 > An LSPosed / Xposed module that pins a **floating subtitle window** synced with playback progress onto the **playback page** of DLsiteSound (the DLsite audio app), and can also mirror subtitles to the **system status bar** (injected inside the SystemUI process).
 
-- Current version: **2.3.3** (`DLsiteFloat-2.3.3-code1021-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
-- 📦 Download APK: [Releases · v2.3.3](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.3.3)
+- Current version: **2.4.0** (`DLsiteFloat-2.4.0-code1037-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
+- 📦 Download APK: [Releases · v2.4.0](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.0)
 - 📝 Development progress: [DLsiteFloat 插件开发进度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh) (in Chinese)
 - ⭐ Xposed repository: [DLsiteFloat - DLsiteSound floating window / status bar subtitle module](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -39,44 +39,48 @@
 
 ## Features
 
-- **Two pill buttons on the playback page (since 2.0.1)**: two MD3 pill buttons sit side by side above the playback control bar — on the left `Status ON / Status OFF` (**the whole button disappears when there are no subtitles**), on the right `Popup ON / Popup OFF / No Sub`.
+- **Two pill buttons on the playback page**: two MD3 pill buttons sit side by side above the playback control bar — on the left `Status ON / Status OFF` (**the whole button disappears when there are no subtitles**), on the right `Popup ON / Popup OFF / No Sub`.
   - `Status OFF`: status bar subtitles are off
   - `Status ON`: status bar subtitles are on
   - `Popup OFF`: the floating window is closed
   - `Popup ON`: the floating window is open
   - `No Sub`: the current audio track has no subtitles available
-  - **Fixed button size (since 2.1.2)**: width, height, corner radius, text and offset from the seek bar are computed only from the density **locked in on first launch**; the text uses **fixed px** and auto-fits the available pill width so it is **always fully visible**, and is unaffected by later changes to the system "Font size / Display size".
-  - **Multilingual support (since 2.1.2)**: the module's display language follows the **system language** (read from system configuration, unaffected by the host app's "App language"), supporting **简体中文 / 繁體中文 / English**.
+  - **Fixed button size**: width, height, corner radius, text and offset from the seek bar are computed only from the density **locked in on first launch**; the text uses **fixed px** and auto-fits the available pill width so it is **always fully visible**, and is unaffected by later changes to the system "Font size / Display size".
+  - **Multilingual support**: the module's display language follows the **system language** (read from system configuration, unaffected by the host app's "App language"), supporting **简体中文 / 繁體中文 / English**.
     | System language | Left / right button | Button `No Sub` | Floating window placeholder |
     | --- | --- | --- | --- |
     | 简体中文 | `状态栏 开 / 关`, `悬浮窗 开 / 关` | `无字幕` | `无字幕` |
     | 繁體中文 | `狀態欄 開 / 關`, `懸浮窗 開 / 關` | `無字幕` | `無字幕` |
     | Other languages | `Status ON / OFF`, `Popup ON / OFF` | `No Sub` | `No Subtitles` |
     
-- **Status bar subtitles (since 2.0.1)**: **mirrors the current subtitle line to the system status bar** — a persistent `FrameLayout` is injected into the SystemUI process, and the app process pushes subtitle lines to it via a **cross-process broadcast**. Toggled by a single tap on the `Status ON / Status OFF` pill button on the left of the playback page. See [docs/statusbar-subtitle.md](docs/statusbar-subtitle.md).
-  - **One-way leftward scrolling** (replaces the system marquee's bounce-back loop): scrolling follows the cue duration, and a new line settles before it starts scrolling, so long subtitles no longer bounce back and forth.
+- **Status bar subtitles**: **mirrors the current subtitle line to the system status bar** — a persistent `FrameLayout` is injected into the SystemUI process, and the app process pushes subtitle lines to it via a **cross-process broadcast**. Toggled by a single tap on the `Status ON / Status OFF` pill button on the left of the playback page. See [docs/statusbar-subtitle.md](docs/statusbar-subtitle.md).
+  - **One-way leftward scrolling**: scrolling follows the cue duration, and a new line settles before it starts scrolling, so long subtitles no longer bounce back and forth.
   - **Covers the clock / notification icon area**: while showing, the status bar clock and the notification icon area are hidden and notifications become a numeric badge; everything is restored when it ends.
   - **Fluid Cloud avoidance**: the subtitle's right edge dynamically stops just left of Fluid Cloud (`seeding_card_container`); when Fluid Cloud is absent it fills up to a fixed left bound (38dp). A 24px hysteresis band keeps the width from jumping as Fluid Cloud comes and goes.
 
-- **Visual settings page (since 2.2.0)**: the module ships its own settings page; changes take effect as soon as you tap "Save settings".
-  - **Status card**: the three states — "whether the module is active / whether SystemUI is authorized / whether DLsiteSound is running" — each get their own guidance, and the whole page is disabled while the module is inactive (**tapping the status card five times in a row** unlocks the hidden "Experimental features" card — see below).
+- **Visual settings page**: the module ships its own settings page; changes take effect as soon as you tap "Save settings".
+  - **Three cards + three tabs**: the subtitle appearance settings are merged into **one** card, and the card is split into three tabs — **`Subtitles` / `Line state` / `Layout`** — switching only changes visibility, so no control is rebuilt and unsaved changes are not lost; "Liquid glass", "Experimental features" and "More" remain separate cards.
+  - **Status card (sticky)**: the three states — "whether the module is active / whether SystemUI is authorized / whether DLsiteSound is running" — each get their own guidance, and the whole page is disabled while the module is inactive; the card also shows the **host version and whether it has been verified** (e.g. "Host 2.22.0 · verified"); it **sticks to the top** while you scroll the page. **Tapping the status card five times in a row** unlocks the hidden "Experimental features" card — see below.
+  - **Save and undo**: the bottom save bar **floats** permanently and shows "N unsaved changes"; after saving, the snackbar offers a **one-tap undo of the last save**; leaving the page with unsaved changes asks for confirmation (Save / Discard / Cancel).
   - **Main subtitle / active line**: subtitle color, shadow color, shadow strength, shadow radius, active line opacity, active line scale.
   - **Inactive lines**: blur inactive lines + blur radius, scale inactive lines + scale ratio.
   - **Typography**: alignment (left / center / right), line spacing, extra spacing for wrapped lines inside a long subtitle, panel color.
-  - **Live preview panel**: the preview re-renders in sync while you tweak the parameters.
-  - **Liquid glass tuning (since 2.3.0)**: its own card, placed **before** the "More" card; a master switch + four sliders (backdrop brightness / transparency / brightness / blur strength) + reset to defaults.
+  - **Palette**: each of the three palettes — subtitle color / shadow color / panel color — keeps **6 colours + palette** (white, black, green, orange, cyan, purple).
+  - **Reset split per tab**: each of the three tabs has its own "Reset subtitle colours to defaults / Reset line state to defaults / Reset layout to defaults", which **only resets the settings inside that tab**.
+  - **Live preview panel**: the preview re-renders in sync while you tweak the parameters; it can be collapsed into three lines, and long subtitles and automatic wrapping are rendered with the real layout.
+  - **Liquid glass tuning**: its own card — a master switch + four sliders (backdrop brightness / transparency / brightness / blur strength) + reset to defaults.
   - **Language**: switch between **简体中文 / 繁體中文 / English** on the spot inside the page (independent of the playback-page button language setting).
-  - **Experimental features (since 2.3.2)**: a home for capabilities that are **still being validated, not yet performance-stable, or carry potential copyright risk**, and it is **hidden by default**. **Tap the status card five times in a row** on the settings page (no more than 3 s between consecutive taps) to unlock it; even after unlocking, you still have to tap "Save settings" for it to be written into the config.
-    - **Its master switch**: when off, every sub-feature under it is **turned off**, the switch is **greyed out**, and the **related cache is cleared**.
-    - **Subtitle cache**: the "Offline subtitle cache" described under Features — you can see the current usage and clear it with one tap.
-  - **More**: master switch for status bar subtitles, the **debug log** toggle (since 2.2.7, off by default), subtitle config backup & restore (export / import JSON), restart SystemUI.
+  - **Experimental features**: a home for capabilities that are **still being validated, not yet performance-stable, or carry potential copyright risk**, and it is **hidden by default**. **Tap the status card five times in a row** on the settings page (no more than 3 s between consecutive taps) to unlock it; even after unlocking, you still have to tap "Save settings" for it to be written into the config.
+    - **Its master switch**: when off, every sub-feature under it is **turned off**, but the related caches still have to be cleared **by yourself** — by tapping the relevant buttons *before* switching the feature off (a guard against fat fingers).
+    - **Subtitle cache**: the "Offline subtitle cache" and "Subtitle prefetch" described above. The card gives **four readouts** (N tracks cached / X of Y used / X of Y hits / X works · Y tracks prefetched, plus one extra line for on-screen line consistency); the clearing entry points are split into **"Clear cached subtitles" and "Clear prefetched subtitles"**. **What each readout means, when it resets to zero, and common misreadings** are explained in [docs/字幕缓存读数说明.md](docs/字幕缓存读数说明.md).
+  - **More**: master switch for status bar subtitles, **hide the launcher icon** (off by default; once hidden you can still open the module from the LSPosed module list; **on unsupported devices the icon is restored automatically and you are notified**), the **debug log** toggle (off by default), subtitle config backup & restore (export / import JSON), restart SystemUI.
 
 - **In-process floating window**: the window hangs directly inside the DLsiteSound process (`WindowManager` + `TYPE_APPLICATION_OVERLAY`) and shares the same `SubtitleRepository` instance with all the hooks, so it needs **no cross-process IPC and no separate Service**.
   - **Draggable / resizable**: press anywhere on the panel and drag to move it; drag the bottom-right handle to resize (default 85% screen width × 200dp, minimum 140×72dp, **never taller than half the screen**).
   - **Two ways to dismiss the in-panel close button**: tap the panel once and a ✕ appears; **it hides itself if you don't tap within 5 s**; while it is showing, **tapping an empty part of the panel retracts it immediately**.
   - **The floating window can be used on its own**: when the `com.android.systemui` scope is not authorized, the `Status ON / Status OFF` button on the left is not shown.
 
-- **Liquid glass floating window (since 2.3.0)**: the floating window panel and the playback-page subtitle buttons can be switched to a **liquid glass** look — the "background blur" is done by the **system compositor** (zero permissions, zero capture, zero extra power draw), while the glass itself is drawn by the module as 8 stacked material layers (rounded clipping / adaptive frost / top-and-bottom light response / grain frosting / refracted edge light / inner thin edge light). See [docs/液态玻璃实现与可调参数.md](docs/液态玻璃实现与可调参数.md) for details.
+- **Liquid glass floating-window theme**: the floating window panel and the playback-page subtitle buttons can be switched to a **liquid glass** look — the "background blur" is done by the **system compositor** (zero permissions, zero capture, zero extra power draw), while the glass itself is drawn by the module as 8 stacked material layers (rounded clipping / adaptive frost / top-and-bottom light response / grain frosting / refracted edge light / inner thin edge light). See [docs/液态玻璃实现与可调参数.md](docs/液态玻璃实现与可调参数.md) for details.
   - **Its own card**: the "**Liquid glass tuning**" card is separate — liquid glass (master switch), backdrop brightness, transparency, brightness, blur strength, reset liquid glass defaults. **When the master switch is off, everything below it is hidden.**
   - Once liquid glass is on, "Panel color" can no longer be adjusted (the glass would cover the solid color).
 
@@ -84,17 +88,24 @@
 
 - **Automatic subtitle capture**: intercepts DLsiteSound's network responses (okhttp3) and scans the response body directly for `webvtt` / `subtitles` subtitle JSON, parsing it on the spot — it **does not rely on URL keywords**, so it still works with obfuscated or repackaged okhttp3. The subtitle source is DLsiteSound's official `play.dl.dlsitesound.com/.../optimized/xxx.json`, delivered per audio track.
 
-- **Offline subtitle cache (since 2.3.2, belong to Experimental features)**: any audio track you have **played online** has its subtitles cached on the device automatically — so they still show up **with no network / in airplane mode / without a proxy**. The cache stores only the **subtitle text** delivered by the official server (one entry per audio track); it involves no audio content whatsoever.
+- **Offline subtitle cache (belongs to Experimental features)**: any audio track you have **played online** has its subtitles cached on the device automatically — so they still show up **with no network / in airplane mode / without a proxy**. The cache stores only the **subtitle text** delivered by the official server (one entry per audio track); it involves no audio content whatsoever.
   - **Only tracks you have already played**: a track whose subtitles were never captured online still has none when you are offline.
   - **Keyed by "work + track identity"**: the identity is the `(track count, duration, index)` triple — changing chapters, switching tracks or rebuilding the playlist never crosses tracks; entries whose timeline does not match are **automatically judged mis-tagged and discarded**.
   - **Automatic cleanup**: once the storage limit is exceeded, the **oldest cached entries are removed first**.
-  - **Cache location**: the host app's private directory `Android/data/jp.co.eisys.dlsitesound/files/subtitle_cache/`; the usage readout and the "Clear subtitle cache" entry live in the "**Experimental features**" card on the settings page (that card is hidden by default — see below).
-  - ⚠️ **You may see the cache "reset" once after an upgrade**: if a module upgrade changes the cache format, the old cache is **invalidated and rebuilt wholesale** — the usage readout on the settings page goes back to zero (**this is expected behaviour**, not something a system cleaner did), and it comes back once you play the works again.
+  - **Cache location**: the host app's private directory `Android/data/jp.co.eisys.dlsitesound/files/subtitle_cache/`; the usage readout and the "Clear subtitle cache" entry live in the "**Experimental features**" card on the settings page (that card is hidden by default — see below). **What the "N tracks cached", "X of Y used" and "X of Y hits" readouts actually mean, and when they reset to zero**, is explained in [docs/字幕缓存读数说明.md](docs/字幕缓存读数说明.md).
+  - ⚠️ **You may see the cache "reset" once after an upgrade**: if a module upgrade changes the cache format, the old cache is **invalidated and rebuilt wholesale** — the usage readout on the settings page goes back to zero, and it comes back once you play the works again.
+
+- **Subtitle prefetch (belongs to Experimental features)**: when you open a work's playback page online, the module also **fetches the subtitles of every audio track** in that work's archive file tree **ahead of time** — after that, switching to any track in that work shows subtitles immediately, without waiting for the cloud JSON.
+  - **Limit of 16 works**: beyond that, the **earliest prefetched work** is evicted wholesale; the clearing entry is the "Clear prefetched subtitles" mentioned above.
+  - **Does not use the "subtitle cache" quota**: prefetch is counted and evicted separately, so the "used" figure on the settings page **excludes** the disk space used by prefetch.
+  - Track switching still prefers the **cloud**: if the cloud copy arrives in time it is used (freshest), and only when it does not arrive does the module fall back to the prefetched/cached copy.
 
 - **Smart track switching**: when you switch to an audio track with no subtitles, handling is suspended first and the floating window shows a `No Subtitles` placeholder while it waits for the new track's subtitle JSON — **1 s** when there are no cached cues, relaxed to **15 s** when cached cues exist; if the JSON has still not arrived while it waits, the floating window is **closed early**, and it is **automatically reopened** once the JSON arrives; only if the arbitration window expires with still no JSON are the cues cleared and the state judged to be "no subtitles". See [docs/track-change.md](docs/track-change.md).
-  - **Cloud first, local fallback (since 2.3.2)**: after a track switch the module **waits for the latest cloud copy** first; only if it does not arrive within the window (no network / a slow cloud) does it fall back to the **locally cached** copy, and when fully offline (airplane mode) it reads the local copy straight away.
+  - **Cloud first, local fallback**: after a track switch the module **waits for the latest cloud copy** first; only if it does not arrive within the window (no network / a slow cloud) does it fall back to the **locally cached** copy, and when fully offline (airplane mode) it reads the local copy straight away.
 
 - **Permission guidance and graceful degradation**: when overlay permission has not been granted, the first tap jumps to the "Display over other apps" settings page, and it **only prompts once**.
+
+- **Trimmed always-on logging**: with the debug toggle off, the log only keeps mount lines and one-off probes, track-switch conclusions, every failure and warning, your own deliberate actions, and the **one-line-per-minute** summary of line-consistency observation — watching an episode normally no longer floods the log.
 
 
 ---
@@ -108,7 +119,7 @@
 | **Framework** | LSPosed **2.2.0+** (since 2.0.0 it uses the modern libxposed API; the legacy API and the modern API must not be mixed) |
 | **Scopes** | **Two** must be checked: `jp.co.eisys.dlsitesound` (host app: floating window + playback page buttons) and `com.android.systemui` (status bar subtitles) |
 | **libxposed API** | `minApiVersion=101` / `targetApiVersion=102`, configured in `META-INF/xposed/module.prop`. Since 2.0.0 it **no longer** uses `de.robv.android.xposed:api:82` or the four `xposed*` meta-data entries |
-| **Android version** | `minSdk 24` (Android 7.0) and up; `targetSdk / compileSdk 34`. Android 8.0+ uses `TYPE_APPLICATION_OVERLAY`, lower versions fall back to `TYPE_PHONE` |
+| **Android version** | `minSdk 24` (Android 7.0) and up; `targetSdk / compileSdk 36` (raised to Android 16 in 2.3.5, together with edge-to-edge insets). Android 8.0+ uses `TYPE_APPLICATION_OVERLAY`, lower versions fall back to `TYPE_PHONE` |
 | **Device / ROM** | Tested and adapted for **ONEPLUS / ColorOS**, and should also work on OxygenOS / RealmeUI in theory; other vendors' ROMs should work too as long as overlay / permission behaviour is normal |
 | **Requirement** | Only works when the official server provides subtitles for that audio track (optimized subtitle JSON) |
 | **Not applicable** | Apps other than DLsiteSound; devices that are not rooted or have no Xposed framework installed; DRM-restricted content that has no subtitles at all |
@@ -120,12 +131,13 @@
 
 
 
+
 ## Tested on
 
 - Software version: DLsiteSound 2.22.0
 
-- Device 1: OnePlus 15, ColorOS 17.0.0.105 (CN01B110P02), KernelSU 3.3.0 (32680-2) · kernel 6.12 · LSPosed 2.2.1 (7912)
-- Device 2: OnePlus 12, ColorOS 16.0.10.501 (CN01B110P02), SukiSU 4.2.0 (40900-2) · kernel 6.1 · LSPosed 2.2.1 (7912)
+- Device 1: OnePlus 15, ColorOS 17.0.0.105, KernelSU 3.3.1 (32680-5) · kernel 6.12 · LSPosed 2.2.1 (7912)
+- Device 2: OnePlus 12, ColorOS 16.0.10.501, SukiSU 4.2.1 (40994-5) · kernel 6.1 · LSPosed 2.2.1 (7912)
 
 ---
 
@@ -136,7 +148,6 @@
 2. **Install and enable**: install the APK on a rooted device → open **LSPosed Manager** or a similar module manager → enable this module → **check both** scopes: **`jp.co.eisys.dlsitesound`** + **`com.android.systemui`** → **force stop** DLsiteSound, then **restart SystemUI or reboot your phone**.
 3. **Grant overlay permission**:
    - Settings → Apps → DLsiteSound & DLsiteFloat → Permissions → Special app access → `Display over other apps`.
-   - If needed, also allow `Show windows while running in the background`.
 4. **Open a playback page that has subtitles**: two pill buttons appear above the playback control bar.
    - Left `Status ON / Status OFF`: tap to toggle **status bar subtitles** (off by default); the button does not appear when there are no subtitles or when the `com.android.systemui` scope is not authorized.
    - Right `Popup ON / Popup OFF`: tap to toggle the **floating window**.
@@ -144,7 +155,7 @@
    - When you leave the playback page (back to the home page / list page, etc.) the buttons hide automatically; neither the floating window nor the status bar subtitles are hidden with the page.
 5. **Operating the floating window**: press anywhere on the panel and drag to move it; drag the bottom-right handle to resize. Tapping the panel (not the handle) toggles the close button (✕, 30dp display / hit area) in the top-right corner; tap ✕ to close the window.
 6. The floating window subtitles and the status bar subtitles can be used at the same time without interfering with each other.
-7. **Adjust subtitle appearance**: use the **"DLsiteFloat 设置"** app icon on your launcher, or find this module in your module manager, to open the visual settings page; changes take effect as soon as you tap "Save settings" (status-bar-subtitle changes only refresh after "Restart SystemUI").
+7. **Adjust subtitle appearance**: use the **"DLsiteFloat 设置"** app icon on your launcher, or find this module in your module manager, to open the visual settings page — the subtitle appearance is **one card with three tabs** (`Subtitles` / `Line state` / `Layout`), and switching tabs does not lose unsaved changes; changes take effect as soon as you tap the floating "Save settings" bar at the bottom, and a mis-tap can be **undone** from the snackbar (status-bar-subtitle changes only refresh after "Restart SystemUI").
 8. **Want the liquid glass look**: on the same settings page → the "Liquid glass tuning" card → turn on the master switch, then adjust the four sliders to taste (**Backdrop brightness** should match how bright the current page is; the other three default to `50`) → tap "Save settings".
 
 
@@ -157,8 +168,8 @@
   1. Your device model / Android version / ROM (in particular whether it is ColorOS / HyperOS / stock / near-stock, etc.)
   2. The DLsiteSound version you are using
   3. Reproduction steps + the LSPosed log (filtered by `DLsiteSoundFloat`) + `dlsitefloat_net.log` when relevant + screen recording / screenshots (please redact or crop out any sensitive information)
-- **Before filing, please confirm**: that you installed the latest APK (check the `==== BUILD 2.3.3 / code 1021` line in the LSPosed log)
-- **When troubleshooting track switching / subtitle capture problems**: turn on the **debug log** under "More" on the settings page and reproduce the issue once more (it is off by default and will flood the log if left on; remember to turn it back off afterwards).
+- **Before filing, please confirm**: that you installed the latest APK (check the `==== BUILD 2.4.0 / code 1037` line in the LSPosed log)
+- **When troubleshooting track switching / subtitle capture problems**: turn on the **debug log** under "More" on the settings page and reproduce the issue once more (it is off by default; you can turn it back off afterwards).
 - **Liquid glass issues**: first try "setting blur strength back to 50–60", "not maxing out transparency" and "matching backdrop brightness to how bright the page is"; if it is still wrong, attach the LSPosed log (filtered by `DLsiteSoundFloat`) and state your **device model / ROM** (compositor blur support varies between ROMs).
 
 - File an issue: <https://github.com/ariinyume/DLsiteFloat/issues>
@@ -185,6 +196,6 @@
 
 - Status bar subtitle effect reference: [ColorOS Mod](https://github.com/rikumi/coloros-mod)
 - Subtitle settings feature reference: [ColorOS-Live-Lyrics-Bridge](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge?tab=readme-ov-file)
-- UI reference: [KernelSU](https://github.com/tiann/KernelSU), [LSPosed](https://github.com/LSPosed/LSPosed)
+- UI design reference: [KernelSU](https://github.com/tiann/KernelSU), [LSPosed](https://github.com/LSPosed/LSPosed), [M3E-Canvas](https://github.com/lnkiai/m3e-canvas)
 
 ---
