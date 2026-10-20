@@ -36,6 +36,7 @@ import zipfile
 
 BT = r'F:\WorkBuddyCache\DLSiteSound_Plus\toolchain\android-sdk\build-tools\34.0.0'
 DEXDUMP = os.path.join(BT, 'dexdump.exe')
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根（code 1037：dump 落到 app/build/，不再污染工作区根）
 
 PKG = 'io/github/ariinyume/dlsitesoundfloat'   # dex 格式：包名用 / 分隔
 NEW_CLS = 'L%s/hook/PageFollowPolicy;' % PKG
@@ -62,11 +63,15 @@ def dexdump_all(apk, out):
     # 【code 1001】删不掉（环境批量删除保护）⇒ 首块用 'w' 覆盖写，
     #   否则 'a' 会把**上一轮的 dump 追加进来**，切片可能取到旧数据。
     _rm(out)
+    # code 1037：临时 dex 落到 app/build/_dextmp/ 覆盖写复用、**不删除** ——
+    # 删 9 次/脚本 × 8 脚本会撞上环境批量删除保护，进程被掐断 ⇒ 误报 ENVBLOCK。
+    scratch = os.path.join(ROOT, 'app', 'build', '_dextmp')
+    os.makedirs(scratch, exist_ok=True)
     with zipfile.ZipFile(apk) as z:
         dexs = [n for n in z.namelist() if re.match(r'.*\.dex$', n)]
         for i, n in enumerate(dexs):
             data = z.read(n)
-            tmp = out + '.' + os.path.basename(n)
+            tmp = os.path.join(scratch, os.path.basename(out) + '.' + os.path.basename(n))
             with open(tmp, 'wb') as f:
                 f.write(data)
             r = subprocess.run([DEXDUMP, '-d', tmp],
@@ -74,7 +79,6 @@ def dexdump_all(apk, out):
                                errors='replace', encoding='utf-8')
             with open(out, 'a' if i else 'w', encoding='utf-8') as f:
                 f.write(r.stdout)
-            _rm(tmp)
     return out
 
 
@@ -107,7 +111,9 @@ def main():
             print('找不到 APK: %s' % a)
             return 2
 
-    work = os.path.dirname(os.path.abspath(apk_new))
+    scratch_root = os.path.join(ROOT, 'app', 'build', '_dextmp')
+    os.makedirs(scratch_root, exist_ok=True)
+    work = scratch_root   # code 1037：dump 不再落在 APK 旁边（工作区根曾堆满 dexdump_*.txt）
     d_new = os.path.join(work, 'dexdump_994.txt')
     print('主验 dexdump: %s' % apk_new)
     dexdump_all(apk_new, d_new)

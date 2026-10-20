@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  【code 1028 / 审查稿 P1-④】浮动工具条上的「脏态圆点」。
+
+  8dp 实心圆、取 colorPrimary —— 它只表达「有未保存的改动」，
+  与旁边的文案（有 N 处未保存）是同一件事的两种强度：
+  扫一眼看到点、要看细节读旁边那行字。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="?attr/colorPrimary" />
+    <size
+        android:width="8dp"
+        android:height="8dp" />
+</shape>

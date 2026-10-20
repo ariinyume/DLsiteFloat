@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  【code 1031】英文环境下的清单文案。
+
+  ⚠️ 这里**只放**清单要用的静态标签（LSPosed 模块名 / 简介 / 桌面图标名）。
+     设置页正文仍然走 ui/Strings.java 的三语表 —— 那套是「页内秒切」，与系统语言无关，
+     不能挪到资源限定符里（挪了就必须重建 Activity 才能换语言）。
+  ⚠️ 只覆盖这两个键是刻意的：其余键（通知渠道等）中文默认值本身就是英文，
+     多写一份只会变成两份需要同步的真相。
+-->
+<resources>
+    <!-- ⚠️ 与 values/strings.xml 的 app_description **逐字相同**（中英双语写死在同一串），
+         两边任何一处改动都要同步另一处 —— 见那边的注释（code 1032 / Ari 第 9 条）。 -->
+    <string name="app_description">DLsiteSound 悬浮窗 &amp; 状态栏字幕模块 / DLsiteSound Floating Window &amp; Status Bar Subtitle Module</string>
+    <string name="settings_label">DLsiteFloat</string>
+</resources>

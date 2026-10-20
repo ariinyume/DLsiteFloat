@@ -29,6 +29,83 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 脚本 → (类别, 一句话说明它验什么)
 # ⚠️ 说明必须与脚本内部判据一致；改判据时同步改这里，否则索引表本身就会骗人。
 SCRIPTS = [
+    ('verify_1037_src.py', '源码层',
+     'code 1037 / 2.4.0 日常日志降噪 ＋ 验证链三处根治：缓存层 log/logWarn 拆分（双写绝迹、'
+     '常开出口只剩 1 处、12 个告警点分流）、生命周期两行 / 预取命中四行 / 标签普查倒出 / '
+     'poll tick 归调试、常开取证锚一条不丢、四个 dump 脚本有完整性哨兵、八个脚本临时 dex '
+     '改落 _dextmp 不再逐个删、run_all latest 语义、998 归档口径、版本号 2.4.0/1037、'
+     '履历段收尾句模板、常开调用点总量 ≤ 200（30 项）'),
+    ('verify_1037.py', 'dex 字节码层',
+     'code 1037：aapt2 versionCode=1037 / versionName=2.4.0、新横幅串在包、履历段串【code 1037 '
+     '在包（对照包 0 次）、dex 指令层计数「常开出口 205→197 减少 8 / 调试出口 151→160 增加 9」、'
+     'SubtitleCache 类新增 logWarn（对照包该类没有）+ 3 条反向锚（tools 改动不漏进包）（13 项）'),
+    ('verify_1033_src.py', '源码层',
+     'code 1033 设置页第七轮八条：卡片末行底距改成纯常量（CARD_LAST_GAP_DP 同一份 4dp、'
+     'pinCardLastBottom 里不再有任何测量、旧测量三件套已删、四卡下内距 10dp）、'
+     'card_main 上内距 16→24dp、删掉隐藏图标说明小字（安全绳 ToTast 仍在）、'
+     '溢出菜单换自绘 PopupWindow（圆角 16dp + clipToOutline + 按钮上方定位 + 落回下方兜底）、'
+     '预览窗 metrics 改 forceLayout+累加、兜底分支折叠态沿用上次窗口高、动画 cancel、'
+     '版本纪律、边界（36 项）'),
+    ('verify_1033.py', 'dex 字节码层',
+     'code 1033：versionCode=1033 / label 不变、布局 paddingTop=24dp 0→1（10dp 仍 4 处）、'
+     '四卡 paddingBottom=10dp×4、PopupWindow 引用 1→2 与 PopupMenu 2→1、'
+     '旧测量三方法进包数 1→0、五个新字段只在 1033 里存在、'
+     'getTextBounds 不增（墨迹测量没回来）+ 5 条如实标注（16 项）'),
+    ('verify_1032_src.py', '源码层',
+     'code 1032 设置页第六轮九项：页签下距=卡片上内距、外观卡上内距 16dp、预览内容高度钉成自然全高'
+     '（父级压扁的真因，pin/release 两方法 + 顺序断言）、控件下边距 4dp 补齐三种行、'
+     '15 枚图标统一 2dp 描边 + 补 launcher、底栏 48dp、祖先链四层 clipChildren=false、'
+     '隐藏桌面图标安全绳（MAIN+INFO + hasFallbackEntry + 开关弹回）、LSPosed 简介中英并列、'
+     '版本纪律、边界（44 项）'),
+    ('verify_1032.py', 'dex 字节码层',
+     'code 1032：清单 MAIN+INFO 只 1 处 / LAUNCHER 仍 1 处、布局 paddingTop=16dp 0→1 与 10dp 5→4、'
+     '底栏 28→48dp、页签 6→10dp、clipChildren/clipToPadding 1→4、'
+     '简介中英并列（旧包只有中文）、ic_ui_launcher 0→1 与 ic_palette 1→0、'
+     '三个新方法进包 + 安全绳 Toast 文案 + 5 条如实标注（21 项）'),
+    ('verify_1031_src.py', '源码层',
+     'code 1031 设置页第五轮十项：四卡内距统一 10dp、三种行的尾部空隙统一（标签下 6 / 控件下 6 / 行间 12）、'
+     '预览折叠几何重写成「第 1 行顶 / 第 3 行底」（卡高=三行净高、宽度兜底扣容器 padding、折叠延后到布局完成）、'
+     '实验卡 GONE 时不算 bottomMargin 且转可见后重钉、缓存两枚按钮等高单行 + 英文缩写、'
+     '页头副标题 / 桌面名 / LSPosed 简介 + values-en、activity-alias 桌面入口 + 隐藏开关、'
+     '保存栏上抬 28dp + 恒定阴影、版本纪律、边界（59 项）'),
+    ('verify_1031.py', 'dex 字节码层',
+     'code 1031：versionCode=1031 / application-label=DLsiteFloat、清单 activity-alias（LAUNCHER 只一处）、'
+     '新文案五组（页头副标题三语 / 图标开关 / UI prefs 键 / alias 全名 / 缓存说明压短）、'
+     'Clear cached subtitles 计数 2→1（按钮缩写带来的硬锚）、'
+     '四卡 paddingBottom=10dp×4 与 paddingTop=10dp×5、底栏 28dp + clipChildren=false、'
+     '四个新方法进包 + 5 条如实标注（31 项）'),
+    ('verify_1030_src.py', '源码层',
+     'code 1030 设置页第四轮九项：预览折叠改「上下各藏一行」+ 上沿按内容坐标裁（宽度变了重量高）、'
+     '页签 40dp 与「对齐」同高同色、对齐行搬到悬浮窗颜色之前、关开关不清缓存、'
+     '缓存清理拆成「已缓存字幕 / 预取字幕」两枚（新 action + 宿主链路 clearAll）、'
+     '删液态玻璃小字、底栏去 FloatingToolbarLayout 换普通 LinearLayout、滚动区 96dp→12dp 贴底、'
+     '版本纪律、边界（42 项）'),
+    ('verify_1030.py', 'dex 字节码层',
+     'code 1030：aapt2 versionCode=1030、文案改名四语（清除已缓存字幕 / 清除预取字幕，繁体旧名清干净）、'
+     '预取清理链路四个调用点（clearAll / deleteRecursively / handlePrefetchClear / sendPrefetchClear）+ '
+     'ACTION 常量串、onExperimentalToggled 方法体里 sendCacheClear 已绝迹、'
+     '底栏标签名不再是 FloatingToolbarLayout + 四属性消失但吸底仍成立、'
+     '页签 40dp / 滚动区 12dp / 外观卡 16dp、保持型五条 + 5 条如实标注（36 项 / 20 个区分力锚）'),
+    ('verify_1029_src.py', '源码层',
+     'code 1029 设置页第三轮五项：预览收起改单面裁切（preview_mini 已删 / 逐帧插值 / 内容位移 / '
+     'UNSPECIFIED 实测 / 双向动画）、三处 M3E 连通按钮组（3dp 间距 + 内侧 8dp 逐角模型）、'
+     '底栏去容器层（背景/色调/阴影/内边距四清 + 溢出键自有圆底）、语言胶囊循环切换（删弹窗）、'
+     '预存上限 16、版本纪律、边界（40 项）'),
+    ('verify_1029.py', 'dex 字节码层',
+     'code 1029：aapt2 versionCode=1029、新增文案三条（点击切换语言 三语）、'
+     '新增资源 bg_toolbar_icon（旧包无）、preview_mini 四个 id 全部去包（旧包有）、'
+     '底栏节点四属性（background/backgroundTint/padding/elevation）、溢出键指向新 drawable、'
+     '淘汰阈值 const/16 = 16（旧包 8）、保持型四条 + 3 条如实标注（24 项 / 11 个区分力锚）'),
+    ('verify_1028_src.py', '源码层',
+     'code 1028 设置页第二轮审查七项（6/7 合并）：页签改名（字幕/行态/排版，悬浮窗颜色留在排版面）、'
+     '三处 48dp 热区（语言胶囊容器 / TouchDelegate 8dp 扩展 / 页签组 48）、四个恢复默认入口挂撤销、'
+     '字阶（28sp 页头 / 16sp 节标题 600 / 读数 onSurface）、浮动工具条（脏点+读数+溢出+96dp 让位）、'
+     '折叠态三行窗口（**1029 起按单面裁切口径判**：preview_mini 已删 / 逐帧插值 / 双向动画）、版本纪律（code 只守下界，横幅动态拼）、边界（42 项）'),
+    ('verify_1028.py', 'dex 字节码层',
+     'code 1028：aapt2 versionCode=1028/targetSdk=36、新增文案三条（未保存读数/撤销恢复/更多操作）、'
+     '新增资源 9 枚（preview_mini 四件 + dirty 两件 + bg_dirty_dot + ic_more_horiz）、'
+     '布局出现 FloatingToolbarLayout、页签组高 48dp（上一版 40dp）、restart_button 去包、'
+     '保持型五条、横幅自报（26 项 / 15 个区分力锚）'),
     ('verify_1027_src.py', '源码层',
      'code 1027 只加诊断（不发版）：行同步观测的 streak 判据（明细上限 8 / 成串门槛 3 / 对上归零 /'
      '汇总三段）、观测不接管渲染、通道静默自检（20s 阈值 / peekedCount 接线 / 三项判据 / 只报一次 /'
@@ -185,6 +262,12 @@ SCRIPTS = [
 # ⚠️ 只有**真正解析 APK/dex** 的脚本才登记在这里。
 #   不接包的脚本（如源码层校验、真机日志校验）不要登记，否则会被误判成「缺参数」。
 NEEDS_APK = {
+    'verify_1033.py': (1033, 1032),   # <apk_1033> <apk_1032 上一版>
+    'verify_1032.py': (1032, 1031),   # <apk_1032> <apk_1031 上一版>
+    'verify_1031.py': (1031, 1030),   # <apk_1031> <apk_1030 上一版>
+    'verify_1030.py': (1030, 1029),   # <apk_1030> <apk_1029 上一版>
+    'verify_1029.py': (1029, 1028),   # <apk_1029> <apk_1028 上一版>
+    'verify_1028.py': (1028, 1027),   # <apk_1028> <apk_1027 上一版>
     'verify_1026.py': (1026, 1025),   # <apk_1026> <apk_1025 上一版>
     'verify_1025.py': (1025, 1024),   # 补登记：上一轮漏了，默认路径会随 code 改名失效
     'verify_1024.py': (1024, 1023),   # <apk_1024> <apk_1023 上一版>
@@ -202,7 +285,11 @@ NEEDS_APK = {
     'verify_1001.py': (1001, 1000),   # <apk_1001> <apk_1000>
     'verify_1000.py': (1000, 999),   # <apk_1000> <apk_999>
     'verify_999.py': (999, 997),   # <apk_999> <apk_997>
-    'verify_998.py': (998, 997),   # <apk_998> <apk_997>
+    # ⚠️ 【code 1037】code 998 的 APK 已不在工作区 ⇒ 主验位写 'latest'：
+    #   由 find_apks 的**最大 code** 顶上。判据语义随之升级为
+    #   「998 的回退一直保持到当前最新版」（见 verify_998.py 头部说明）。
+    'verify_1037.py': (1037, 1036),   # <apk_1037> <apk_1036 上一版>
+    'verify_998.py': ('latest', 997),   # <apk_最新> <apk_997>
     'verify_997.py': (997, 996),   # <apk_997> <apk_996>
     'verify_996.py': (996, 995),   # <apk_996> <apk_995>
     'verify_995.py': (995, 994),   # <apk_995> <apk_994>
@@ -265,6 +352,13 @@ def build_argv(name, repo):
     want_main, want_old = spec[0], spec[1]
     want_prev = spec[2] if len(spec) > 2 else None
     cands = find_apks(repo)
+    if want_main == 'latest':
+        # 【code 1037】历史包已归档不可得时的「现状复验」：主验位取当前最大 code。
+        #   ⚠️ 这**不是**放宽判据 —— 期望值一概不动，只是把「本轮回滚生效」
+        #   升级成「该回滚保持至今」。别拿它去替任何「必须有这一轮包」的脚本。
+        want_main = max(cands) if cands else -1
+        if want_main < 0:
+            return [], ['latest（工作区里一个 APK 都没扫到）']
     missing = []
     args = []
     if want_main not in cands:

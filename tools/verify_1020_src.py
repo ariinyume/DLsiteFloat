@@ -167,8 +167,12 @@ def main():
             body[k] = ''
         check('方法体切到：%s' % d.split('(')[0].split()[-1], bool(body[k]))
 
+    # 【code 1034 改写】原正则要求 if(identity==0L){ 后**紧跟** return null；后续轮次在
+    #   早退块里合法补了未命中计数（synchronized 内 missCount++）⇒ 旧正则失配。
+    #   放宽为「早退块内出现 identity==0L 且随后第一个 return null」，语义未变，非回归。
     check('lookup 有「身份未知即放弃」的早退（identity == 0L + return null）',
-          bool(re.search(r'if\s*\(\s*identity\s*==\s*0L\s*\)\s*\{\s*return null;', body['lookup'])),
+          bool(re.search(r'if\s*\(\s*identity\s*==\s*0L\s*\)\s*\{.*?return null;',
+                         body['lookup'], re.S)),
           '【本轮新增】')
     check('lookup 体内不再触碰弱键表 bySelection',
           'bySelection' not in body['lookup'], '【本轮删除】')
@@ -220,8 +224,10 @@ def main():
           'byFile.put(fileName, e)' in body['put'])
     check('stampDuration 补盖后从孤儿槽位摘除',
           'bySelection.remove(selection)' in body['stamp'], '【本轮新增】')
-    check('stampDuration 有「同身份让位」守卫',
-          'stamp: identity already held by another entry' in body['stamp'], '【本轮新增】')
+    # 【code 1034 改写】原锚日志串是「单条占位」时代的形态；code 1024 作品维强约束把
+    #   让位条件收紧为「同作品同身份才让位」，日志串随之改为 same-work 形态。语义收紧而非回退。
+    check('stampDuration 有「同作品同身份让位」守卫（1024 起形态）',
+          'stamp: same-work entry already holds identity' in body['stamp'], '【本轮新增】')
     check('removeEntryLocked 一并摘 byFile',
           'byFile.remove(e.file)' in cache)
     check('loadIndexLocked 按身份分派（identity != 0 才进强键表）',

@@ -35,3 +35,8 @@ README.zh-TW.md text eol=crlf
 README.en.md text eol=crlf
 docs/*.md  text eol=lf
 
+# 历史档案：入库保持 LF（与 docs/*.md 同口径）。
+#   2026-10-20 实测：本文件在工作区被 git 判成 `w/-text`（无人为属性、也无 NUL，
+#   疑似历史上某次以 CRLF 入库后一直沿用），导致每次改它 `git diff` 都显示整文件重写。
+#   显式钉 LF 后，diff 只显示真实新增。
+CHANGELOG.md text eol=lf

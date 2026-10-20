@@ -9,13 +9,14 @@
   ├──────────── 吸顶分界线 ─────────────────┤
   │  「调整预览窗」标题                      │  ← 第一个 noScroll ⇒ 可滚动高度到此截止
   │  ③ 预览卡（壁纸 + 半透明面板 + 5 行字幕） │  ← noScroll（钉在顶部不动）
+  │     · 收起 = 高度收到 3 行（底边向上抬）   │
   ├──────────── 吸顶分界线 ─────────────────┤
   │ ④ 主字幕 / 活动行调整 + 卡片             │  ← 以下都在 NestedScrollView 里滚动
   │ ⑤ 非活动行字幕调整 + 卡片                │
   │ ⑥ 字幕排版 + 卡片                        │
   │ ⑦ 其他 + 卡片                            │
   └──────────────────────────────────────┘
-  ▓▓ ⑧ 吸底操作栏：[重启系统界面] [保存设置] ▓▓   ← bottom_bar（不参与滚动）
+  ▓▓ ⑧ 浮动操作条：[⋯] [保存设置] ▓▓  ← bottom_bar（不占高度、无容器层）
 
   ── v1.6 相对 v1.5 的结构性改动（对应 2026-10-05 code961 测试报告）──
 
@@ -68,14 +69,22 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="?attr/colorSurface"
+    android:clipChildren="false"
+    android:clipToPadding="false"
     android:orientation="vertical">
 
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     android:id="@+id/settings_coord"
     android:layout_width="match_parent"
     android:layout_height="0dp"
-    android:layout_weight="1">
+    android:layout_weight="1"
+    android:clipChildren="true"
+    android:clipToPadding="false">
 
+    <!-- 【code 1036】app:liftOnScroll=false：M3 默认在内容滚动时给 appbar 叠加抬升色
+      （实测吸顶区随滚动从 249 渐深到 237，与状态栏 249 脱节，Ari 21:44 录屏）。
+      关掉后吸顶区恒为 applyPageBackground 铺的页面大底色 —— Ari 方案 B（吸顶区不变色）。
+      方案 A（状态栏跟随渐变）不可行：targetSdk 36 强制 edge-to-edge，statusBarColor 失效。 -->
     <com.google.android.material.appbar.AppBarLayout
         android:id="@+id/settings_appbar"
         android:layout_width="match_parent"
@@ -83,7 +92,8 @@
         android:background="?attr/colorSurface"
         android:paddingBottom="5dp"
         android:stateListAnimator="@null"
-        app:elevation="0dp">
+        app:elevation="0dp"
+        app:liftOnScroll="false">
 
         <!-- ① 页头行：左 = 大标题 + 副标题；右 = 语言胶囊（§1.1.1 / v1.6 ⑤） -->
         <LinearLayout
@@ -109,7 +119,7 @@
                     android:layout_height="wrap_content"
                     android:text="DLsiteFloat"
                     android:textColor="?attr/colorOnSurface"
-                    android:textSize="26sp"
+                    android:textSize="28sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -127,40 +137,53 @@
               · 高 32dp ⇒ 全圆角 16dp（bg_language_capsule.xml）；
               · 文案由代码设成**当前语言的短名**（简中 / 繁中 / EN），见 applyStaticTexts；
               · ⚠️ 不要退回 MaterialButton + app:icon：v1.5 真机上文字会被 icon 布局吃掉，只剩图标。
+
+              ── 【code 1028 / 审查稿 P0-②】外面包一层 48dp 容器 ──────────────────
+              胶囊视觉仍是 32dp（与「恢复默认」胶囊同高，这是 Ari 975 §4 定下的），
+              但**点击热区**必须到 MD3 的 48dp 下限 —— 容器高 48dp + gravity=center
+              让胶囊垂直居中，手指点在胶囊上下那 8dp 空白里也仍然命中。
+              ⚠️ 48dp 只加在**容器**上，不要顺手把胶囊本体也撑到 48dp：
+                 那会让它在页头行里比副标题高出一截，与「恢复默认」也不再等高。
             -->
             <LinearLayout
-                android:id="@+id/language_button"
                 android:layout_width="wrap_content"
-                android:layout_height="32dp"
+                android:layout_height="48dp"
                 android:layout_marginStart="10dp"
-                android:background="@drawable/bg_language_capsule"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center_vertical"
-                android:minWidth="0dp"
-                android:orientation="horizontal"
-                android:paddingStart="8dp"
-                android:paddingEnd="10dp">
+                android:gravity="center">
 
-                <ImageView
-                    android:id="@+id/language_icon"
-                    android:layout_width="14dp"
-                    android:layout_height="14dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_language"
-                    app:tint="?attr/colorOnPrimary" />
-
-                <TextView
-                    android:id="@+id/language_text"
+                <LinearLayout
+                    android:id="@+id/language_button"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="4dp"
-                    android:ellipsize="end"
-                    android:maxWidth="64dp"
-                    android:singleLine="true"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:textColor="?attr/colorOnPrimary" />
+                    android:layout_height="32dp"
+                    android:background="@drawable/bg_language_capsule"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:minWidth="0dp"
+                    android:orientation="horizontal"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="10dp">
+
+                    <ImageView
+                        android:id="@+id/language_icon"
+                        android:layout_width="14dp"
+                        android:layout_height="14dp"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_language"
+                        app:tint="?attr/colorOnPrimary" />
+
+                    <TextView
+                        android:id="@+id/language_text"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:ellipsize="end"
+                        android:maxWidth="64dp"
+                        android:singleLine="true"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:textColor="?attr/colorOnPrimary" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 
@@ -283,9 +306,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:textAppearance="?attr/textAppearanceTitleSmall"
-                android:textColor="?attr/colorPrimary"
-                android:textStyle="bold" />
+                android:textAppearance="@style/TextAppearance.DLsiteFloat.SectionTitle" />
 
             <!-- 展开/收起指示箭头：收起时旋转 180°（由 SettingsActivity#applyPreviewCollapsed 驱动） -->
             <ImageView
@@ -295,7 +316,7 @@
                 android:layout_marginStart="8dp"
                 android:contentDescription="@null"
                 android:src="@drawable/ic_chevron_down"
-                app:tint="?attr/colorPrimary" />
+                app:tint="?attr/colorOnSurfaceVariant" />
         </LinearLayout>
 
         <!--
@@ -303,6 +324,15 @@
              壁纸近似底（不透明）→ 半透明悬浮窗面板 → 字幕文字。
           ⚠️ 必须是普通 FrameLayout：MaterialCardView 会用自身的 MaterialShapeDrawable
              顶掉 setBackground()，v1.5 那层「半透明面板」实际上一次都没画出来过。
+
+          【code 1029】折叠态**不再有第二个视图**（1028 的 preview_mini 已删除）。
+          收起 = 这张卡自己的高度收短，内容顶部锚定、底边被裁掉 ⇒ 观感是
+          「窗口底边向上抬」；展开 = 底边向下落。整套动效只有一个面在动，
+          不存在两张几乎一样的画面互相淡入淡出（那正是 1028 被指出的「百叶窗」）：
+            · 背景取色**天然一致**（同一份 backdrop / panel drawable，同一次
+              applyPreviewPanel 上色），不会再出现「收起后底色变了」；
+            · 折叠窗口高度由 SettingsActivity#measurePreviewWindow 按**当前字号实测**，
+              用户调大字号时窗口跟着长，不做固定 dp 裁剪。
         -->
         <FrameLayout
             android:id="@+id/preview_card"
@@ -339,11 +369,25 @@
         </FrameLayout>
     </com.google.android.material.appbar.AppBarLayout>
 
+    <!--
+      【code 1030 / Ari 第 9 条】滚动区底部让位 96dp → **12dp**。
+
+      96dp 是 1028 之前的老口径：那时底栏真实占高度，必须给它让位。1028 把底栏换成
+      FloatingToolbarLayout（浮在内容之上、不占高度）之后，这 96dp 就变成了纯空白 ——
+      加上 settings_content 自己的 20dp paddingBottom 与彩蛋那行，滚到底会看到
+      约 1/5 屏的空白（正是 Ari 说的「其他卡片下方留白过多」）。
+
+      现在只留 12dp：最后一张卡片的底边落在离屏幕底 12 + 20 = 32dp 处（卡片贴底），
+      彩蛋 SMILE! :D 就在这 32dp 里出现 —— 够它显形，不占屏幕。
+      ⚠️ 底栏仍然浮在这块区域上方（它不占高度）⇒ 滚到底时两个按钮会压住最后一张卡的
+         一角。这是「按钮悬空」的必然结果，Ari 明确要的是「卡片贴底 + 按钮浮着」。
+    -->
     <androidx.core.widget.NestedScrollView
         android:id="@+id/settings_scroll"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:fillViewport="true"
+        android:paddingBottom="12dp"
         android:scrollbars="none"
         android:overScrollMode="ifContentScrolls"
         app:layout_behavior="@string/appbar_scrolling_view_behavior">
@@ -381,9 +425,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="4dp"
                 android:layout_marginTop="16.8dp"
-                android:textAppearance="?attr/textAppearanceTitleSmall"
-                android:textColor="?attr/colorPrimary"
-                android:textStyle="bold" />
+                android:textAppearance="@style/TextAppearance.DLsiteFloat.SectionTitle" />
 
             <!-- ④ 字幕外观（【code 1025 / P1-1】三卡合一：颜色 / 行态 / 排版）
                  原来这里是三张独立卡（主字幕 / 非活动行 / 排版）各自带一条「恢复默认」，
@@ -399,16 +441,36 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:paddingStart="16dp"
-                    android:paddingTop="10dp"
+                    android:paddingTop="24dp"
                     android:paddingEnd="16dp"
-                    android:paddingBottom="6dp">
+                    android:paddingBottom="10dp">
 
-                    <!-- 组高 40dp、段间距 2dp、圆角 full（M3E Button Group 规格） -->
+                    <!--
+                      【code 1033 / Ari 第 3 条】paddingTop 16 → **24dp**：
+                        「字幕 / 行态 / 排版 三个按钮离上边距再远一点」。
+                        ⚠️ 只动这一个值 —— 页签 → 首个选项的间距由 appearance_tabs 的
+                           marginBottom(10dp = CARD_PAD_TOP_DP) 单独负责，两者互不影响。
+
+                      【code 1028 / 审查稿 P0-②】组高 40 → 48dp（为了点准）。
+                      【code 1030】又改回 **40dp**：Ari 要求「『字幕/行态/排版』按钮高度
+                      和选中/未选颜色改为与『对齐』按钮一致」，而对齐那排是 CONTROL_H_DP(40dp)。
+                      1028 抬到 48dp 之后，同一张卡里两排胶囊一高一矮，反而更刺眼。
+                      ⚠️ 这里写 40dp 只是给预览/设计稿对齐；**真值以代码为准** ——
+                         buildAppearanceTabs() 会用 dp(CONTROL_H_DP) 覆盖一次本高度，
+                         之后常量一改，两排同步走，不会出现「XML 改了 Java 没改」。
+
+                      【code 1032】marginBottom 6 → 10dp = CARD_PAD_TOP_DP。
+                         Ari 第 1 条：「『排版』里第一个选项离页签按钮 比其他卡片第一个选项
+                         离卡片顶端 更近」。另外三张卡的「卡顶 → 首个选项」= 卡片 paddingTop
+                         (10dp) + 行头自带的 14dp 内缩；这里 = marginBottom + 同样的 14dp 内缩
+                         ⇒ 把 marginBottom 钉到 10dp，两个读数就完全相等。
+                         Java 侧 buildAppearanceTabs() 也会按同一个常量再写一次。
+                    -->
                     <LinearLayout
                         android:id="@+id/appearance_tabs"
                         android:layout_width="match_parent"
                         android:layout_height="40dp"
-                        android:layout_marginBottom="6dp"
+                        android:layout_marginBottom="10dp"
                         android:orientation="horizontal" />
 
                     <LinearLayout
@@ -440,9 +502,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="30dp"
                 android:layout_marginStart="4dp"
-                android:textAppearance="?attr/textAppearanceTitleSmall"
-                android:textColor="?attr/colorPrimary"
-                android:textStyle="bold" />
+                android:textAppearance="@style/TextAppearance.DLsiteFloat.SectionTitle" />
 
             <!-- 【code 1003】⑧ 液态玻璃效果调整：开关 + 环境背景亮度 / 通透度 / 明暗度 / 模糊强度 + 恢复默认 -->
             <com.google.android.material.card.MaterialCardView
@@ -455,9 +515,9 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:paddingStart="16dp"
-                    android:paddingTop="6dp"
+                    android:paddingTop="10dp"
                     android:paddingEnd="16dp"
-                    android:paddingBottom="6dp" />
+                    android:paddingBottom="10dp" />
             </com.google.android.material.card.MaterialCardView>
 
 
@@ -468,9 +528,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="30dp"
                 android:layout_marginStart="4dp"
-                android:textAppearance="?attr/textAppearanceTitleSmall"
-                android:textColor="?attr/colorPrimary"
-                android:textStyle="bold" />
+                android:textAppearance="@style/TextAppearance.DLsiteFloat.SectionTitle" />
 
             <!-- 【code 1015 / 2.3.2】实验性功能卡片：总开关 + 卡内子功能（当前是「字幕缓存」）。
                  显隐由 SettingsActivity#applyExperimentalVisibility 控制（未解锁 ⇒ GONE）。 -->
@@ -484,9 +542,9 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:paddingStart="16dp"
-                    android:paddingTop="6dp"
+                    android:paddingTop="10dp"
                     android:paddingEnd="16dp"
-                    android:paddingBottom="6dp" />
+                    android:paddingBottom="10dp" />
             </com.google.android.material.card.MaterialCardView>
             <!-- 「其他」节标题（在卡片外） -->
             <TextView
@@ -495,9 +553,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="30dp"
                 android:layout_marginStart="4dp"
-                android:textAppearance="?attr/textAppearanceTitleSmall"
-                android:textColor="?attr/colorPrimary"
-                android:textStyle="bold" />
+                android:textAppearance="@style/TextAppearance.DLsiteFloat.SectionTitle" />
 
             <!-- ⑦ 其他：状态栏字幕功能 / 备份恢复 -->
             <com.google.android.material.card.MaterialCardView
@@ -510,9 +566,9 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:paddingStart="16dp"
-                    android:paddingTop="6dp"
+                    android:paddingTop="10dp"
                     android:paddingEnd="16dp"
-                    android:paddingBottom="6dp" />
+                    android:paddingBottom="10dp" />
             </com.google.android.material.card.MaterialCardView>
 
             <!--
@@ -540,50 +596,99 @@
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 
-</androidx.coordinatorlayout.widget.CoordinatorLayout>
-
     <!--
-      ⑧ 吸底操作栏（§8.1 / §8.2 / §8.3）。
-      · §8.1：左「重启系统界面」= MD3 tonal（colorSecondaryContainer + colorOnSecondaryContainer）；
-        右「保存设置」= 填充主色（colorPrimary + colorOnPrimary）；各占一半宽、大圆角、高 ≥48dp。
-      · §8.2：无上沿分隔线。
-      · 🔴 2.1.4：**真实占位**的兄弟节点（不再是 CoordinatorLayout 里浮着的 layout_gravity=bottom）
-        ⇒ 滚动区自动在它上方收口，滚到底时最后一行不会被压住（见文件头说明）。
+      【code 1030 / Ari 第 8 条】底栏由 FloatingToolbarLayout 换成**普通 LinearLayout**。
+
+      Ari 连续两轮反馈「保存设置的底层还留了一层底部覆盖吸底，不是完全的按钮悬空」，
+      而且这次给了定位线索：「页面向下滑到液态玻璃卡片时出现，往上滑又消失」——
+      说明那层东西**随滚动状态变化**。1029 已经把它自己的 background / backgroundTint /
+      elevation / padding 四样全清成透明，可它仍然在 ⇒ 那层「容器」不是普通 View 背景，
+      而是该控件在自身状态变化（展开/收起、宽度动画、onSizeChanged）时**重新装回来的**
+      一层 MaterialShapeDrawable —— 清 XML 属性管不住它。
+
+      与其继续跟这个行为打补丁，不如把容器整个去掉：
+        · 两个控件各自带背景（保存键 = primary 胶囊，溢出键 = bg_toolbar_icon 圆底），
+          本来就不需要外框；
+        · insets 由根布局统一处理（见 SettingsActivity#applyEdgeToEdgeInsets），
+          所以官方样式里那条 marginBottomSystemWindowInsets 也不再需要；
+        · 没有容器 = 没有「谁能被重新装回来」的东西，这一类问题一次清零。
+      ⚠️ id 仍是 bottom_bar：applyPageBackground / mBottomBar 的既有引用不用改。
+      ⚠️ 别再为了「好看一点」给它补 background/elevation —— 那就是被点名的「底部覆盖」。
+
+      ── 【code 1032】Ari 第 5 / 第 8 条 ────────────────────────────────────
+      · 第 5 条「保存设置按钮还是太靠页面下方了，再往上抬一些」⇒ marginBottom 28 → **48dp**。
+      · 第 8 条「保存设置按钮四个角有直角阴影，按钮下方看得出来有平切」：
+        阴影是 elevation 投出来的，**画在控件盒子之外**。只要祖先链上**任何一层**
+        clipChildren=true，它就会在那一层的矩形边界处被切断 —— 上下的圆柱弧被切掉，
+        看起来正是「四角直角 + 下方平切」。所以 clipChildren=false 必须在整条祖先链上都不被裁：
+        这里这层 wrap_content 容器 → bottom_bar → settings_root。
+        ⚠️ 上一版只给了 bottom_bar 一层，剩下层仍在裁 —— 所以症状没消失。
+        ⚠️【code 1034】settings_coord 不在本链上（bottom_bar 是它的兄弟节点），已恢复
+        clipChildren=true 用来裁掉吸顶时滚出上边界的页头/状态卡（Ari 第 1 条：状态栏处只露纯底色）。
     -->
     <LinearLayout
         android:id="@+id/bottom_bar"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:background="?attr/colorSurface"
-        android:orientation="vertical">
+        android:layout_gravity="bottom|end"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="48dp"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
 
+        <!--
+          ▲ 【code 1032 / Ari 第 8 条】`clipChildren="false"` 在整条祖先链上都**不被裁** —— 保存键的
+            投影才不会变成「四角直角 + 下方平切」。见 bottom_bar 的注释
+            （【code 1034】注：链为 本容器 → bottom_bar → settings_root，不经 settings_coord）。
+        -->
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingStart="16dp"
-            android:paddingTop="10dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="12dp">
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/restart_button"
-                android:layout_width="0dp"
+        <!-- 脏态圆点：只在草稿与已存配置有差异时可见（见 updateSaveBar） -->
+            <View
+                android:id="@+id/dirty_dot"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:background="@drawable/bg_dirty_dot"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/dirty_label"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="8dp"
-                android:layout_weight="1"
-                android:minHeight="48dp"
-                android:textAllCaps="false"
-                android:textColor="?attr/colorOnSecondaryContainer"
-                app:backgroundTint="?attr/colorSecondaryContainer"
-                app:cornerRadius="24dp" />
+                android:layout_marginStart="8dp"
+                android:textAppearance="?attr/textAppearanceLabelLarge"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:visibility="gone" />
+
+            <!-- 溢出：放低频 / 破坏性动作（当前是「重启系统界面」），见 showOverflowMenu -->
+            <ImageButton
+                android:id="@+id/overflow_button"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/bg_toolbar_icon"
+                android:contentDescription="@null"
+                android:padding="12dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_more_horiz"
+                app:tint="?attr/colorOnSurfaceVariant" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/save_button"
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:minWidth="88dp"
                 android:minHeight="48dp"
                 android:textAllCaps="false"
                 android:textColor="?attr/colorOnPrimary"
@@ -591,4 +696,6 @@
                 app:cornerRadius="24dp" />
         </LinearLayout>
     </LinearLayout>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>
 </LinearLayout>

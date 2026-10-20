@@ -141,9 +141,20 @@ def main():
 
     print('\n── N 版本纪律 ───────────────────────────────────────────')
 
-    check('N1 versionCode = 1027', re.search(r'def appVersionCode\s*=\s*1027\b', gradle) is not None)
-    check('N2 versionName 保持 2.3.5',
-          re.search(r"def appVersionName\s*=\s*'2\.3\.5'", gradle) is not None)
+    # 🔴 铁律 94/⑬：源码层读的是**活的工作区** ⇒ 版本号只守**下界**、不钉死本轮值。
+    #   钉死会让每一次版本推进都把旧轮脚本判成 FAIL（1028 实踩）；1025 的 H2 已是此写法。
+    code_now = re.search(r'^def appVersionCode = (\d+)$', gradle, re.M)
+    check('N1 versionCode >= 1027（本轮及以后）',
+          code_now is not None and int(code_now.group(1)) >= 1027,
+          code_now.group(1) if code_now else '未匹配')
+# 【code 1037 泛化】原钉死 2.3.5 —— 1037 是**第一次真正升语义版本号**（2.3.5 → 2.4.0），
+#   这类「本轮当时的不变量」在源码层脚本里必须收成形态（铁律 82）：守
+#   「name 成型 + tag == name（tag 进 APK 文件名）」这两条真正的不变式，不钉具体值。
+    check('N2 versionName 成型且 == tag',
+          re.search(r"def appVersionName\s*=\s*'(\d+\.\d+\.\d+)'", gradle) is not None
+          and re.search(r"def appVersionTag\s*=\s*'%s'"
+                        % re.escape(re.search(r"def appVersionName\s*=\s*'(\d+\.\d+\.\d+)'",
+                                              gradle).group(1)), gradle) is not None)
     # label 只守形态：日期段跟构建当天，不许钉具体值（铁律 94）
     check('N3 label 形态合规（MMDD.N，N ≥ 1）',
           re.search(r"def appVersionCodeLabel\s*=\s*'(\d{4})\.([1-9]\d*)'", gradle) is not None,
@@ -157,9 +168,13 @@ def main():
           bool(hist) and '2.3.5 不变' in hist and 'code 1026 升 1027' in hist,
           '履历段长度 %d' % len(hist))
 
+    # 🔴 取行器必须带**全角括号**：新版横幅的收尾句是「code 10xx 升 10xx」，
+    #   只判子串 'code 1027' 会被更靠前的新横幅抢走 —— 1028 实踩：拿到 1028 正文，
+    #   streak / NET_SILENT / 只加诊断 三词全 False，看着像正文丢字，实则行选错。
+    #   （verify_1025 第 446 行已是「带 （」的写法）
     banner = ''
     for ln in module.split('\n'):
-        if '==== BUILD' in ln and 'LogGate' in ln and 'code 1027' in ln:
+        if '==== BUILD' in ln and 'LogGate' in ln and 'code 1027 （' in ln:
             banner = ln
             break
     body_txt = banner[banner.index('"') + 1:banner.rindex('"')] if banner else ''
@@ -168,8 +183,13 @@ def main():
     check('N6 横幅正文无禁用字符（ASCII 引号 / 反斜杠 / 反引号）',
           body_txt != '' and '"' not in body_txt
           and '\\' not in body_txt and '`' not in body_txt)
-    check('N7 常开横幅已进 1027',
-          'XposedCompat.log("[DLsiteSoundFloat] ==== BUILD 2.3.5 / code 1027");' in module)
+    # 🔴 常开横幅是**滚动更新**的单行（每轮改成本轮 code）⇒ 判据必须动态读 gradle 拼，
+    #   钉死字面值会被版本推进判死；verify_1005/1006/1007 已是 %s 拼装写法。
+    nm = re.search(r"def appVersionName = '([^']+)'", gradle)
+    keep_line = 'XposedCompat.log("[DLsiteSoundFloat] ==== BUILD %s / code %s");' % (
+        nm.group(1) if nm else '?', code_now.group(1) if code_now else '?')
+    check('N7 常开横幅与当前版本号一致（name / code 三处同源）',
+          keep_line in module, keep_line)
 
     print('\n── K 边界（本轮不动）─────────────────────────────────────')
 

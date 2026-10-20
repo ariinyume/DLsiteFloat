@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 【code 1032 / Ari 第 4 条】ic_ui_launcher：应用图标 + 斜杠（隐藏桌面图标）
+     规格：24x24 视口、**描边 2dp + 圆头圆角**、颜色交给 ImageView.setColorFilter。
+     ⚠️ 全套统一 2dp 描边 —— 1025 那批是手绘实心块（3dp / 4dp / 2dp 混用），
+        一屏里「有粗有细」正是 Ari 点出的问题；改成同一条描边后由构造保证一致。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M6,3.5H18A2.5,2.5 0 0 1 20.5,6V18A2.5,2.5 0 0 1 18,20.5H6A2.5,2.5 0 0 1 3.5,18V6A2.5,2.5 0 0 1 6,3.5Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4.5,19.5L19.5,4.5" />
+</vector>

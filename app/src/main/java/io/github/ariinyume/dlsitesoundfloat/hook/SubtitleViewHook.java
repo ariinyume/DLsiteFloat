@@ -1028,7 +1028,8 @@ public class SubtitleViewHook {
      */
     public static void dumpTagSamples(String why) {
         try {
-            XposedCompat.log(TAG + " [code 1010] tag dump (" + why + ") n=" + sTagSamples.size()
+            // 【code 1037】一次 dump 几百字符、且「锚点全丢」时可反复触发 ⇒ 诊断级。
+            LogGate.debug(TAG, " [code 1010] tag dump (" + why + ") n=" + sTagSamples.size()
                     + " done=" + sTagCensusDone + " logs=" + sTagCensusLogs
                     + ": " + sTagSamples + " | nonString=" + sTagNonString);
         } catch (Throwable ignored) {

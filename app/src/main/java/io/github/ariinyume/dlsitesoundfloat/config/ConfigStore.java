@@ -223,6 +223,36 @@ public final class ConfigStore {
         }
     }
 
+    /**
+     * 【code 1031】桌面图标是否被隐藏（纯界面偏好）。
+     *
+     * <p>与 {@link #K_PREVIEW_COLLAPSED} 同一档：不进配置 JSON（hook 侧不需要知道）、
+     * 不发广播、不参与「保存设置」与「恢复默认」。它描述的是「这台设备的桌面长什么样」，
+     * 不是字幕渲染参数。
+     */
+    private static final String K_HIDE_LAUNCHER_ICON = "settings_hide_launcher_icon";
+
+    /** 【code 1031】读「桌面图标已隐藏」；缺失/读失败一律按「未隐藏」——缺证据时不该替用户藏图标。 */
+    public boolean readHideLauncherIcon() {
+        try {
+            SharedPreferences ui = appCtx.getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE);
+            return ui.getBoolean(K_HIDE_LAUNCHER_ICON, false);
+        } catch (Throwable t) {
+            Log.w(TAG, "readHideLauncherIcon failed: " + t);
+            return false;
+        }
+    }
+
+    /** 【code 1031】记住「桌面图标已隐藏」（点一下即写，不等「保存设置」）。 */
+    public void saveHideLauncherIcon(boolean hide) {
+        try {
+            appCtx.getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putBoolean(K_HIDE_LAUNCHER_ICON, hide).apply();
+        } catch (Throwable t) {
+            Log.w(TAG, "saveHideLauncherIcon failed: " + t);
+        }
+    }
+
     public boolean loadResetHappened() {
         return loadResetHappened;
     }

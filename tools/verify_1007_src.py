@@ -273,9 +273,12 @@ def main():
           and 'buildSubtitleCacheRow(parent);'
               in method_body(sett, r'void buildExperimentalGroup\(')
           and 'buildSubtitleCacheRow(parent);' not in method_body(sett, r'void buildMiscGroup\('))
-    check('G2 【code 1015 改锚】两卡的底部收敛各自钉在自己的最后一行（其他=备份按钮 / 实验=清除按钮）',
-          'pinCardLastBottom(parent, bar);' in method_body(sett, r'void buildMiscGroup\(')
-          and 'pinCardLastBottom(parent, parent.getChildAt(parent.getChildCount() - 1));'
+    # 【code 1034 改写】末行收敛增加「墨迹补偿」重载：按钮条收尾的两卡（其他=备份按钮条 /
+    #   实验=清除按钮条）改为传入 CARD_LAST_BTN_INSET_DP，实验卡末行仍是「最后一个孩子」。
+    #   补偿只为拉平四卡可见底距，收敛语义未变。
+    check('G2 【code 1015 改锚】两卡的底部收敛各自钉在自己的最后一行（其他=备份按钮 / 实验=清除按钮；1034 起带墨迹补偿）',
+          'pinCardLastBottom(parent, bar, CARD_LAST_BTN_INSET_DP);' in method_body(sett, r'void buildMiscGroup\(')
+          and 'pinCardLastBottom(parent, mExpLastRow, CARD_LAST_BTN_INSET_DP);'
               in method_body(sett, r'void buildExperimentalGroup\('))
     check('G3 开关行用的是 addSwitchRow + 新的 SUBTITLE_CACHE 文案',
           'addSwitchRow(root, Strings.SUBTITLE_CACHE' in sett)
@@ -553,8 +556,10 @@ def main():
     check('R4 【需求】新增离线判定（无活动网络 → 直接读盘，不干等裁决窗）',
           'private boolean isOffline()' in rc and 'ConnectivityManager' in rc
           and 'NET_CAPABILITY_INTERNET' in rc)
+    # 【code 1034 改写】code 1023 给离线兜底加了「预取池」并列分支 ⇒ 原串多一层括号，
+    #   直读语义未变，判据跟新形态（同 verify_1021 的同款改写）。
     check('R5 【需求】换轨入口：在线**不**主动读本地，只有已确认离线才直接读盘',
-          'isOffline() && tryResumeFromDisk(where, newIdentity, newSelection)' in rc)
+          'isOffline() && (tryResumeFromDisk(where, newIdentity, newSelection)' in rc)
     check('R6 【需求】云端一直没给字幕 → 回退本地磁盘缓存（锁外，语义等同 JSON 晚到）',
           'no json in grace -> local fallback' in rc
           and re.search(r'if \(noSubtitles && !spurious && tryResumeFromDisk\(', rc) is not None)
@@ -644,8 +649,9 @@ def main():
     check('T8 索引 schema 声明存在且不低于 2（1019 起升至 3，不再钉死）',
           _m_schema2 is not None and int(_m_schema2.group(1)) >= 2,
           '实际 %s' % (_m_schema2.group(1) if _m_schema2 else '缺失'))
+    # 【code 1034 改写】同 R5：1023 起离线直读带预取并列括号。
     check('T9 云端优先不变：换轨入口仍**没有**无条件读盘（只在已确认离线时直接读）',
-          re.search(r'if \(isOffline\(\) && tryResumeFromDisk\(where, newIdentity, newSelection\)\)',
+          re.search(r'if \(isOffline\(\) && \(tryResumeFromDisk\(where, newIdentity, newSelection\)',
                     rc) is not None)
     check('T10 【历史锚】1014 的常开横幅段仍在（履历追加式，不覆盖）',
           '==== BUILD 2.3.1 / code 1014 （' in mod)
@@ -731,10 +737,12 @@ def main():
                     r'buildSubtitleCacheRow\(parent\);',
                     method_body(sett, r'private void buildExperimentalGroup\(')) is not None
           and 'TextView' not in method_body(sett, r'private void buildExperimentalGroup\('))
+    # 【code 1034 改写】英文句被 code 1031 合法压缩（三行压一行半，Ari 反馈太长）；
+    #   简 / 繁两语未动。英文锚跟 1031 形态。
     check('V3 【需求3】缓存说明改成新口径（三语齐全：简 / 繁 / 英）',
           'SUBTITLE_CACHE_HINT("播放过的音轨字幕会自动缓存，超出储存上限后按最早缓存顺序自动清除"' in strs
           and re.search(r'SUBTITLE_CACHE_HINT\([\s\S]{0,600}?播放過的音軌字幕會自動快取', strs) is not None
-          and re.search(r'SUBTITLE_CACHE_HINT\([\s\S]{0,600}?oldest ones are removed first', strs) is not None)
+          and re.search(r'SUBTITLE_CACHE_HINT\([\s\S]{0,600}?oldest entries are removed first', strs) is not None)
     check('V4 【需求3 负向】旧口径（「断网 / 飞行模式下也能显示」+ 写死的 256MB）已从文案里去掉',
           '断网 / 飞行模式下也能显示' not in strs
           and '上限 256MB' not in strs)

@@ -44,6 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import io.github.ariinyume.dlsitesoundfloat.util.AppEnv;
 import io.github.ariinyume.dlsitesoundfloat.util.NetState;
+import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 
 /**
@@ -117,8 +118,16 @@ public final class ZiptreePrefetch {
     /** 预取根目录（与字幕缓存同根，便于一次性打包/清理）。 */
     private static final String DIR_NAME = "subtitle_cache/_prefetch";
 
-    /** 最多保留几部作品（每部约 30~300KB，8 部也才 1~2MB）。 */
-    private static final int MAX_WORKS = 8;
+    /**
+     * 最多保留几部作品（每部约 30~300KB，16 部也才 1~5MB）。
+     *
+     * 【code 1029】8 → 16：Ari 2026-10-19 反馈「预存字幕上限改为 16 部作品」。
+     * 16 部的代价仍然远小于宿主自己的一部作品音频（单部动辄上百 MB），
+     * 换来的是「最近两周常听的十几部作品在离线时都能直接出字幕」。
+     * ⚠️ 淘汰口径不变：仍是「按作品目录的最近使用时间保留 {@code MAX_WORKS} 部」（见 {@code size() > MAX_WORKS}），
+     *    改数字不需要改任何淘汰逻辑。
+     */
+    private static final int MAX_WORKS = 16;
 
     /** 单作品下载上限：字幕是纯文本，正常一部 200KB 以内。 */
     private static final long MAX_BYTES_PER_WORK = 4L * 1024 * 1024;
@@ -380,7 +389,10 @@ public final class ZiptreePrefetch {
                 }
             }
             if (matched.isEmpty()) {
-                XposedCompat.log(TAG + " MISS dur=" + durMs + "ms (packs=" + snapshot.size() + ")");
+                // 【code 1037】命中判定的三行都是**每次换轨一条**，且外层
+                //   SubtitleRepository 已常开落了结论（disk cache HIT / prefetch HIT /
+                //   track decision）⇒ 这里只算诊断级。
+                LogGate.debug(TAG, " MISS dur=" + durMs + "ms (packs=" + snapshot.size() + ")");
                 return null;
             }
             Pack pick;
@@ -390,7 +402,7 @@ public final class ZiptreePrefetch {
                 pick = matched.get(0);
             } else {
                 // 【code 1024】作品维强约束：多部作品同值、又没有作品键认人 ⇒ 放弃。
-                XposedCompat.log(TAG + " AMBIGUOUS dur=" + durMs + "ms matches "
+                LogGate.debug(TAG, " AMBIGUOUS dur=" + durMs + "ms matches "
                         + matched.size() + " works, no usable work key (hint="
                         + (workKeyHint == null ? "null" : workKeyHint) + ") -> refuse hit");
                 return null;
@@ -407,13 +419,13 @@ public final class ZiptreePrefetch {
                 if (txt == null || txt.length() == 0) {
                     continue;
                 }
-                XposedCompat.log(TAG + " HIT dur=" + durMs + "ms -> "
+                LogGate.debug(TAG, " HIT dur=" + durMs + "ms -> "
                         + pick.workno + "/" + t.jsonName + " (" + f.length() + " B)"
                         + " work=" + pick.workKey()
                         + (hinted != null ? " [work-scoped]" : " [sole candidate]"));
                 return new Hit(txt, pick.workKey(), t.durMs, t.jsonName);
             }
-            XposedCompat.log(TAG + " MISS dur=" + durMs + "ms in work " + pick.workno
+            LogGate.debug(TAG, " MISS dur=" + durMs + "ms in work " + pick.workno
                     + " (file not downloaded yet)");
             return null;
         } catch (Throwable e) {
@@ -466,6 +478,61 @@ public final class ZiptreePrefetch {
             return works() + " works / " + tracks() + " tracks";
         } catch (Throwable e) {
             return "?";
+        }
+    }
+
+    /**
+     * 【code 1030】清空**全部预取**（设置页「清除预取字幕」）。
+     *
+     * <p>删的是「为换轨提前抓好的作品文件树」：{@code baseDir()} 下每部一个子目录
+     * （{@code RJxxxxxx/}）加一份索引（{@code RJxxxxxx.idx}）。**不碰**正文缓存
+     * （{@code data.SubtitleCache}）—— 那是另一条链路，Ari 明确要求两者分开清。
+     *
+     * <p>只删 {@code baseDir()} 的**直接子项**，不递归父目录：预取目录与正文缓存目录
+     * 是兄弟关系，越界删除的代价不可逆。
+     *
+     * <p>删完把 {@code sIndexLoaded} 置回 false：下次 {@link #works()} 会重新扫一遍
+     * （此时扫到的是空目录），不必在这里自己维护计数。
+     */
+    public static void clearAll() {
+        try {
+            synchronized (LOCK) {
+                PACKS.clear();
+            }
+            File d = baseDir();
+            if (d != null && d.isDirectory()) {
+                File[] kids = d.listFiles();
+                if (kids != null) {
+                    for (File f : kids) {
+                        deleteRecursively(f);
+                    }
+                }
+            }
+            sIndexLoaded = false;
+            XposedCompat.log(TAG + " prefetch cleared by settings page");
+        } catch (Throwable t) {
+            XposedCompat.log(TAG + " clearAll failed: " + t);
+        }
+    }
+
+    private static void deleteRecursively(File f) {
+        if (f == null) {
+            return;
+        }
+        try {
+            if (f.isDirectory()) {
+                File[] kids = f.listFiles();
+                if (kids != null) {
+                    for (File k : kids) {
+                        deleteRecursively(k);
+                    }
+                }
+            }
+            if (!f.delete()) {
+                XposedCompat.log(TAG + " delete failed: " + f);
+            }
+        } catch (Throwable ignored) {
+            // 单个文件删不掉不该让整次清理中断
         }
     }
 

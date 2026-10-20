@@ -1,13 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 【code 1025 / P1-2】放大倍数 / 缩放百分比：由小到大的两个方框
-     规格：24x24 视口、实心 path、颜色交给 ImageView.setColorFilter（onSurfaceVariant）。 -->
+<!-- 【code 1032 / Ari 第 4 条】ic_ui_scale：对角缩放箭头
+     规格：24x24 视口、**描边 2dp + 圆头圆角**、颜色交给 ImageView.setColorFilter。
+     ⚠️ 全套统一 2dp 描边 —— 1025 那批是手绘实心块（3dp / 4dp / 2dp 混用），
+        一屏里「有粗有细」正是 Ari 点出的问题；改成同一条描边后由构造保证一致。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <path android:fillColor="#FF000000" android:fillType="evenOdd"
-        android:pathData="M3,3H11V11H3Z M5,5H9V9H5Z" />
-    <path android:fillColor="#FF000000" android:fillType="evenOdd"
-        android:pathData="M13,13H21V21H13Z M15,15H19V19H15Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M3.5,9.5V3.5H9.5M14.5,20.5H20.5V14.5" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4.2,4.2L9.6,9.6M14.4,14.4L19.8,19.8" />
 </vector>

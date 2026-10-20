@@ -83,6 +83,9 @@ public final class ConfigBus {
             Protocol.ACTION_SUBTITLE_CACHE_STATS_REQ;
     /** 【code 1007】宿主 → 设置页：字幕缓存占用应答。 */
     public static final String ACTION_SUBTITLE_CACHE_STATS = Protocol.ACTION_SUBTITLE_CACHE_STATS;
+    /** 【code 1030】设置页 → 宿主：清空**预取**字幕（作品文件树 + 各轨索引）。 */
+    public static final String ACTION_SUBTITLE_PREFETCH_CLEAR =
+            Protocol.ACTION_SUBTITLE_PREFETCH_CLEAR;
     /** 【code 1007】缓存条目数（{@link #ACTION_SUBTITLE_CACHE_STATS} 携带）。 */
     public static final String EXTRA_CACHE_COUNT = Protocol.EXTRA_CACHE_COUNT;
     /** 【code 1007】缓存占用字节数（{@link #ACTION_SUBTITLE_CACHE_STATS} 携带）。 */
@@ -189,6 +192,8 @@ public final class ConfigBus {
             //   设置页与 SystemUI 受 SELinux 限制读不到，见 Protocol 里这三条 action 的说明）。
             f.addAction(ACTION_SUBTITLE_CACHE_CLEAR);
             f.addAction(ACTION_SUBTITLE_CACHE_STATS_REQ);
+            // 【code 1030】预取字幕的清理同样只能由宿主执行（目录也在宿主私有空间里）。
+            f.addAction(ACTION_SUBTITLE_PREFETCH_CLEAR);
         }
         BroadcastReceiver r = new BroadcastReceiver() {
             @Override
@@ -212,6 +217,10 @@ public final class ConfigBus {
                     }
                     if (ACTION_SUBTITLE_CACHE_STATS_REQ.equals(action)) {
                         answerCacheStats(c, tag);
+                        return;
+                    }
+                    if (ACTION_SUBTITLE_PREFETCH_CLEAR.equals(action)) {
+                        handlePrefetchClear(c, tag);
                         return;
                     }
                     if (ACTION_CONFIG_CHANGED.equals(action)) {
@@ -443,6 +452,31 @@ public final class ConfigBus {
         }
     }
 
+    /**
+     * 【code 1030】宿主进程侧：把**预取**的字幕清空（设置页「清除预取字幕」）。
+     *
+     * <p>与 {@link #handleCacheClear} 是两条独立链路：这里动的是
+     * {@code hook.ZiptreePrefetch} 的作品文件树缓存（每部一个子目录 + 一份 {@code .idx}），
+     * 不碰 {@code data.SubtitleCache} 的正文缓存。
+     *
+     * <p>清完仍回一条统计（两个数字都会变小），设置页那行读数与预取进度随之刷新。
+     */
+    private static void handlePrefetchClear(Context ctx, String tag) {
+        if (ctx == null || !"host".equals(tag)) {
+            return;
+        }
+        try {
+            io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.clearAll();
+            logInfo("[host] ziptree prefetch cleared by settings page");
+            io.github.ariinyume.dlsitesoundfloat.data.SubtitleCache cache =
+                    io.github.ariinyume.dlsitesoundfloat.data.SubtitleCache.get();
+            cache.init(ctx);
+            sendCacheStats(ctx, cache.count(), cache.bytes());
+        } catch (Throwable t) {
+            logWarn("handlePrefetchClear failed: " + t);
+        }
+    }
+
     /** 【code 1007】宿主进程侧：应答缓存占用查询。 */
     private static void answerCacheStats(Context ctx, String tag) {
         if (ctx == null || !"host".equals(tag)) {
@@ -615,6 +649,21 @@ public final class ConfigBus {
             logDebug("cache clear request sent to host");
         } catch (Throwable t) {
             logWarn("sendCacheClear failed: " + t);
+        }
+    }
+
+    /** 【code 1030】设置页「清除预取字幕」：显式广播给宿主进程（口径同 {@link #sendCacheClear}）。 */
+    public static void sendPrefetchClear(Context ctx) {
+        if (ctx == null) {
+            return;
+        }
+        try {
+            Intent i = new Intent(ACTION_SUBTITLE_PREFETCH_CLEAR);
+            i.setPackage(HOST_PKG);
+            ctx.sendBroadcast(i);
+            logDebug("prefetch clear request sent to host");
+        } catch (Throwable t) {
+            logWarn("sendPrefetchClear failed: " + t);
         }
     }
 

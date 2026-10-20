@@ -58,6 +58,28 @@
           ⚠️ 接管 layoutDirection / screenLayout / smallestScreenSize：这几个在折叠屏
              展开/旋转时会变，重建会丢掉未保存的草稿改动，交给 onConfigurationChanged 处理。
         -->
+        <!--
+          【code 1032 / Ari 第 6 条真机事故】给 SettingsActivity 挂一个**常驻、永不禁用**的
+          MAIN + CATEGORY_INFO 过滤器。
+
+          ── 事故现场 ──────────────────────────────────────────────────────────
+          1031 只把 MAIN+LAUNCHER 留在 alias 上、SettingsActivity 自己一条 intent-filter 都没有。
+          Ari 打开「隐藏桌面图标」之后**连 LSPosed 里的「打开」也一起消失了**，再也进不了本页
+          —— 自己把自己锁在门外。
+
+          根因：{@code PackageManager.getLaunchIntentForPackage()}（LSPosed 与系统「应用信息」
+          的「打开」都走它）在找不到 MAIN+LAUNCHER 时返回 null，按钮就被隐藏了。
+          而 alias 被禁用后，包内**一条 launcher 入口都不剩**。
+
+          正解：Android 的 getLaunchIntentForPackage 会**先**找 MAIN + CATEGORY_INFO，
+          找不到才退回 MAIN + CATEGORY_LAUNCHER。CATEGORY_INFO 不是桌面分类，
+          所以桌面**不会**因为它多出一个图标，但它能保证「包永远可被程序唤起」。
+
+          ⚠️ 这条过滤器**永远不要**跟着开关一起禁用 —— 它就是那条安全绳。
+          ⚠️ 另外 applyLauncherIconState() 里还有一道**运行期自检**：隐藏前先看
+             getLaunchIntentForPackage() 解析出来的组件是不是 alias 本身，
+             是的话说明安全绳没生效 ⇒ 直接拒绝隐藏并把开关弹回去。
+        -->
         <activity
             android:name="io.github.ariinyume.dlsitesoundfloat.ui.SettingsActivity"
             android:exported="true"
@@ -66,9 +88,37 @@
             android:configChanges="fontScale|density|screenSize|screenLayout|smallestScreenSize|orientation|keyboardHidden|locale|layoutDirection">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.INFO" />
             </intent-filter>
         </activity>
+
+        <!--
+          【code 1031】桌面入口独立成一个 activity-alias（Ari 第 8 条：要一个「隐藏桌面图标」开关）。
+
+          ── 为什么要 alias 而不是直接禁用 SettingsActivity ────────────────────
+          {@code PackageManager.setComponentEnabledSetting()} 只能按**组件**开关，粒度没有
+          「只从桌面移除、但仍可被启动」这一档。alias 是独立组件：禁用 alias 只让桌面
+          少一个图标，SettingsActivity 本身仍然导出、仍然能被 LSPosed 唤起。
+
+          🔴 【code 1032】1021~1031 这里写的「隐藏之后 LSPosed 也进不去」是**真的踩到了**
+             （Ari 2026-10-19 真机事故），补救见 SettingsActivity 上那条 MAIN+INFO 过滤器。
+             结论：alias 可以被禁用，但包里必须**另有一条永不失效的 INFO 入口**。
+          ⚠️ alias 必须声明在 targetActivity **之后**，且 targetActivity 必须已存在。
+          ⚠️ 不要把 LAUNCHER 分类同时留在 SettingsActivity 上 —— 那样桌面会出现两个图标，
+             而这个开关只关得掉 alias 那一个。
+        -->
+        <activity-alias
+            android:name="io.github.ariinyume.dlsitesoundfloat.ui.LauncherAlias"
+            android:targetActivity="io.github.ariinyume.dlsitesoundfloat.ui.SettingsActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/settings_label">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
     </application>
 </manifest>

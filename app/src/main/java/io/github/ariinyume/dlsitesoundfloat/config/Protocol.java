@@ -99,8 +99,18 @@ public final class Protocol {
     // （Android/data/<宿主包名>/files/subtitle_cache/），设置页进程受 SELinux 限制读不到
     // 那个目录，SystemUI 同理。所以「清空缓存」与「查缓存占用」都只能由宿主进程执行。
 
-    /** 设置页 → DLsiteSound 进程：清空全部字幕缓存。 */
+    /** 设置页 → DLsiteSound 进程：清空**已缓存**的字幕正文（{@code subtitle_cache/}）。 */
     public static final String ACTION_SUBTITLE_CACHE_CLEAR = ACTION_PREFIX + "SUBTITLE_CACHE_CLEAR";
+
+    /**
+     * 【code 1030】设置页 → DLsiteSound 进程：清空**预取**的字幕（作品文件树 + 抓下来的 json）。
+     *
+     * <p>与 {@link #ACTION_SUBTITLE_CACHE_CLEAR} 是**两个独立动作**（Ari 要求拆开）：
+     * 前者删的是「播放过的音轨正文」，后者删的是「为了换轨不卡而提前抓的作品文件树」。
+     * 两者落在同一个父目录下的不同子项，删一个不会连带另一个。
+     */
+    public static final String ACTION_SUBTITLE_PREFETCH_CLEAR =
+            ACTION_PREFIX + "SUBTITLE_PREFETCH_CLEAR";
 
     /** 设置页 → DLsiteSound 进程：查询字幕缓存占用。 */
     public static final String ACTION_SUBTITLE_CACHE_STATS_REQ =
@@ -209,7 +219,7 @@ public final class Protocol {
                 ACTION_LINE, ACTION_ENABLED, ACTION_DISMISS_REQUEST,
                 ACTION_SCOPE_PING, ACTION_SCOPE_PONG,
                 ACTION_SUBTITLE_CACHE_CLEAR, ACTION_SUBTITLE_CACHE_STATS_REQ,
-                ACTION_SUBTITLE_CACHE_STATS,
+                ACTION_SUBTITLE_CACHE_STATS, ACTION_SUBTITLE_PREFETCH_CLEAR,
         };
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (String a : actions) {

@@ -1,13 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 【code 1025 / P1-2】行距：三条横线 + 左侧行高标尺
-     规格：24x24 视口、实心 path、颜色交给 ImageView.setColorFilter（onSurfaceVariant）。 -->
+<!-- 【code 1032 / Ari 第 4 条】ic_ui_line_spacing：行距（双向箭头 + 横线）
+     规格：24x24 视口、**描边 2dp + 圆头圆角**、颜色交给 ImageView.setColorFilter。
+     ⚠️ 全套统一 2dp 描边 —— 1025 那批是手绘实心块（3dp / 4dp / 2dp 混用），
+        一屏里「有粗有细」正是 Ari 点出的问题；改成同一条描边后由构造保证一致。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <path android:fillColor="#FF000000"
-        android:pathData="M8,5H21V7H8Z M8,11H21V13H8Z M8,17H21V19H8Z" />
-    <path android:fillColor="#FF000000"
-        android:pathData="M3,3H5V21H3Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M9,6.5H21M9,12H21M9,17.5H21" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4.5,5.5V18.5M2.7,7.3L4.5,5.5L6.3,7.3M2.7,16.7L4.5,18.5L6.3,16.7" />
 </vector>

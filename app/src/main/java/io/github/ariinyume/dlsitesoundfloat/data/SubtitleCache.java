@@ -278,10 +278,10 @@ public final class SubtitleCache {
                 //   崩溃」留下的半成品。索引正常时白名单覆盖全部条目 ⇒ 一个都不会误删。
                 sweepOrphansLocked();
             } catch (Throwable t) {
-                log("init failed (degraded to no cache): " + t);
+                logWarn("init failed (degraded to no cache): " + t);
             }
             ready = true;
-            log("ready: entries=" + entries.size() + " bytes=" + totalBytes
+            logWarn("ready: entries=" + entries.size() + " bytes=" + totalBytes
                     + "/" + limitBytes + " dir=" + dirPath());
         }
     }
@@ -414,7 +414,7 @@ public final class SubtitleCache {
                         for (int i = bucket.size() - 1; i >= 0; i--) {
                             Entry old = bucket.get(i);
                             if (old != prev && sameWork(old, e)) {
-                                log("identity SAME WORK collision: replacing old entry"
+                                logWarn("identity SAME WORK collision: replacing old entry"
                                         + " (idx=" + old.idx + " dur=" + old.durMs
                                         + " work=" + shortKey(old.workKey) + ")");
                                 removeEntryLocked(old, true);
@@ -447,7 +447,7 @@ public final class SubtitleCache {
                         + " total=" + totalBytes + "/" + limitBytes);
             }
         } catch (Throwable t) {
-            log("put failed (ignored): " + t);
+            logWarn("put failed (ignored): " + t);
         }
     }
 
@@ -477,7 +477,7 @@ public final class SubtitleCache {
                     return;
                 }
                 if (!timelineFits(e, identity)) {   // 【code 1019】与 lookup 共用同一把尺子
-                    log("stamp REFUSED (timeline mismatch): idx=" + e.idx
+                    logWarn("stamp REFUSED (timeline mismatch): idx=" + e.idx
                             + " maxEnd=" + e.maxEnd + "s > dur=" + (durMs / 1000.0)
                             + "s + " + TIMELINE_TOLERANCE_SEC + "s -> stays orphan (never matches)");
                     return;
@@ -512,7 +512,7 @@ public final class SubtitleCache {
                         + "ms -> identity=" + identity + " (now matchable)");
             }
         } catch (Throwable t) {
-            log("stampDuration failed (ignored): " + t);
+            logWarn("stampDuration failed (ignored): " + t);
         }
     }
 
@@ -558,7 +558,7 @@ public final class SubtitleCache {
                 if (e != null && !timelineFits(e, identity)) {
                     // 护栏：强键条目在补盖时已经过同一把尺子，正常走不到这里；
                     //   只有索引被外力改坏（手改 index.json / 半截写盘）才可能。
-                    log("hit REJECTED (identity, timeline mismatch): idx=" + e.idx
+                    logWarn("hit REJECTED (identity, timeline mismatch): idx=" + e.idx
                             + " dur=" + e.durMs + "ms maxEnd=" + e.maxEnd + "s"
                             + " requested dur="
                             + (PlaylistKey.identityDurationMs(identity) / 1000.0) + "s");
@@ -582,14 +582,14 @@ public final class SubtitleCache {
                 //   还没到），可它离上次刷新不到三分钟、仍在「新鲜窗口」内 ⇒ 被判成正证据。
                 //   同场的反证在 17:16:03：强键命中后 6ms 到达的 JSON 与条目同属一个作品
                 //   ⇒ 含毫秒级时长的身份键本身足以定归属，作品键只是个会过期的快照。
-                log("hit ACCEPTED despite work-key mismatch (current work key is a stale"
+                logWarn("hit ACCEPTED despite work-key mismatch (current work key is a stale"
                         + " snapshot, NOT evidence): entry work=" + shortKey(e.workKey)
                         + " current work=" + shortKey(currentWorkKey)
                         + " identity=" + identity + " selection=" + selection);
             }
             String text = readFile(e.file);
             if (text == null || text.isEmpty()) {
-                log("hit but file unreadable -> drop entry file=" + e.file);
+                logWarn("hit but file unreadable -> drop entry file=" + e.file);
                 synchronized (lock) {
                     removeEntryLocked(e, true);
                     persistIndexLocked();
@@ -604,7 +604,7 @@ public final class SubtitleCache {
             }
             return text;
         } catch (Throwable t) {
-            log("lookup failed (ignored): " + t);
+            logWarn("lookup failed (ignored): " + t);
             return null;
         }
     }
@@ -674,7 +674,7 @@ public final class SubtitleCache {
                     + " picked most recently used (idx=" + best.idx + " used=" + best.used + ")");
             return best;
         }
-        log("hit REFUSED (ambiguous across works): identity=" + identity
+        logWarn("hit REFUSED (ambiguous across works): identity=" + identity
                 + " has " + bucket.size() + " candidates, work key "
                 + (currentWorkKey == null || currentWorkKey.isEmpty()
                         ? "missing" : "mismatched (" + shortKey(currentWorkKey) + ")")
@@ -774,7 +774,7 @@ public final class SubtitleCache {
             byHash.clear();
             totalBytes = 0L;
             persistIndexLocked();
-            log("cleared: removed " + n + " entries (" + b + " bytes)");
+            logWarn("cleared: removed " + n + " entries (" + b + " bytes)");
         }
     }
 
@@ -1220,8 +1220,20 @@ public final class SubtitleCache {
         }
     }
 
+    /**
+     * 日常明细（**只走调试开关**），形如「每轨 put / stamp / HIT」。
+     *
+     * <p>【code 1037】原实现是「常开一条 + 调试一条」**双写** —— 等于开关形同虚设：
+     * 缓存读写是**与播放时长成正比**的量（一集几十条），只能算诊断级。
+     */
     private static void log(String msg) {
+        LogGate.debug(TAG, " " + msg);
+    }
+
+    /**
+     * 告警 / 里程碑（常开）：失败、拒收、用户主动清理 —— 这些行**不随播放时长增长**。
+     */
+    private static void logWarn(String msg) {
         XposedCompat.log(TAG + " " + msg);
-        LogGate.debug(TAG, msg);
     }
 }

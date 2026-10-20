@@ -22,10 +22,12 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -35,6 +37,7 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Shader;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -45,12 +48,14 @@ import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.TouchDelegate;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.PopupWindow;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -78,6 +83,7 @@ import com.google.android.material.color.MaterialColors;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.Slider;
+import com.google.android.material.shape.ShapeAppearanceModel;
 
 import java.util.Locale;
 
@@ -206,10 +212,20 @@ public class SettingsActivity extends AppCompatActivity {
     // 做法：把「卡片内距」与「行距」都收敛成**两个常量**，所有 addXxxRow 一律走它们，
     // 不再各处写 8/10/12/14 的魔数（那正是「四个卡片边距不一致」的来源）。
 
-    /** 卡片内顶部留白（dp）—— 与「字幕排版」卡片对齐后的统一值。 */
-    private static final int CARD_PAD_TOP_DP = 6;
-    /** 卡片内底部留白（dp）。 */
-    private static final int CARD_PAD_BOTTOM_DP = 6;
+    /**
+     * 卡片内顶部留白（dp）—— **四张卡一律 10dp**。
+     *
+     * <p>🔴【code 1031】上一轮只把「字幕外观」卡改成 16dp（想让页签离卡顶远一点），
+     * 另外三张还是 6dp ⇒ Ari 直接看出「四张卡内上下距离不一致」。这次不搞特例：
+     * XML 四处 {@code paddingTop}/{@code paddingBottom} 与本常量一起钉成 10dp，
+     * 「卡片顶边 → 首个控件顶边」在四张卡里逐像素相同。
+     *
+     * <p>⚠️ 页签组是 40dp 高的实心块、其余卡首行是 48dp 高的行 —— 块的顶边对齐之后，
+     * 块内文字比行内文字高 4dp，这是两种控件的高度差，不是内距不一致。
+     */
+    private static final int CARD_PAD_TOP_DP = 10;
+    /** 卡片内底部留白（dp）—— 与 {@link #CARD_PAD_TOP_DP} 同值，四张卡一致。 */
+    private static final int CARD_PAD_BOTTOM_DP = 10;
     /**
      * 【2.3.2 §2.3】行与行之间、分隔线上下的呼吸位（dp）。
      *
@@ -250,7 +266,31 @@ public class SettingsActivity extends AppCompatActivity {
      */
     private static final int HINT_BOTTOM_PAD_DP = 0;
     /** 行内控件（按钮 / 开关）的统一高度（dp）：MD3 按钮下限 40dp。 */
+    /**
+     * 行内控件（按钮 / 开关）的统一高度（dp）：MD3 按钮下限 40dp。
+     *
+     * <p>【code 1029】连通按钮组的**外侧**圆角就取它的半径（{@code CONTROL_H_DP / 2}），
+     * 这样三段的左右外沿仍是完整胶囊。
+     */
     private static final int CONTROL_H_DP = 40;
+
+    /**
+     * 【code 1029】连通按钮组（M3 Expressive Connected Button Group）的两个常量。
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * Ari 2026-10-19：「…横向相连的按钮组以 3dp 间距排列，只把**相邻的内侧圆角**缩小到
+     * 8dp，**外侧保持圆角**」。
+     *
+     * 为什么 3dp 而不是 0：0 间距时必须靠「描边 / 分色」才分得清两段，而本页三段都是实底
+     * 同色（选中/未选只差色阶），贴死会糊成一块；3dp 让每段保留自己的轮廓，
+     * 又明显小于普通按钮间距（10dp），读起来仍是「一组」。
+     *
+     * 为什么内侧 8dp 而不是 4dp：8dp 是 M3E 连通组的内侧圆角档；4dp 在 40dp 高的控件上
+     * 几乎看不出「这里被切开过」，会退化成直角。
+     */
+    private static final int GROUP_GAP_DP = 3;
+    private static final int GROUP_INNER_RADIUS_DP = 8;
+
     /**
      * 【code 975 §4】小号 tonal 按钮高度（dp）—— 与页头的语言胶囊**完全同高**。
      *
@@ -265,6 +305,32 @@ public class SettingsActivity extends AppCompatActivity {
      * 是为了把「内缩 / 圆角 / 水平内边距」这三样一起按 M3E 口径收口（见 applyM3eButtonMetrics）。
      */
     private static final int M3E_BUTTON_H_DP = 48;
+
+    /**
+     * 【code 1033】溢出菜单的容器圆角（dp）= M3E 菜单档。
+     *
+     * <p>Ari 第 5 条：「弹窗边缘采用 M3E 的圆角」。系统 {@code PopupMenu} 的圆角由
+     * framework 的 {@code popupBackground} 决定（本项目是 4dp 档），改不动；
+     * 所以这里整个菜单改成自绘 {@link PopupWindow}，圆角自己给。
+     * 取 16dp：与本页卡片(22dp) / 悬浮面板(20dp) 同一族的「大圆角」，但不是胶囊。
+     */
+    private static final int MENU_RADIUS_DP = 16;
+
+    /** 【code 1033】溢出菜单的菜单项高度（dp）—— MD3 菜单行高。 */
+    private static final int MENU_ITEM_H_DP = 48;
+
+    /** 【code 1033】菜单与锚点按钮之间的间隙（dp）。 */
+    private static final int MENU_ANCHOR_GAP_DP = 8;
+
+    /**
+     * 【code 1031】桌面入口的 {@code activity-alias} 全名（清单里唯一带 LAUNCHER 的组件）。
+     *
+     * <p>「隐藏桌面图标」开关就是启停它 —— 不是启停 {@code SettingsActivity} 本身；
+     * 后者一旦被禁用，连 LSPosed 都唤不起来，用户就再也进不了这个页面。
+     * ⚠️ 字符串必须与 {@code AndroidManifest.xml} 里的 {@code android:name} 逐字一致。
+     */
+    private static final String LAUNCHER_ALIAS =
+            "io.github.ariinyume.dlsitesoundfloat.ui.LauncherAlias";
 
     // ── 【code 974 §1】M3 Expressive 滑块形态 ─────────────────────────────
     //
@@ -286,8 +352,11 @@ public class SettingsActivity extends AppCompatActivity {
     // ⚠️ 调用顺序不能反：**先 setThumbRadius 再 setCustomThumbDrawable** ——
     //    缩放比例是设置手柄那一刻用当时的 thumbRadius 算的，反了就会按默认半径 10dp
     //    算出一个小一圈的手柄。
-    // ⚠️ 别指望 app:thumbWidth / app:thumbHeight：Material 1.9.0 的 Slider 里
-    //    **没有**这两个属性（只有圆形的 thumbRadius），本项目也不升级 Material（离线构建）。
+    // ⚠️ 别指望 app:thumbWidth / app:thumbHeight：Material **1.9.0** 的 Slider 里
+    //    **没有**这两个属性（只有圆形的 thumbRadius）。
+    //    【code 1028 注释纠偏】「本项目也不升级 Material（离线构建）」这句已过期：
+    //    1025 起组件库就是 **1.14.0**（仍有离线缓存）。新版本是否加了这两个属性未复核，
+    //    但本类的做法（thumbRadius + 自定义 Drawable）与库版本无关，不必改。
     /** M3E 粗轨道高度（dp）。 */
     private static final int SLIDER_TRACK_H_DP = 16;
     /** M3E 竖长手柄宽度（dp）—— 只表达「手柄固有宽高比」，实际尺寸由 thumbRadius 推。 */
@@ -305,7 +374,65 @@ public class SettingsActivity extends AppCompatActivity {
     // 现在整根线删掉、改插一个**透明留白**占位，总留白与旧版逐像素一致
     // （Ari 在本次确认里明确选了「去线，留白维持现状」），只是不再有可见的分隔线。
     /** 卡内行间纯留白高度（dp）= 旧版的「1dp 线 + 上下各 4dp 呼吸位」。 */
-    private static final int ROW_SPACER_DP = 9;
+    private static final int ROW_SPACER_DP = 12;
+
+    /**
+     * 【code 1031】每行「标签 → 它下面的控件」之间的空隙（dp）。
+     *
+     * <p>Ari 反馈「字幕 / 行态 / 排版三个卡片里的选项间间距不一致，排版看起来特别挤」。
+     * 量化之后差异来自三处**行内尾部**，不是 spacer：
+     * <ul>
+     *   <li>色板行：label 下 6dp，色点本身又在 34dp 热区里居中 ⇒ 视觉底边还有 ~6dp；</li>
+     *   <li>滑块行：label 下 0dp，但轨道在 48dp 触摸区里居中 ⇒ 视觉底边 ~2dp；</li>
+     *   <li>分段行：label 下只有 2dp，40dp 轨道**贴死行底** ⇒ 视觉底边 0dp。</li>
+     * </ul>
+     * 三者差 6dp，正好落在人眼能分辨的范围。现在统一成：label 下 {@code ROW_LABEL_TAIL_DP}、
+     * 控件下 {@code ROW_TAIL_GAP_DP}，三种行的「可见底边 → 下一行标签」逐像素一致。
+     */
+    private static final int ROW_LABEL_TAIL_DP = 6;
+    /**
+     * 【code 1031 / 1032】每行末尾「控件 → 行底」的空隙（dp），见 {@link #ROW_LABEL_TAIL_DP}。
+     *
+     * <p>【code 1032】6 → **4**：Ari「所有卡片控件下边距改为 4」。
+     * 分段行的 {@code trackLp.bottomMargin}、滑块行 / 色板行的行尾都读这一个常量，
+     * 改这里就是四张卡一起改，不存在「这张改了那张没改」。
+     */
+    private static final int ROW_TAIL_GAP_DP = 4;
+
+    /**
+     * 【code 1033】卡片**末行**盒底到卡片内边距之间那一段留白（dp）。
+     *
+     * <p>口径：与普通行完全同一份行尾留白（{@link #ROW_TAIL_GAP_DP}）——
+     * 「控件下边距 4」这条规则对**最后一行**同样成立，只是它下面接的是卡片
+     * paddingBottom(10dp) 而不是下一个行头。
+     *
+     * <p>🔴 为什么改成常量（1033 的真因）：
+     * <ul>
+     *   <li><b>不一致</b>：1025~1032 用的是「首行字形顶距 × 2」，而这个距离取决于
+     *       group 自己的 paddingTop —— {@code group_main} 没有 padding（≈7dp ⇒ 目标 14dp），
+     *       {@code group_liquidglass} / {@code group_experimental} / {@code group_misc}
+     *       有 10dp（≈17dp ⇒ 目标 34dp）。四张卡差 20dp，正是 Ari 说的
+     *       「液态玻璃 / 实验性 / 其他 的下边距比字幕 / 行态更宽」。</li>
+     *   <li><b>跳变</b>：旧实现是 {@code addOnGlobalLayoutListener} 的一次性回调。
+     *       每次切面都会新挂一个，快速切换时多个回调在同一次布局后依次触发，
+     *       后一个读到的 {@code group.getHeight()} 还是**上一次**的值 ⇒
+     *       各自算出不同的 bottomMargin、互相覆盖 ⇒ 一帧内先宽后窄。</li>
+     * </ul>
+     * 钉常量之后：不测量 ⇒ 不依赖首行、不依赖布局时序 ⇒ 既一致也不会跳。
+     * 四张卡 + 三个面（字幕 / 行态 / 排版）的总底距 = 本值 + {@link #CARD_PAD_BOTTOM_DP}
+     * = <b>14dp</b>，全页只有这一个口径。
+     */
+    private static final int CARD_LAST_GAP_DP = ROW_TAIL_GAP_DP;
+    /**
+     * 【code 1034 / Ari 第 4 条】按钮条末行的“墨迹补偿”（dp）。
+     *
+     * <p>「恢复默认」行（{@link #ROW_MIN_H_DP}=48）垂直居中一颗 32dp 胶囊，
+     * 按钮下方天然藏着 (48−32)/2 = 8dp 不可见空隙；导出/导入、清除缓存
+     * 这类按钮条的按钮吃满整行，盒底就是墨迹底。同样的 margin 常量
+     * 会让这两类卡的**可见**底距差 8dp （Ari 实拍实证）。
+     * 本值只允许通过 {@code pinCardLastBottom(group, last, extraInkDp)} 消费。
+     */
+    private static final int CARD_LAST_BTN_INSET_DP = 8;
 
     // ── 状态 ──────────────────────────────────────────────────────────
     private ConfigStore mStore;
@@ -336,6 +463,9 @@ public class SettingsActivity extends AppCompatActivity {
     // ── 视图 ──────────────────────────────────────────────────────────
     /** 【2.3.2】根 CoordinatorLayout —— 页面大底色写在这里（夜间比 MD3 surface 提亮一档）。 */
     private View mRoot;
+    /** 【code 1035】吸顶裁剪容器（settings_coord）：铺大底色 + clipToOutline，
+     *  AppBarLayout 收起越出顶界的部分被切在 coord 矩形内 —— 状态栏处只露根布局纯底色。 */
+    private View mCoord;
     /** 【2.3.2 §2.7】吸顶区容器：底色必须与大底完全一致，否则吸顶时两侧会显出「卡片色边条」。 */
     private View mAppBar;
     /** 【2.3.2 §2.7】吸底栏容器：同样与大底同色。 */
@@ -350,13 +480,61 @@ public class SettingsActivity extends AppCompatActivity {
     /** 胶囊里显示当前语言短名（简中 / 繁中 / EN）的那个 TextView。 */
     private TextView mLanguageText;
     private MaterialButton mSaveButton;
-    private MaterialButton mRestartButton;
+    /**
+     * 【code 1028 / P1-④】浮动工具条上的脏态圆点与读数、溢出菜单。
+     *
+     * <p>上一版这两件事分别由「永远亮着的保存键」和「一条 50/50 等权的重启按钮」承担 ——
+     * 前者说不出「改了还是没改」，后者把低频破坏性动作抬到与保存同级。
+     * 现在圆点 + 读数只回答「有没有未保存的改动」，重启收进 ⋯。
+     */
+    private View mDirtyDot;
+    private TextView mDirtyLabel;
+    private View mOverflowButton;
     private LinearLayout mPreviewLines;
     private View mPreviewBackdrop;
     /** 【2.3.2 ③】悬浮窗面板层（半透明渐变），夹在壁纸层与字幕层之间。 */
     private View mPreviewPanel;
     /** 预览卡容器 —— v1.6 起是普通 FrameLayout（MaterialCardView 会顶掉 setBackground）。 */
     private View mPreviewCard;
+    /**
+     * 【code 1029】折叠态的**行窗口**（0-based，含首含尾）：非活动 / 活动 / 非活动。
+     *
+     * <p>取 1 / 2 / 3 而不是前五行等比缩：这三行刚好是「非活动 + 活动 + 非活动」的
+     * 典型断面，能同时看出两档字号、两档不透明度、阴影与（开启时的）模糊。
+     * ⚠️ 与 {@link #PREVIEW_ACTIVE_INDEX}(2) 是同一套下标，改示例文本时要一起看。
+     */
+    private static final int WINDOW_FIRST = 1;
+    private static final int WINDOW_LAST = 3;
+
+    /** 【code 1029】预览卡「收起程度」0 = 全展开、1 = 收起到 {@link #WINDOW_FIRST}..{@link #WINDOW_LAST} 三行。 */
+    private float mPreviewFraction;
+
+    /**
+     * 【code 1029】预览窗的三个实测尺寸（{@link #refreshPreviewMetrics()} 里算一次，动画逐帧只用缓存）。
+     *
+     * <p>为什么不每帧现量：一次量 5 个 TextView 要走文本排版，60 帧就是 300 次；
+     * 而这三个值在一次收/放动画里是**常量**（字号没变）。
+     */
+    private int mPreviewFullH;
+    private int mPreviewWinH;
+    /** 折叠时内容要上移的距离，把 1..3 行对齐到窗口顶部。 */
+    private int mPreviewWinDy;
+    /**
+     * 【code 1030】折叠时窗口**上沿**在内容坐标系里的位置（= 第一可见行的顶边）。
+     *
+     * <p>为什么要单独记这个值：只靠 {@link #mPreviewWinDy} 位移 + 裁高，窗口顶部那
+     * {@code paddingTop} 高的条带里露出来的并不是空白，而是**上一行的尾巴** ——
+     * 中文一行短、看不出；英文换行后那一行有两行高，就会看到半行英文（Ari 反馈的
+     * 「英文状态下迷你预览窗显示行不全」）。所以位移照旧，另外给
+     * {@code preview_lines} 设一个 {@code clipBounds}，把这条带子真正裁掉。
+     */
+    private int mPreviewClipTop;
+    /** 【code 1031】窗口下沿（内容坐标）= 第 {@link #WINDOW_LAST} 行的底边。 */
+    private int mPreviewClipBottom;
+    /** 上一次实测用的宽度（宽度没变就不重复量，避免 OnLayoutChange 递归）。 */
+    private int mPreviewMeasuredW;
+    /** 尺寸是否已量出且仍有效（字号 / 示例文案变化后置 false）。 */
+    private boolean mPreviewMetricsValid;
     /**
      * 【code 1025 / P0-③】预览条的点击容器（标题 + 箭头）与箭头本身。
      *
@@ -367,6 +545,15 @@ public class SettingsActivity extends AppCompatActivity {
     private ImageView mPreviewChevron;
     /** 预览窗当前是否折叠（初值由 prefs 恢复；点条即翻转并落盘）。 */
     private boolean mPreviewCollapsed;
+    /**
+     * 【code 1033】正在跑的折叠动画。
+     *
+     * <p>为什么必须留引用：连点两次时两个 {@link ValueAnimator} 会同时往
+     * {@link #mPreviewFraction} 里写值，后一帧被前一个覆盖 ⇒ 「收一半又弹回去」。
+     * 开新动画之前先 {@code cancel()} 旧的，才能保证同一时刻只有一条动画在写。
+     */
+    @Nullable
+    private ValueAnimator mPreviewAnim;
     private TextView mHeaderSubtitle;
     private LinearLayout mGroupMain;
     private LinearLayout mGroupInactive;
@@ -391,6 +578,15 @@ public class SettingsActivity extends AppCompatActivity {
     /** 【code 1015 / 2.3.2】实验性卡片容器（与它的节标题一起显隐）与卡内总开关行。 */
     private View mCardExperimental;
     private SwitchRow mRowExperimental;
+    /**
+     * 【code 1031】实验性卡片**最后一行**（「清除…字幕」那排按钮的容器）。
+     *
+     * <p>为什么单独留一个引用：{@link #pinCardLastBottom} 是**一次性**监听，卡片处于
+     * GONE 时容器高度是 0，那次测量把底部 margin 算成了一个荒谬的大值 ——
+     * 用户重新打开实验性功能后「清除按钮下方出现巨大空白」，重启设置页才正常
+     * （因为那时卡一开始就是可见的）。现在 GONE 时不计算、转可见后再跑一次。
+     */
+    private View mExpLastRow;
     /** 【code 1015 / 2.3.2】状态卡连点解锁的状态（时间窗内累计，见 onStatusCardClicked）。 */
     private int mStatusTapCount = 0;
     private long mStatusTapLastMs = 0L;
@@ -419,6 +615,8 @@ public class SettingsActivity extends AppCompatActivity {
     private SwitchRow mRowStatusbar;
     /** 【2.2.7 / code 979】「其他」卡片里的「调试日志」开关行。 */
     private SwitchRow mRowDebugLog;
+    /** 【code 1031】「其他」卡片里的「隐藏桌面图标」开关行（摆在「调试日志」上面）。 */
+    private SwitchRow mRowHideLauncher;
     /** 【code 1007】「其他」卡片里的「字幕缓存功能」开关行（摆在「调试日志」下方）。 */
     private SwitchRow mRowSubtitleCache;
     /**
@@ -431,8 +629,10 @@ public class SettingsActivity extends AppCompatActivity {
     private TextView mCacheUsage;
     /** 【code 1007】宿主 → 设置页的缓存统计接收器（onCreate 注册、onDestroy 注销）。 */
     private BroadcastReceiver mCacheStatsReceiver;
-    /** 【code 1007】点过「清除」、等宿主回执：收到统计后弹一次「已清除」。 */
+    /** 【code 1007】点过「清除已缓存字幕」、等宿主回执：收到统计后弹一次「已清除」。 */
     private boolean mPendingClearToast;
+    /** 【code 1030】点过「清除预取字幕」、等宿主回执：同上，但提示文案不同。 */
+    private boolean mPendingPrefetchToast;
     /**
      * 【code 1007】最近一次宿主回执（{@code count < 0} = 还没收到过）。
      *
@@ -470,17 +670,28 @@ public class SettingsActivity extends AppCompatActivity {
      *
      * ⚠️【code 1003 修】显隐已改为「遍历整卡子视图」统一收口，本字段**不再参与显隐**，
      *只作为「哪一行是恢复默认行」的定位信息留着。
+     * ⚠️【code 1030】恢复默认行下方的小字已删（Ari 要求），本字段因此**不再被赋值**；
+     *保留声明只为不打断 verify_1003 那批历史判据对字段名的引用。
      */
     private View mResetRowRoot;
     /** 【code 1000 / 1003】「明暗度」滑条行（只在液态玻璃开启时显示）。 */
     private SliderRow mRowPanelLum;
-    /** 【code 1000】「通透度」滑条行 + 小字（只在液态玻璃开启时显示）。 */
+    /** 【code 1000】「通透度」滑条行（只在液态玻璃开启时显示）。 */
     private SliderRow mRowTransparency;
+    /** 【code 1034】小字已改挂行头副标题（supportingForRow），本字段不再被赋值。
+     * 保留声明只为不打断历史 verify 判据对字段名的引用（同 mHintLiquidGlassReset 先例）。 */
     private TextView mHintTransparency;
-    /** 【code 1002 / 1003】「环境背景亮度」滑条行 + 小字。 */
+    /** 【code 1002 / 1003】「环境背景亮度」滑条行。 */
     private SliderRow mRowBackdropLum;
+    /** 【code 1034】小字已改挂行头副标题，本字段不再被赋值（保留声明同上）。 */
     private TextView mHintBackdropLum;
-    /** 【code 1003】本卡「恢复默认」行下方的小字（只在液态玻璃开启时显示）。 */
+    /**
+     * 【code 1003】本卡「恢复默认」行下方的小字。
+     *
+     * <p>⚠️【code 1030】Ari 要求删掉这行小字（「液态玻璃默认设置」下面那行）⇒
+     * {@code addResetRow(..., showHint=false)} 之后本字段**不再被赋值、也不会显示**。
+     * 保留声明只为不打断 verify_1003 那批历史判据对字段名 / 字符串键的引用。
+     */
     private TextView mHintLiquidGlassReset;
     private SegmentedRow mRowAlign;
     private ColorSwatchRow mSwatchSubtitle;
@@ -739,8 +950,8 @@ public class SettingsActivity extends AppCompatActivity {
             mHeaderSubtitle.setText(Strings.HEADER_SUBTITLE.get(mLang));
         }
         mSaveButton.setText(Strings.SAVE.get(mLang));
-        if (mRestartButton != null) {
-            mRestartButton.setText(Strings.RESTART_SYSUI.get(mLang));
+        if (mOverflowButton != null) {
+            mOverflowButton.setContentDescription(Strings.MORE.get(mLang));
         }
         // §1.1.1 / §6.4：胶囊可见文字 = **当前语言的短名**（简中/繁中/EN），
         // 三字符以内才能塞进 32dp 高的胶囊（长名会被挤成省略号）。
@@ -750,12 +961,15 @@ public class SettingsActivity extends AppCompatActivity {
         if (mLanguageText != null) {
             mLanguageText.setText(mLang.nativeShortName());
         }
-        // 完整语义（含「跟随系统 · 简体中文」）走无障碍朗读，不占用可见空间
+        // 【code 1029】完整语义走无障碍朗读，不占用可见空间。
+        //   可见文字只有 2~3 个字的短名（尺寸限制），所以这里必须补上
+        //   「是什么 + 现在是哪种 + 点下去会怎样」三件事，否则读屏用户读到的只是一个词。
         if (mLanguageButton != null) {
-            mLanguageButton.setContentDescription(Strings.LANGUAGE.get(mLang) + ": "
-                    + (mLang == UiLang.SYSTEM
+            String now = (mLang == UiLang.SYSTEM)
                     ? Strings.FOLLOW_SYSTEM.get(mLang) + " · " + mLang.resolve().nativeName()
-                    : mLang.nativeName()));
+                    : mLang.nativeName();
+            mLanguageButton.setContentDescription(Strings.LANGUAGE.get(mLang) + ": " + now
+                    + " · " + Strings.LANGUAGE_CYCLE_HINT.get(mLang));
         }
 
         // 节标题在**卡片外**（〈页面布局参考〉口径），由这里统一刷文案
@@ -771,7 +985,44 @@ public class SettingsActivity extends AppCompatActivity {
         //   它仍用旧语言的「收起预览窗」朗读，页内即时切语言这条要求就漏了一处）。
         updatePreviewBarDescription();
 
+        // 【code 1028 / P1-⑤】节标题的 600 字重（Android 没有 600 字重族，见方法注释）。
+        applySectionTitleTypeface();
+        // 【code 1028 / P1-④】工具条的脏态读数随语言重刷。
+        updateSaveBar();
+
         renderStatusCard();
+    }
+
+    /**
+     * 【code 1028 / 审查稿 P1-⑤】五个节标题统一 16sp / onSurfaceVariant / 字重 600。
+     *
+     * <p>为什么字重要在代码里给、不写在 XML：Android 的字体族没有 600 这一档
+     * ——{@code android:textStyle} 只有 normal/bold 两值，{@code android:textFontWeight}
+     * 又只在 API 28+ 生效。这里的落地口径是：
+     * <ul>
+     *   <li>API 28+：{@code Typeface.create(current, 600, false)}，由系统按最接近的字重匹配；</li>
+     *   <li>API 24–27：{@code sans-serif-medium}（500）—— 比 bold 轻、比 regular 重，
+     *       在这页 16sp 的尺度上观感最接近 600。</li>
+     * </ul>
+     * ⚠️ 不要退回 {@code android:textStyle="bold"}：bold 是 700，会把「层级」又变回「靠颜色撑」。
+     */
+    private void applySectionTitleTypeface() {
+        TextView[] titles = {mTitlePreview, mTitleMain, mTitleLiquidGlass,
+                mTitleExperimental, mTitleMisc};
+        for (TextView tv : titles) {
+            if (tv == null) {
+                continue;
+            }
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    tv.setTypeface(Typeface.create(tv.getTypeface(), 600, false));
+                } else {
+                    tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+                }
+            } catch (Throwable t) {
+                // 字体匹配失败就退回 regular：标题仍然可读，不该因为一个字重让页面崩
+            }
+        }
     }
 
     private static void setTitleSafe(@Nullable TextView tv, String text) {
@@ -859,8 +1110,14 @@ public class SettingsActivity extends AppCompatActivity {
     private void applyPageBackground() {
         int page = pageBgColor();
         setBg(mRoot, page);
+        // 【code 1035】coord 也铺同值：既补齐 clipToOutline 需要的 outline 来源，
+        //   又把吸顶裁剪线两侧的底色与根布局绑死（同 §2.7 的口径）。
+        setBg(mCoord, page);
         setBg(mAppBar, page);
-        setBg(mBottomBar, page);
+        // 【code 1028 / 1030】**不要**给 mBottomBar 上色：它从 1028 起就不是通栏底栏了，
+        //   1029 是 FloatingToolbarLayout、1030 起是普通 LinearLayout，两者都只装两枚
+        //   各自带背景的控件。上一版（1028 之前）这里写 setBg(mBottomBar, page) 是因为
+        //   它当时是一条通栏底栏；照旧调用会把「按钮悬空」变成「一条底色板 + 两个洞」。
         if (mPreviewLines != null) {
             // 空态（无字幕行）时露出的就是壁纸层，这里不再额外铺色，保持透明。
             mPreviewLines.setBackground(null);
@@ -893,18 +1150,39 @@ public class SettingsActivity extends AppCompatActivity {
      * 而是每次 {@link #onConfigurationChanged} 都重取一次色槽（见 refreshCardTints 的调用链）。
      */
     private void styleBottomBar() {
-        styleTonalButton(mRestartButton, null);
+        // 【code 1028 / P1-④】底栏只剩「保存」一枚高频按钮（重启已移进 ⋯ 溢出菜单），
+        //   所以不再需要「tonal 左 + filled 右」的等权对照，只把保存键的配色与度量收口。
         if (mSaveButton != null) {
             mSaveButton.setBackgroundTintList(colorStateList(
                     attr(androidx.appcompat.R.attr.colorPrimary, 0xFF6750A4)));
             mSaveButton.setTextColor(colorStateList(
                     attr(com.google.android.material.R.attr.colorOnPrimary, Color.WHITE)));
         }
-        // 【code 975 §5】底栏两枚补齐 M3E 度量（14sp / 无内缩 / 20dp 水平内边距 / 全圆角 48dp），
+        // 【code 1031】Ari：「保存设置按钮太靠页面下方了，往上抬一些，另外给按钮四周加一些
+        //   阴影，需要看起来是悬浮在页面上」。
+        //   · 位置：XML 里 bottom_bar 的 marginBottom 12 → 28dp（让按钮离手势条更远）；
+        //   · 阴影：MaterialButton 自带 stateListAnimator（按下时 elevation 变大、抬起又缩回），
+        //     那样「悬浮」只在手指按着时成立。这里显式关掉动画、给一个**恒定**的 elevation，
+        //     按钮任何时候都浮着。
+        //   · ⚠️ 阴影画在控件盒子**之外**，父级必须 clipChildren=false（XML 已设），
+        //     否则会被裁成一圈硬边。
+        if (mSaveButton != null) {
+            mSaveButton.setStateListAnimator(null);
+            mSaveButton.setElevation(dp(8));
+            mSaveButton.setTranslationZ(dp(2));
+        }
+        if (mOverflowButton != null) {
+            // 溢出键与保存键同一排，抬高 4dp 让两枚的投影层次一致（不能同高：
+            // 同高会让两个投影在 3dp 间距处糊成一片）。
+            mOverflowButton.setStateListAnimator(null);
+            mOverflowButton.setElevation(dp(4));
+        }
+        // ⚠️ 容器的 clipChildren / clipToPadding 已在 XML 里设成 false（mBottomBar 声明为
+        //    View，这里没有 setClipChildren 可调；而它本来也只是个定位容器，不需要别的处理）。
+        // 【code 975 §5】底栏补齐 M3E 度量（14sp / 无内缩 / 20dp 水平内边距 / 全圆角 48dp），
         // 与卡片里的 M3E 控件（滑块粗轨、小号 tonal、对齐分段）收进同一条视觉语言。
         // ⚠️ 必须放在上述 tint 设置**之后** —— applyM3eButtonMetrics 只碰度量与内缩，
         //    不动配色；放在前面也不会被覆盖，但按「先配色后度量」的顺序读起来更清楚。
-        applyM3eButtonMetrics(mRestartButton);
         applyM3eButtonMetrics(mSaveButton);
     }
 
@@ -1066,6 +1344,12 @@ public class SettingsActivity extends AppCompatActivity {
 
     private void bindViews() {
         mRoot = findViewById(R.id.settings_root);
+        mCoord = findViewById(R.id.settings_coord);
+        // 【code 1035】RenderNode 级裁剪：1034 只恢复 clipChildren=true，真机实测 AppBarLayout
+        //   的 Behavior 位移在硬件路径下不被它裁住（状态卡仍漏进状态栏）。clipToOutline 作用在
+        //   RenderNode 层、对整棵子树生效 —— 但 outline 需要**背景**提供，coord 的底色在
+        //   applyPageBackground() 里铺，两处必须成对出现。
+        mCoord.setClipToOutline(true);
         mAppBar = findViewById(R.id.settings_appbar);
         mBottomBar = findViewById(R.id.bottom_bar);
         mStatusCard = findViewById(R.id.status_card);
@@ -1076,7 +1360,9 @@ public class SettingsActivity extends AppCompatActivity {
         mLanguageButton = findViewById(R.id.language_button);
         mLanguageText = findViewById(R.id.language_text);
         mSaveButton = findViewById(R.id.save_button);
-        mRestartButton = findViewById(R.id.restart_button);
+        mDirtyDot = findViewById(R.id.dirty_dot);
+        mDirtyLabel = findViewById(R.id.dirty_label);
+        mOverflowButton = findViewById(R.id.overflow_button);
         mPreviewLines = findViewById(R.id.preview_lines);
         mPreviewBackdrop = findViewById(R.id.preview_backdrop);
         mPreviewPanel = findViewById(R.id.preview_panel);
@@ -1109,9 +1395,13 @@ public class SettingsActivity extends AppCompatActivity {
             // 涟漪设置失败不影响解锁功能
         }
 
-        mLanguageButton.setOnClickListener(v -> showLanguageDialog());
+        mLanguageButton.setOnClickListener(v -> cycleLanguage());
         mSaveButton.setOnClickListener(v -> doSave());
-        mRestartButton.setOnClickListener(v -> confirmRestartSystemUi());
+        // 【code 1028 / P1-④】低频 / 破坏性动作收进溢出菜单（当前只有「重启系统界面」）。
+        if (mOverflowButton != null) {
+            mOverflowButton.setContentDescription(Strings.MORE.get(mLang));
+            mOverflowButton.setOnClickListener(v -> showOverflowMenu());
+        }
 
         // 【code 1025 / P0-③】预览条：点一下收起 / 展开。
         // 初值从 prefs 恢复 ⇒ 上次收起过的用户下次进来仍是收起的（这是「视口偏好」，不是临时状态）。
@@ -1122,7 +1412,38 @@ public class SettingsActivity extends AppCompatActivity {
                 mStore.savePreviewCollapsed(mPreviewCollapsed);
             });
         }
-        applyPreviewCollapsed(mPreviewCollapsed, false);
+        // 【code 1031】折叠态**不要在这里就收**：
+        //   布局还没跑完，preview_lines 没有真实宽度（只能按屏幕推算），而英文长句的
+        //   换行数对宽度极其敏感 —— 宽度差 28dp 就少换一行，行高被低估、窗口短半行。
+        //   先让卡以 wrap_content 完整排一次版，post 里再收起（那时才有真实坐标）。
+        if (!mPreviewCollapsed) {
+            applyPreviewCollapsed(false, false);
+        }
+        // 【code 1029】首帧那次测量发生在 layout 之前（宽度只能按屏幕推算）。
+        // 【code 1030】改成「宽度一变就重量」：推算值与真实排版宽度只要差一点，
+        //   英文长句的换行数就会不同 ⇒ 三行窗口的高度会量短、第三行被切掉半行。
+        //   用 OnLayoutChangeListener 比一次性 post 更稳：切语言、横竖屏、字号变化
+        //   都会让 preview_lines 的宽度变化，而那几种情况正是换行数会变的时刻。
+        if (mPreviewLines != null) {
+            mPreviewLines.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+                int w = v.getWidth();
+                if (w <= 0 || w == mPreviewMeasuredW) {
+                    return;
+                }
+                refreshPreviewMetrics();
+                applyPreviewFraction(mPreviewCollapsed ? 1f : 0f);
+            });
+        }
+        if (mPreviewCard != null) {
+            // 【code 1031】折叠态的第一次收拢统一放到这里：此刻卡还是 wrap_content
+            //   （bindViews 里没有提前收），preview_lines 已经按真实宽度排完版，
+            //   refreshPreviewMetrics 能拿到「第 1 行顶 / 第 3 行底」的真实坐标。
+            mPreviewCard.post(() -> {
+                if (mPreviewCollapsed) {
+                    applyPreviewCollapsed(true, false);
+                }
+            });
+        }
 
         // 【2.3.2】吸底栏按钮也要「夜间自动换深浅」：重启按钮走 tonal、保存按钮走 primary，
         // 两枚的 tint 都显式写死（不依赖样式继承），见 styleBottomBar()。
@@ -1228,22 +1549,29 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /**
-     * 【code 1025 / P0-③】收起 / 展开预览窗。
+     * 【code 1029】收起 / 展开预览窗 —— **单面裁切**，只有一张卡在动。
      *
      * ─────────────────────────────────────────────────────────────────────
      * 为什么值得做：审查稿实测（按源码常量累加，非截图测量）预览区 ≈375dp 常驻，
-     * 加上吸底双按钮 70dp，700dp 屏高下滚动时**真正能看见的设置区只剩 ≈255dp（2.6 行）**。
+     * 加上吸底操作条，700dp 屏高下滚动时**真正能看见的设置区只剩 ≈255dp（2.6 行）**。
      * 收起后 AppBarLayout 随之变矮，CoordinatorLayout 把省下的高度全部分给
      * NestedScrollView ⇒ 一次拿回 ≈320dp 视口。
      *
+     * 🔴 code 1028 的错法（Ari 反馈「百叶窗」）：折叠态另做了一张 {@code preview_mini}
+     *    （三行），收起时**同时**把 card 高度 H→0、mini 高度 0→target。两张画面内容
+     *    几乎一样但不同源（mini 只取 1/2/3 行，card 是 5 行），逐帧交叉淡入淡出，
+     *    看上去就是一片片横向文字在对穿 —— 这就是「百叶窗」。而且 mini 的面板层
+     *    固定走 floatWindowColor 渐变、不跟液态玻璃 ⇒ 顺带把底色也换了。
+     *
+     * 现在的做法（一个面，一条直线）：
+     *   · 收起 = 这张卡的高度从「五行实测高」收到「三行实测高」，**内容顶部锚定**，
+     *     底边被 clipChildren 裁掉 ⇒ 观感是窗口底边**向上抬**；
+     *   · 展开 = 同一条线反向，底边**向下落**；
+     *   · 背景 / 面板 / 字幕全是同一批 View、同一份 drawable、同一次
+     *     {@link #applyPreviewPanel()} 上色 ⇒ 取色不可能变。
+     *
      * @param collapsed 目标状态
      * @param animate   false = 首帧恢复（不做动画，避免进页面时看到一次折叠动效）
-     *
-     * ⚠️ 动画只做「收起」这一个方向：
-     *   收起要把高度从实测值收到 0（否则下面内容会在动画结束的瞬间**跳**上去）；
-     *   展开时目标高度是 wrap_content，只能先量后动，而 AppBarLayout 里额外量一次
-     *   容易量出「少一段内边距」的假高度 ⇒ 改成「立刻显示 + 淡入 160ms」，
-     *   展开方向本来就是「内容往下长」，观感自然。
      */
     private void applyPreviewCollapsed(boolean collapsed, boolean animate) {
         if (mPreviewCard == null) {
@@ -1259,48 +1587,275 @@ public class SettingsActivity extends AppCompatActivity {
         }
         updatePreviewBarDescription();
 
+        // 尺寸在动画开始前量一次（字号没变 ⇒ 整段动画里是常量）
+        refreshPreviewMetrics();
+
+        float target = collapsed ? 1f : 0f;
+        if (!animate) {
+            applyPreviewFraction(target);
+            return;
+        }
+        if (Math.abs(mPreviewFraction - target) < 0.001f) {
+            applyPreviewFraction(target);
+            return;
+        }
+        // 🔴【code 1033 / Ari 第 7 条】开新动画前先停掉上一条。
+        //   连点两下时会有两个 ValueAnimator 同时往 mPreviewFraction 里写值，
+        //   后一帧被前一个覆盖 ⇒ 观感是「收一半又弹回去」。Ari 说的「概率回弹」就是它。
+        if (mPreviewAnim != null) {
+            mPreviewAnim.cancel();
+            mPreviewAnim = null;
+        }
+        final ValueAnimator anim = ValueAnimator.ofFloat(mPreviewFraction, target);
+        anim.setDuration(220L);
+        // 收起与展开用同一条曲线：收起是「弹簧收拢」、展开是「顺势落下」，
+        // 两者都该先快后慢；给展开单独配 Accelerate 会显得启动迟疑。
+        anim.setInterpolator(new DecelerateInterpolator());
+        anim.addUpdateListener(a -> applyPreviewFraction((float) a.getAnimatedValue()));
+        mPreviewAnim = anim;
+        anim.start();
+    }
+
+    /**
+     * 【code 1029】把「收起程度」画到卡上。
+     *
+     * @param f 0 = 全展开（高度 wrap_content）、1 = 折叠（高度 = 三行实测高）
+     *
+     * <p>⚠️ 两端**必须落回确定性值**：f<=0 用 {@link ViewGroup.LayoutParams#WRAP_CONTENT}
+     * 而不是某个算出来的像素 —— 展开态的最终高度应当由布局自己决定，
+     * 用算出来的像素去钉死，字号/换行一变就会差几个像素（边缘露出半行）。
+     */
+    private void applyPreviewFraction(float f) {
+        if (mPreviewCard == null) {
+            return;
+        }
         ViewGroup.LayoutParams lp = mPreviewCard.getLayoutParams();
         if (lp == null) {
             return;
         }
-        if (!animate) {
-            lp.height = collapsed ? 0 : ViewGroup.LayoutParams.WRAP_CONTENT;
-            mPreviewCard.setLayoutParams(lp);
-            mPreviewCard.setAlpha(collapsed ? 0f : 1f);
-            mPreviewCard.setVisibility(collapsed ? View.GONE : View.VISIBLE);
-            return;
-        }
-
-        if (collapsed) {
-            final int from = mPreviewCard.getHeight();
-            if (mPreviewCard.getVisibility() != View.VISIBLE || from <= 0) {
-                lp.height = 0;
+        mPreviewFraction = f;
+        if (!mPreviewMetricsValid || mPreviewFullH <= 0 || mPreviewWinH <= 0
+                || mPreviewWinH >= mPreviewFullH) {
+            // 【code 1033】量不出来时**不能再无条件展开**。
+            //
+            //   1029~1032 这里一律 `lp.height = WRAP_CONTENT` —— 于是任何一次「行刚重建、
+            //   坐标还没生成」都会把已经收起的迷你窗顶成完整窗。Ari 的第 6 条
+            //   （编辑字幕时自动展开）与第 8 条（切语言时尺寸变化）都是这条分支造成的。
+            //
+            //   用户点过收起，就不该被程序弹回来 ⇒ 折叠态沿用**上一次的实测窗口高**，
+            //   连带把位移与裁剪也按 f=1 重新落实；只有展开态才交回 wrap_content。
+            if (mPreviewCollapsed && mPreviewWinH > 0 && mPreviewFullH > 0) {
+                pinPreviewContentHeight();
+                lp.height = mPreviewWinH;
                 mPreviewCard.setLayoutParams(lp);
-                mPreviewCard.setVisibility(View.GONE);
+                if (mPreviewLines != null) {
+                    mPreviewLines.setTranslationY(-mPreviewWinDy);
+                    applyPreviewClip(1f);
+                }
                 return;
             }
-            final ValueAnimator anim = ValueAnimator.ofInt(from, 0);
-            anim.setDuration(200L);
-            anim.setInterpolator(new DecelerateInterpolator());
-            anim.addUpdateListener(a -> {
-                lp.height = (int) a.getAnimatedValue();
-                mPreviewCard.setLayoutParams(lp);
-            });
-            anim.addListener(new AnimatorListenerAdapter() {
-                @Override
-                public void onAnimationEnd(Animator animation) {
-                    lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
-                    mPreviewCard.setLayoutParams(lp);
-                    mPreviewCard.setVisibility(View.GONE);
-                }
-            });
-            anim.start();
-        } else {
             lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
             mPreviewCard.setLayoutParams(lp);
-            mPreviewCard.setVisibility(View.VISIBLE);
-            mPreviewCard.setAlpha(0f);
-            mPreviewCard.animate().alpha(1f).setDuration(160L).start();
+            if (mPreviewLines != null) {
+                mPreviewLines.setTranslationY(0f);
+                mPreviewLines.setClipBounds(null);
+                releasePreviewContentHeight();
+            }
+            return;
+        }
+        // 🔴【code 1032】必须先钉住内容高度，再改卡片高度 —— 顺序不能反。
+        pinPreviewContentHeight();
+        if (f <= 0f) {
+            lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        } else if (f >= 1f) {
+            lp.height = mPreviewWinH;
+        } else {
+            lp.height = Math.round(mPreviewFullH + (mPreviewWinH - mPreviewFullH) * f);
+        }
+        mPreviewCard.setLayoutParams(lp);
+        if (mPreviewLines != null) {
+            // 【code 1031】上移量 = 第 FIRST 行**顶边**（含容器 paddingTop 与第 0 行），
+            //   把它整行顶到卡顶；卡高 = 第 FIRST 行顶到 LAST 行底的净高。
+            //   两个值同源、互为边界 ⇒ 窗口里正好三行，既不会顶部白一条，也不会切到下一行。
+            mPreviewLines.setTranslationY(-mPreviewWinDy * f);
+            applyPreviewClip(f);
+        }
+    }
+
+    /**
+     * 🔴🔴【code 1032 / Ari 第 2 条真因】把 {@code preview_lines} 的高度**钉成自然全高**。
+     *
+     * <p>事故：Ari 反馈「迷你预览窗从第二行（活动行）开始就不显示，英文版所有行都不显示」，
+     * 比上一版更严重。
+     *
+     * <p>根因不在位移、也不在裁剪，而在**父级把内容压扁了**：
+     * 折叠时我们把 {@code preview_card} 的高度改成「三行净高」，而 {@code preview_lines}
+     * 是它的**直接子 View**、高度又是 {@code wrap_content} ⇒ FrameLayout 会用
+     * {@code AT_MOST(三行净高)} 去量它；LinearLayout 竖直排列时，每行拿到的是
+     * **「上一行用剩下多少」**，于是：
+     * <pre>
+     *   第 1 行  AT_MOST(winH)        → 自然高（够用）
+     *   第 2 行  AT_MOST(winH - h0)   → 被压
+     *   第 3 行  AT_MOST(剩下一点)     → 更扁
+     *   第 4/5 行 AT_MOST(0)          → 高度 0
+     * </pre>
+     * 中文行短、h0 小，所以第 1 行还看得见、第 2 行起被压没了；英文首行就换行，
+     * h0 一下吃掉大半 ⇒ **五行全被压成 0**。这就是「简中从第二行起不显示 / 英文全不显示」
+     * 两个症状的同一个原因 —— 跟宽度、跟裁剪都无关。
+     *
+     * <p>修法：折叠态把 {@code preview_lines} 的 {@code layout_height} 写成
+     * {@code mPreviewFullH}（EXACTLY）⇒ 它永远按自然高度排版，**溢出卡片**的部分交给
+     * 卡片自己的 {@code clipChildren} 裁掉。展开态再放回 {@code WRAP_CONTENT}。
+     *
+     * <p>⚠️ 必须在设置卡片高度**之前**调用：反过来的话会先用 AT_MOST 量一次、压扁一次，
+     * 这一帧就已经错了。
+     */
+    private void pinPreviewContentHeight() {
+        if (mPreviewLines == null || mPreviewFullH <= 0) {
+            return;
+        }
+        ViewGroup.LayoutParams p = mPreviewLines.getLayoutParams();
+        if (p == null || p.height == mPreviewFullH) {
+            return;
+        }
+        p.height = mPreviewFullH;
+        mPreviewLines.setLayoutParams(p);
+    }
+
+    /** 展开态：内容高度交回布局自己（{@code wrap_content}）。 */
+    private void releasePreviewContentHeight() {
+        if (mPreviewLines == null) {
+            return;
+        }
+        ViewGroup.LayoutParams p = mPreviewLines.getLayoutParams();
+        if (p == null || p.height == ViewGroup.LayoutParams.WRAP_CONTENT) {
+            return;
+        }
+        p.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        mPreviewLines.setLayoutParams(p);
+    }
+
+    /**
+     * 【code 1030】把窗口上沿那条「上一行的尾巴」裁掉。
+     *
+     * <p>位移只负责把 1..3 行顶到窗口顶部；上移之后窗口最上面那 {@code paddingTop}
+     * 高的条带里，落的是第 0 行的**最后一段**（英文换行时就是半行字）。
+     * 这里在内容坐标系里从「第 1 行的顶边」开始裁，条带才会是干净的空白。
+     *
+     * <p>按 {@code f} 线性收口（{@code clipTop * f}）：f=0 时不裁、f=1 时正好切在行边界上，
+     * 动画全程不会出现「先露半行再突然消失」。
+     */
+    private void applyPreviewClip(float f) {
+        if (mPreviewLines == null) {
+            return;
+        }
+        int w = mPreviewLines.getWidth();
+        if (f <= 0f || mPreviewClipTop <= 0 || mPreviewClipBottom <= mPreviewClipTop
+                || w <= 0 || mPreviewFullH <= 0) {
+            mPreviewLines.setClipBounds(null);
+            return;
+        }
+        int top = Math.round(mPreviewClipTop * f);
+        // 【code 1031】底部也线性收口：f=0 → full（等于不裁），f=1 → 第 LAST 行底。
+        //   只裁上沿的话，窗口下沿仍会落进「第 4 行」的头几像素，看起来就像多出半行。
+        int bottom = Math.round(mPreviewFullH + (mPreviewClipBottom - mPreviewFullH) * f);
+        if (bottom <= top) {
+            bottom = top + 1;
+        }
+        mPreviewLines.setClipBounds(new Rect(0, top, w, bottom));
+    }
+
+    /**
+     * 【code 1029 / 1031】实测预览窗的折叠尺寸与内容位移。
+     *
+     * <p>必须实测而不是写死 dp：用户把字号调大、行距拉开之后三行窗口会更高，
+     * 写死会让动画终点与实际高度对不上，收完的一瞬间还会再跳一次。
+     *
+     * <p>🔴【code 1031】三个量与窗口几何**完全分离**，各管一段，不再互相推测：
+     * <ul>
+     *   <li>{@link #mPreviewWinDy} = 第 {@link #WINDOW_FIRST} 行的**顶边**（内容坐标）——
+     *       位移把它顶到卡顶；</li>
+     *   <li>{@link #mPreviewWinH} = 第 FIRST 行顶到 LAST 行底的**净高度**（不含容器
+     *       padding）—— 卡高就等于它，窗口里正好三行，不多一条空白也不少半行；</li>
+     *   <li>{@link #mPreviewClipTop} / {@link #mPreviewClipBottom} = 同一对边界的
+     *       **裁剪区间**。</li>
+     * </ul>
+     * 1029/1030 把「上下 padding」也算进窗口高、却只用「行高累加」做位移，两个口径
+     * 各错一半：窗口顶部白一条 18dp、底部又少半行 —— Ari 看到的「第三行不显示」
+     * 与「活动行都不全」就是这两处叠加。
+     *
+     * <p>⚠️ 用 {@code UNSPECIFIED} 量 {@code preview_lines}：它此刻可能正被父级
+     * AT_MOST（折叠时的高）裁着，直接读 {@code getHeight()} 会拿到被夹过的值。
+     */
+    private void refreshPreviewMetrics() {
+        mPreviewMetricsValid = false;
+        if (mPreviewLines == null) {
+            return;
+        }
+        try {
+            int width = mPreviewLines.getWidth();
+            if (width <= 0) {
+                // 首次进入还没排版：按「屏幕宽 - 卡片左右 margin - 本容器左右 padding」推。
+                // 🔴【code 1031】1029/1030 只减了 32dp（卡片 margin），**没减 preview_lines
+                //   自己的 14dp×2** —— 推出来的可用宽比真实值宽 28dp，英文长句因此少换
+                //   一行、行高被低估，折叠窗口就短了一截。
+                View parent = (View) mPreviewLines.getParent();
+                int pw = parent == null ? 0 : parent.getWidth();
+                width = pw > 0 ? pw
+                        : getResources().getDisplayMetrics().widthPixels - dp(32)
+                        - mPreviewLines.getPaddingLeft() - mPreviewLines.getPaddingRight();
+            }
+            // 🔴🔴【code 1033】forceLayout 是必须的：View.measure() 自带缓存，spec 没变且
+            //   没有 FORCE_LAYOUT 标记时会**跳过 onMeasure**，直接返回上一次的尺寸 ——
+            //   而行刚被重建，上一次的尺寸属于旧内容。
+            mPreviewLines.forceLayout();
+            mPreviewLines.measure(
+                    View.MeasureSpec.makeMeasureSpec(Math.max(0, width), View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            int full = mPreviewLines.getMeasuredHeight();
+            int n = mPreviewLines.getChildCount();
+            if (full <= 0 || n <= WINDOW_LAST) {
+                return;
+            }
+
+            // 🔴🔴【code 1033】坐标**一律累加**，不再读 getTop()/getBottom()。
+            //
+            //   1031 的写法是「getHeight() >= full 就用真实坐标，否则累加」。它默认
+            //   「高度对得上 ⇒ 布局也是按这批子 View 做的」，但重建行的瞬间这两件事会错开：
+            //   preview_lines 因为折叠态被 pin 着，getHeight() 仍是**旧** full，
+            //   而新的子 View 还没 layout 过 ⇒ getTop()/getBottom() 全 0。
+            //   ⇒ winBottom <= winTop ⇒ return ⇒ valid=false ⇒ 调用方弹成完整模式。
+            //   （Ari 第 6 条「编辑字幕时自己从迷你变完整」、第 8 条「切语言时尺寸变化」。）
+            //
+            //   累加为什么与真实布局逐像素等价：竖直 LinearLayout 就是从 paddingTop 起
+            //   依次堆叠各子 View 的 measuredHeight（行内 margin 恒为 0，见 updatePreview），
+            //   没有任何 baseline / gravity 之类的额外偏移。1031 说真实坐标「能吸收字体留白」，
+            //   但那份留白本来就在子 View 自己的 measuredHeight 里 ⇒ 累加不会漏掉。
+            //   而且累加只依赖「刚刚量出来的值」，与「有没有 layout 过」完全无关。
+            int y = mPreviewLines.getPaddingTop();
+            int winTop = -1;
+            int winBottom = -1;
+            for (int i = 0; i < n; i++) {
+                if (i == WINDOW_FIRST) {
+                    winTop = y;
+                }
+                y += mPreviewLines.getChildAt(i).getMeasuredHeight();
+                if (i == WINDOW_LAST) {
+                    winBottom = y;
+                }
+            }
+            if (winTop < 0 || winBottom <= winTop) {
+                return;
+            }
+            mPreviewFullH = full;
+            mPreviewWinH = winBottom - winTop;
+            mPreviewWinDy = winTop;
+            mPreviewClipTop = winTop;
+            mPreviewClipBottom = winBottom;
+            mPreviewMeasuredW = width;
+            mPreviewMetricsValid = full > 0 && mPreviewWinH > 0 && mPreviewWinH < full;
+        } catch (Throwable t) {
+            Log.w(TAG, "refreshPreviewMetrics failed: " + t);
         }
     }
 
@@ -1601,53 +2156,51 @@ public class SettingsActivity extends AppCompatActivity {
     // FR-02 语言
     // ==================================================================
 
+
     /**
-     * 语言选择弹层（v1.4 §6.3 修「什么都没改只切语言 → 返回时弹未保存」）。
+     * 【code 1029】语言胶囊：**点一下换一种**（简中 → 繁中 → EN → 简中），不再弹选择框。
      *
      * ─────────────────────────────────────────────────────────────────────
-     * 语言**不属于「字幕外观参数」**：它只影响设置页 UI 与预览区的示例字幕（FR-02 规则 2），
-     * 改了它对悬浮窗没有任何影响。因此它不该把页面变「脏」、更不该逼用户在返回时
-     * 面对「保存 / 不保存 / 取消」三选 —— 那三选是给**外观改动**用的。
+     * Ari 2026-10-19：「语言按钮改为点击语言循环出现『简中/繁中/EN』并改变页面语言显示，
+     * 初始语言显示跟随系统设置，关闭弹窗选择语言功能」。
      *
-     * 本版按两件事一起做：
-     *  ① {@link #isDirty()} **排除 uiLanguage**（比较的口径是「除语言外的参数」）；
-     *  ② 切语言后**立即独立保存**（{@code ConfigStore#saveUiLanguageOnly}）——
-     *     只把 ui_language 写进设置页自己的 MODE_PRIVATE prefs，不写 JSON、不发广播、
-     *     不覆盖其他参数。于是「切了语言」这件事是**当场落盘**的，再按返回直接退出，
-     *     既不弹三选、也不丢语言选择。
+     * 三个要点：
+     *  ① **初始显示跟随系统**：{@code ui_language} 默认就是 {@code system}，
+     *     而 {@link UiLang#nativeShortName()} 对 SYSTEM 返回的是 {@code resolve()} 之后的
+     *     短名 —— 所以按钮上永远是「页面此刻实际在用的语言」，不是「system 这个字符串」。
+     *  ② **从当前实际语言往后数一格**：SYSTEM 态下第一次点击，要从「系统解析出来的那个
+     *     语言」的下一个开始，而不是从简体开始 —— 否则系统是英文的用户点一下会看到
+     *     「EN → 简中」，像在往回退。
+     *  ③ 一旦点过，{@code ui_language} 就落成具体值（不再回 SYSTEM）：
+     *     显式选择比隐式跟随更符合「我刚亲手点了它」的预期。
      *
-     * ⚠️ 顺序很关键：**先独立保存、再改 mDraft**。反过来的话，若此刻已有外观草稿改动，
-     *    独立保存期间与后来的全量保存会互相覆盖 ui_language，出现「保存后语言又变回去」。
-     * ─────────────────────────────────────────────────────────────────────
+     * ⚠️ 不产生脏态：走 {@link #applyLanguage(UiLang)}，与原来弹窗选完的路径完全一致
+     *    （立即独立落盘 + 重建行 + 回灌草稿），所以 `isDirty()` 里那段「排除 uiLanguage」
+     *    的口径不变。
      */
-    private void showLanguageDialog() {
-        final UiLang[] options = {UiLang.SYSTEM, UiLang.ZH_CN, UiLang.ZH_TW, UiLang.EN};
-        String[] labels = new String[options.length];
-        int checked = 0;
-        for (int i = 0; i < options.length; i++) {
-            if (options[i] == UiLang.SYSTEM) {
-                labels[i] = Strings.FOLLOW_SYSTEM.get(mLang) + " · " + UiLang.detectSystem().nativeName();
-            } else {
-                labels[i] = options[i].nativeName();
-            }
-            if (options[i] == mLang) {
-                checked = i;
-            }
+    private void cycleLanguage() {
+        UiLang current = mLang == null ? UiLang.SYSTEM : mLang;
+        UiLang resolved = current.resolve();
+        UiLang next;
+        switch (resolved) {
+            case ZH_CN:
+                next = UiLang.ZH_TW;
+                break;
+            case ZH_TW:
+                next = UiLang.EN;
+                break;
+            case EN:
+            case SYSTEM:
+            default:
+                next = UiLang.ZH_CN;
+                break;
         }
-        new MaterialAlertDialogBuilder(this)
-                .setTitle(Strings.LANG_DIALOG_TITLE.get(mLang))
-                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                    dialog.dismiss();
-                    UiLang picked = options[which];
-                    if (picked != mLang) {
-                        applyLanguage(picked);
-                    }
-                })
-                .setNegativeButton(Strings.CANCEL.get(mLang), null)
-                .show();
+        applyLanguage(next);
     }
 
-    /** 切语言：立即独立落盘 + 重建全部行 + 回灌草稿值（不产生脏态，见 {@link #showLanguageDialog()}）。 */
+    /**
+     * 切语言：立即独立落盘 + 重建全部行 + 回灌草稿值（不产生脏态，见 {@link #cycleLanguage()}）。
+     */
     private void applyLanguage(UiLang picked) {
         // ① 立即独立保存（不写 JSON / 不广播 / 不动其他参数）
         try {
@@ -1765,21 +2318,67 @@ public class SettingsActivity extends AppCompatActivity {
 
     /** FR-04 主字幕 / 活动行调整（6 参数 + 恢复默认）。 */
     /**
-     * 【code 1025 / P1-1】卡内 connected button group（颜色 / 行态 / 排版）。
+     * 【code 1025 / P1-1】卡内 connected button group（字幕 / 行态 / 排版）。
      *
-     * <p>规格取自设计审查 §04-01：组高 40dp、段间距 2dp、圆角 full；
+     * <p>规格取自设计审查 §04-01：段间距 2dp、圆角 full；
      * 选中 {@code secondaryContainer / onSecondaryContainer}，未选中
      * {@code surfaceContainer / onSurfaceVariant}（未选中**不描边**）。
      *
-     * <p>⚠️ 手搓而不是用官方 {@code MaterialButtonGroup}：项目现有的滑块、分段、
-     * 底栏按钮全是手搓（同一套 {@code attr()} + {@code dp()} 取色与度量），
-     * 自绘能精确对齐这套语言，也不受库版本差异影响。
+     * <p>⚠️ 【code 1028 注释纠偏】上一段理由里「不受库版本差异影响」这句**已经过期**：
+     * material 1.14.0 里 {@code MaterialButtonGroup} 是可用的官方件（dex 实测有）。
+     * 这里仍然手搓，真实理由只剩一条 —— 切面是「改三个 LinearLayout 的可见性」，
+     * 按钮只是触发器；换官方组还要额外处理选中态回灌与语言重建，换不来用户可见收益。
+     * **不要再拿「库版本不够」当理由**（那是 1025 之前的事实）。
      */
+    /**
+     * 【code 1029】连通按钮组的逐角圆角模型（M3 Expressive Connected Button Group）。
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * 规则只有一条：**只有「挨着另一段」的那一侧收成 8dp，其余保持外侧胶囊半径**。
+     *
+     *   段 0（首）：左 = 外侧      ，右 = 内侧（右侧有邻居）
+     *   段 1（中）：左 = 内侧，右 = 内侧
+     *   段 2（末）：左 = 内侧，右 = 外侧
+     *
+     * ⚠️ 不要用 {@link MaterialButton#setCornerRadius(float)}：那是**四角同值**，
+     *    设 8dp 会把外侧也削平，整组就变成三个圆角方块，Ari 明确要求「外侧保持圆角」。
+     * ⚠️ 上下角跟着「左右」走，不单独设：横向排布时，左上/右上属于同一条竖边，
+     *    分开设会出现「左边胶囊、右边直角」的错位。
+     *
+     * @param index     当前段下标（0-based）
+     * @param count     段总数
+     * @param outerDp   外侧圆角半径（dp）：组高的一半 ⇒ 首末两端是完整胶囊
+     */
+    private ShapeAppearanceModel connectedShape(int index, int count, float outerDp) {
+        float outer = dp(outerDp);
+        float inner = dp(GROUP_INNER_RADIUS_DP);
+        float left = index > 0 ? inner : outer;
+        float right = index < count - 1 ? inner : outer;
+        return new ShapeAppearanceModel.Builder()
+                .setTopLeftCornerSize(left)
+                .setBottomLeftCornerSize(left)
+                .setTopRightCornerSize(right)
+                .setBottomRightCornerSize(right)
+                .build();
+    }
+
     private void buildAppearanceTabs() {
         if (mAppearanceTabs == null) {
             return;
         }
         mAppearanceTabs.removeAllViews();
+        // 【code 1030】组高对齐「对齐」那一排分段（= CONTROL_H_DP）。1028 为了点准把它
+        //   单独抬到 48dp，结果同一张卡里两排胶囊一高一矮；Ari 要求以「对齐」为准。
+        //   高度在**代码里**按同一个常量写，XML 只给 wrap 兜底 ⇒ 两处不会再走散。
+        mAppearanceTabs.getLayoutParams().height = dp(CONTROL_H_DP);
+        // 【code 1032 / Ari 第 1 条】页签 → 首个选项 = CARD_PAD_TOP_DP，与另外三张卡的
+        //   「卡顶 → 首个选项」严格相等（行头自带的内缩两边相同，可以约掉）。
+        //   XML 里也写了同一个值，这里再写一次是为了让常量一改两处同步。
+        if (mAppearanceTabs.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+            ((ViewGroup.MarginLayoutParams) mAppearanceTabs.getLayoutParams()).bottomMargin =
+                    dp(CARD_PAD_TOP_DP);
+        }
+        mAppearanceTabs.requestLayout();
         Strings[] labels = {Strings.TAB_COLOR, Strings.TAB_LINE_STATE, Strings.TAB_TYPE};
         for (int i = 0; i < labels.length; i++) {
             final int page = i;
@@ -1787,7 +2386,7 @@ public class SettingsActivity extends AppCompatActivity {
             b.setText(labels[i].get(mLang));
             b.setAllCaps(false);
             b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
-            // MaterialButton 默认最小高 48dp 会把 40dp 的组撑高 ⇒ 必须显式清零
+            // MaterialButton 默认最小高 48dp 会把组撑高 ⇒ 必须显式清零
             b.setMinWidth(0);
             b.setMinimumWidth(0);
             b.setMinHeight(0);
@@ -1795,12 +2394,13 @@ public class SettingsActivity extends AppCompatActivity {
             b.setInsetTop(0);
             b.setInsetBottom(0);
             b.setStrokeWidth(0);
-            b.setCornerRadius(dp(20));
+            // 【code 1029】M3E 连通组：外侧仍是 24dp 胶囊，相邻的内侧收到 8dp。
+            b.setShapeAppearanceModel(connectedShape(i, labels.length, CONTROL_H_DP / 2f));
             b.setPadding(dp(4), 0, dp(4), 0);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
             if (i > 0) {
-                lp.setMarginStart(dp(2));
+                lp.setMarginStart(dp(GROUP_GAP_DP));
             }
             b.setLayoutParams(lp);
             b.setOnClickListener(v -> selectAppearancePage(page));
@@ -1830,9 +2430,15 @@ public class SettingsActivity extends AppCompatActivity {
         //   （GONE 的面高度为 0，量出来是错的）⇒ 每次切面给当前面补一次收敛。
         //   pinCardLastBottom 自带幂等：算出来与现有 margin 相同就直接返回。
         pinAppearanceBottom(pages[page]);
-        int onBg = attr(com.google.android.material.R.attr.colorSecondaryContainer, 0xFFE8DEF8);        int onFg = attr(com.google.android.material.R.attr.colorOnSecondaryContainer, 0xFF1D192B);
-        int offBg = attr(com.google.android.material.R.attr.colorSurfaceContainer, 0xFFF3EDF7);
-        int offFg = attr(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF49454F);
+        // 【code 1030】配色对齐「对齐」那一排分段（见 addSegmentedRow 的 colorPrimary 口径）：
+        //   已选 = 深重点色（colorPrimary / colorOnPrimary），未选 = 浅重点色
+        //   （colorSecondaryContainer / colorOnSecondaryContainer）。
+        //   1028 的「已选 = secondaryContainer、未选 = surfaceContainer」两档太接近，
+        //   截图里「Layout」只是略深一点的灰，看不出是选中态。
+        int onBg = attr(androidx.appcompat.R.attr.colorPrimary, 0xFF6750A4);
+        int onFg = attr(com.google.android.material.R.attr.colorOnPrimary, Color.WHITE);
+        int offBg = attr(com.google.android.material.R.attr.colorSecondaryContainer, 0xFFE8DEF8);
+        int offFg = attr(com.google.android.material.R.attr.colorOnSecondaryContainer, 0xFF1D192B);
         for (int i = 0; i < mAppearanceTabButtons.length; i++) {
             MaterialButton b = mAppearanceTabButtons[i];
             if (b == null) {
@@ -1961,13 +2567,6 @@ public class SettingsActivity extends AppCompatActivity {
      * 默认值 {@code WEIGHT_SYSTEM} 恰好等价于用户没调过的状态。
      */
     private void buildTypoGroup(LinearLayout parent) {
-        mRowAlign = addSegmentedRow(parent, Strings.ALIGN, new String[]{
-                Strings.ALIGN_LEFT.get(mLang), Strings.ALIGN_CENTER.get(mLang),
-                Strings.ALIGN_RIGHT.get(mLang)}, v -> {
-            mDraft.textAlign = alignValueOf(v);
-            markDirty();
-        });
-
         // 行距：滑块走「×2 的整数刻度」（0.5dp 步长，含负值，PRD §14.2 DK-02）
         // §2.1.1：上限由 10dp 收窄到 5dp（SubtitleConfig.LINE_SPACING_MAX 已改，这里 to 值跟着走）
         mRowLineSpacing = addSliderRow(parent, Strings.LINE_SPACING,
@@ -1991,6 +2590,16 @@ public class SettingsActivity extends AppCompatActivity {
         // 【code 1026】「跟随宿主字幕样式」已整体移除 —— 上一版它就在这个位置。
         //   删除原因见 CHANGELOG 1026：宿主真正上屏的那一份样式并没有稳定可读的语义，
         //   与其留一个「看起来在跟、实际经常跟不到」的开关，不如把字号交回用户自己。
+
+        // 【code 1030】对齐分段搬到「悬浮窗颜色」的正上方（Ari 指定的位置）：
+        //   它和「悬浮窗颜色」是同一类「作用于整个面板」的选项，放在一起读起来是连续的；
+        //   原来夹在两支行距滑块中间，把「行距 → 换行额外行距」这一对照硬生生切断了。
+        mRowAlign = addSegmentedRow(parent, Strings.ALIGN, new String[]{
+                Strings.ALIGN_LEFT.get(mLang), Strings.ALIGN_CENTER.get(mLang),
+                Strings.ALIGN_RIGHT.get(mLang)}, v -> {
+            mDraft.textAlign = alignValueOf(v);
+            markDirty();
+        });
 
         // §3.1.5：悬浮窗颜色 —— **必须在「长字幕内换行额外行距」的正下方**（需求给的位置）。
         // 半透明预览：色板圆点画的是「面板**顶部**实际不透明度叠加后的效果」（≈57%），
@@ -2044,6 +2653,8 @@ public class SettingsActivity extends AppCompatActivity {
     private void buildMiscGroup(LinearLayout parent) {
         // 【code 1023】宿主版本行已**搬进状态卡副标题第二行**（Ari 要求），本卡不再有这一行。
         buildStatusbarRow(parent);
+        // 【code 1031】Ari 第 8 条：「桌面图标隐藏」放在「调试日志」上面。
+        buildLauncherIconRow(parent);
         // 【2.2.7 / code 979】「调试日志」开关：诊断级日志的总闸。
         // 摆在「状态栏字幕功能」下方、「备份与恢复」上方（备份那排按钮仍由
         // pinCardLastBottom 钉为卡片最后一行，见本方法末尾）。
@@ -2069,6 +2680,8 @@ public class SettingsActivity extends AppCompatActivity {
 
         MaterialButton exportBtn = makeTonalButton(R.drawable.ic_export);
         exportBtn.setText(Strings.EXPORT.get(mLang));
+        // 【code 1029】M3E 连通组（两段）：外侧 20dp 胶囊、右侧（挨着导入）8dp
+        exportBtn.setShapeAppearanceModel(connectedShape(0, 2, CONTROL_H_DP / 2f));
         exportBtn.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         exportBtn.setOnClickListener(v -> {
@@ -2084,9 +2697,10 @@ public class SettingsActivity extends AppCompatActivity {
 
         MaterialButton importBtn = makeTonalButton(R.drawable.ic_import);
         importBtn.setText(Strings.IMPORT.get(mLang));
+        importBtn.setShapeAppearanceModel(connectedShape(1, 2, CONTROL_H_DP / 2f));
         LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        ip.setMarginStart(dp(10));
+        ip.setMarginStart(dp(GROUP_GAP_DP));
         importBtn.setLayoutParams(ip);
         importBtn.setOnClickListener(v -> {
             try {
@@ -2099,9 +2713,10 @@ public class SettingsActivity extends AppCompatActivity {
         bar.addView(importBtn);
 
         parent.addView(bar);
-        // 【code 976 §1】「其他」卡片的最后一行是这排导出/导入按钮 —— 它是**容器**（盒底即视觉底边），
-        //   与前三张卡（末尾是「恢复默认」下方的小字）走同一个收敛函数，底距口径才统一。
-        pinCardLastBottom(parent, bar);
+        // 【code 976 §1】「其他」卡片的最后一行是这排导出/导入按钮 —— 它是**容器**（盒底即视觉底边）。
+        // 【code 1034 / Ari 第 4 条】按钮条吃满整行、没有隐藏空隙，补墨迹补偿才能与
+        //   「恢复默认」行卡（字幕外观 / 液态玻璃）的可见底距拉平。
+        pinCardLastBottom(parent, bar, CARD_LAST_BTN_INSET_DP);
 
         // 【2.3.2 §2.5】v1.5 在按钮下方还挂了一个**空 TextView**（只有 8dp 内边距、没有任何文字），
         // 叠加卡片自身 6dp 下内边距 ⇒ 按钮下面凭空多出约 20dp 的空白，Ari 两次点名
@@ -2203,6 +2818,141 @@ public class SettingsActivity extends AppCompatActivity {
         parent.addView(root);
     }
 
+    /**
+     * 【code 1031】「隐藏桌面图标」行（Ari 第 8 条，摆在「调试日志」上面）。
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * 为什么这条开关**不参与「保存设置」**
+     *   它改的是「这台设备的桌面长什么样」，不是字幕渲染参数：不进配置 JSON、
+     *   不发广播、不写 saved_at。点下即落盘、即生效 —— 用户点完抬头看桌面就知道成功了，
+     *   没有理由再让她多点一次「保存」。
+     *
+     * 为什么禁用的是 {@code activity-alias} 而不是 Activity 本身
+     *   {@code setComponentEnabledSetting()} 只能按**组件**开关。禁用 SettingsActivity
+     *   会让 LSPosed 也唤不起来（它的「打开」同样走 launcher intent），用户就再也进不了
+     *   这一页、也就再也没法把这个开关关掉。alias 是独立组件：关了只影响桌面入口。
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    private void buildLauncherIconRow(LinearLayout parent) {
+        beginRow(parent);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+
+        mRowHideLauncher = addSwitchRow(root, Strings.HIDE_LAUNCHER_ICON,
+                this::onHideLauncherIconToggled);
+
+        // 【code 1033 / Ari 第 4 条】删掉开关下方那行说明小字。
+        //   ⚠️ 小字删了不留坑：这一行现在就是「一行开关」，高度回到 ROW_MIN_H_DP(48dp)；
+        //      安全绳（拒绝隐藏时弹回开关 + Toast 说明）不依赖任何常驻文案，
+        //      被拒时走 Strings.HIDE_ICON_UNSUPPORTED，用户照样知道发生了什么。
+
+        parent.addView(root);
+
+        // 回填「已落盘」的状态，并把系统里的组件状态对齐一次：
+        // 用户清过应用数据、或从旧版本升上来（那时还没有 alias）都可能不一致。
+        //
+        // 🔴【code 1032】顺序反过来：先**尝试**落状态，再按「实际生效的结果」回填开关。
+        //   从 1031 升上来的用户很可能落盘的是 hide=true 而当时又把自己锁在门外了 ——
+        //   这里必须给一次自检机会，拒绝隐藏时把开关与落盘一起纠正回来。
+        boolean hide = mStore.readHideLauncherIcon();
+        if (hide && !applyLauncherIconState(true)) {
+            hide = false;
+            mStore.saveHideLauncherIcon(false);
+        }
+        mSyncing = true;
+        try {
+            mRowHideLauncher.sw.setChecked(hide);
+        } finally {
+            mSyncing = false;
+        }
+    }
+
+    /** 「隐藏桌面图标」被翻转：立即落盘 + 立即改组件状态（不等保存）。 */
+    private void onHideLauncherIconToggled(boolean hide) {
+        if (!applyLauncherIconState(hide)) {
+            // 被安全绳拒绝 ⇒ 开关弹回去。绝不允许「显示已隐藏、实际没隐藏」的假状态。
+            mSyncing = true;
+            try {
+                if (mRowHideLauncher != null) {
+                    mRowHideLauncher.sw.setChecked(!hide);
+                }
+            } finally {
+                mSyncing = false;
+            }
+            mStore.saveHideLauncherIcon(!hide);
+            Toast.makeText(this, Strings.HIDE_ICON_UNSUPPORTED.get(mLang),
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        mStore.saveHideLauncherIcon(hide);
+    }
+
+    /**
+     * 把「桌面图标是否隐藏」落到清单里的 {@code LauncherAlias} 上。
+     *
+     * <p>只在**状态确实不同**时才写 —— 每次进页面都无条件
+     * {@code setComponentEnabledSetting} 会触发 PackageManager 的组件缓存失效，
+     * 桌面图标会闪一下。
+     *
+     * <p>🔴🔴【code 1032 / Ari 第 6 条事故】隐藏之前必须过一道**安全绳** {@link #hasFallbackEntry()}。
+     * 1031 就是漏了这一步：alias 一关，包内一条 launcher 入口都不剩，
+     * {@code getLaunchIntentForPackage()} 返回 null ⇒ LSPosed 的「打开」与系统「应用信息」
+     * 的「打开」同时消失，Ari 再也进不了本页。
+     *
+     * @return true = 状态已按 {@code hide} 生效；false = **拒绝执行**，
+     *         调用方必须把开关弹回去并提示用户
+     */
+    private boolean applyLauncherIconState(boolean hide) {
+        final int want = hide
+                ? PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                : PackageManager.COMPONENT_ENABLED_STATE_ENABLED;
+        final ComponentName alias = new ComponentName(this, LAUNCHER_ALIAS);
+        try {
+            if (hide && !hasFallbackEntry()) {
+                Log.w(TAG, "refuse to hide launcher icon: no fallback launch entry");
+                // 顺手保证 alias 处于启用态，别留一个「半隐藏」
+                getPackageManager().setComponentEnabledSetting(
+                        alias, PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                        PackageManager.DONT_KILL_APP);
+                return false;
+            }
+            if (getPackageManager().getComponentEnabledSetting(alias) != want) {
+                getPackageManager().setComponentEnabledSetting(
+                        alias, want, PackageManager.DONT_KILL_APP);
+            }
+            return true;
+        } catch (Throwable t) {
+            // 清单里没有这个 alias（理论不会发生）或包管理器拒绝 —— 让页面照常可用，
+            // 开关最多「点了没反应」，不能因为一个桌面图标把整页拖垮。
+            // 一律返回 false ⇒ 调用方把开关弹回**与磁盘状态一致**的那一侧。
+            Log.w(TAG, "applyLauncherIconState failed: " + t);
+            return false;
+        }
+    }
+
+    /**
+     * 【code 1032】包里是否还有**不依赖 alias** 的启动入口（安全绳判据）。
+     *
+     * <p>{@code getLaunchIntentForPackage()} 会**先**找 {@code MAIN + CATEGORY_INFO}，
+     * 找不到才退回 {@code MAIN + CATEGORY_LAUNCHER}。SettingsActivity 上挂着常驻的
+     * INFO 过滤器（见 AndroidManifest），所以正常情况下这里解出来的组件是
+     * SettingsActivity 本身。
+     *
+     * <p>若解出来的组件是 alias 自己、或者干脆是 null ⇒ 说明那一层 INFO 兜底没生效
+     * （旧系统的 PackageManager 行为差异 / 清单被打包工具改坏），**这时绝对不能隐藏**。
+     */
+    private boolean hasFallbackEntry() {
+        try {
+            Intent li = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            if (li == null || li.getComponent() == null) {
+                return false;
+            }
+            return !LAUNCHER_ALIAS.equals(li.getComponent().getClassName());
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private void onDebugLogToggled(boolean enabled) {
         mDraft.debugLog = enabled;
         markDirty();
@@ -2237,26 +2987,55 @@ public class SettingsActivity extends AppCompatActivity {
         //   于是这里直接从开关行接到卡内子功能，中间不再有任何文字。
         // 卡内子功能：「字幕缓存」整组（code 1007 起原本挂在「其他」卡片里）。
         buildSubtitleCacheRow(parent);
-        // 本卡最后一行是「清除所有字幕缓存」按钮所在的那个容器 —— 与其余卡片同一套底部收敛。
+        // 本卡最后一行是「清除…字幕」那排按钮所在的那个容器 —— 与其余卡片同一套底部收敛。
         if (parent.getChildCount() > 0) {
-            pinCardLastBottom(parent, parent.getChildAt(parent.getChildCount() - 1));
+            mExpLastRow = parent.getChildAt(parent.getChildCount() - 1);
+            // 【code 1034 / Ari 第 4 条】末行是按钮条，补墨迹补偿才能与「恢复默认」行卡同高。
+            pinCardLastBottom(parent, mExpLastRow, CARD_LAST_BTN_INSET_DP);
         }
+    }
+
+    /**
+     * 【code 1031】把实验性卡最后一行重新钉一次（卡片由 GONE 转 VISIBLE 时调用）。
+     *
+     * <p>{@link #pinCardLastBottom} 的监听是**一次性**的，卡片隐藏时那次测量已经作废；
+     * 这里先把上一次算出来的 margin 归零，再挂一个新的监听 —— 否则两次收敛叠加，
+     * 底部会多出一段谁也没申请的留白。
+     */
+    private void repinExperimentalLast() {
+        if (mGroupExperimental == null || mExpLastRow == null) {
+            return;
+        }
+        ViewGroup.LayoutParams lp = mExpLastRow.getLayoutParams();
+        if (lp instanceof LinearLayout.LayoutParams) {
+            ((LinearLayout.LayoutParams) lp).bottomMargin = 0;
+            mExpLastRow.setLayoutParams(lp);
+        }
+        if (mGroupExperimental.getHeight() <= 0) {
+            // 还没真正排版（又一次 GONE）⇒ 交给下一次可见时的调用
+            return;
+        }
+        // 【code 1034】与 build 时同一口径（含墨迹补偿）。
+        pinCardLastBottom(mGroupExperimental, mExpLastRow, CARD_LAST_BTN_INSET_DP);
     }
 
     /**
      * 实验性功能总开关被用户翻转（属于**草稿**改动，仍需保存，与其余配置行一致）。
      *
-     * <p>关掉时**当场**兑现「下属功能关闭 + 开关置灰 + 缓存清除」；打开时只恢复可用性，
+     * <p>关掉时只兑现「下属功能关闭 + 开关置灰」；打开时只恢复可用性，
      * 子开关的值保持原样（用户上一次的设置还在，不必重新点一遍）。
+     *
+     * <p>🔴【code 1030】关掉时**不再清除字幕缓存**。旧版在这里发了一条
+     * {@code sendCacheClear}，等于「我只是关掉一个实验性开关」顺手删掉了用户攒下来的
+     * 离线字幕 —— 一旦关掉就再也没法断网看字幕，而且不可逆。Ari 明确要求：
+     * 「关闭字幕缓存或者实验性功能时**不要**清除字幕缓存」。要清只有用户显式点
+     * 「清除已缓存字幕 / 清除预取字幕」那两枚按钮。
      */
     private void onExperimentalToggled(boolean enabled) {
         mDraft.experimentalEnabled = enabled;
         if (!enabled) {
-            // ① 卡内所有子功能关掉（配置层的不变式也在 clamp() 里兜一道，这里让 UI 同步）
+            // 卡内所有子功能关掉（配置层的不变式也在 clamp() 里兜一道，这里让 UI 同步）
             mDraft.subtitleCacheEnabled = false;
-            // ③ 相关缓存全部清除（复用既有的显式广播 → 宿主执行 → 回执统计后弹提示）
-            mPendingClearToast = true;
-            ConfigBus.sendCacheClear(this);
         }
         applyExperimentalChildEnabled(enabled);
         applyExperimentalVisibility();
@@ -2300,11 +3079,18 @@ public class SettingsActivity extends AppCompatActivity {
      */
     private void applyExperimentalVisibility() {
         boolean show = mDraft.experimentalEnabled || mSaved.experimentalEnabled;
+        // 【code 1031】记录「原来是隐藏的」——卡片从 GONE 转 VISIBLE 之后必须重新校准
+        //   底部留白，否则会带着上一次「高度为 0 时算出的 margin」一起显示出来。
+        boolean wasHidden = mCardExperimental != null
+                && mCardExperimental.getVisibility() != View.VISIBLE;
         if (mTitleExperimental != null) {
             mTitleExperimental.setVisibility(show ? View.VISIBLE : View.GONE);
         }
         if (mCardExperimental != null) {
             mCardExperimental.setVisibility(show ? View.VISIBLE : View.GONE);
+        }
+        if (show && wasHidden && mCardExperimental != null) {
+            mCardExperimental.post(this::repinExperimentalLast);
         }
         if (show) {
             if (mRowExperimental != null) {
@@ -2404,27 +3190,59 @@ public class SettingsActivity extends AppCompatActivity {
         // 整页重建（切语言）后按**已有**的读数直接回填，避免闪一下「读取中」。
         renderCacheUsage();
 
-        // 清除按钮：整行宽的 Tonal 按钮（与导出/导入同一套视觉语言；不配图标 ——
-        // 本工程没有「清除」图标资源，而为它新加一张矢量图会引入 pathData 的编译期
-        // 盲区，得不偿失，见项目铁律「矢量图 pathData 无编译期校验」）。
+        // 【code 1030】原来是整行宽的一枚「清除所有字幕缓存」；Ari 要求拆成两枚并排：
+        //   · 清除**已缓存**字幕 —— 删 {@code data.SubtitleCache}（播放过的音轨正文）；
+        //   · 清除**预取**字幕 —— 删 {@code hook.ZiptreePrefetch}（提前抓的作品文件树）。
+        //   两者落在宿主私有空间的**不同**子项，谁也不该顺手删掉另一个，所以入口必须分开。
+        // 视觉沿用「导出 / 导入」那套 M3E 连通组（3dp 间距、外侧 20dp、相邻内侧 8dp）。
+        // 不配图标 —— 本工程没有「清除」图标资源，而为它新加一张矢量图会引入 pathData 的
+        // 编译期盲区（项目铁律「矢量图 pathData 无编译期校验」）。
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        // 【code 1031】整排钉成 CONTROL_H_DP：两枚按钮都 MATCH_PARENT 吃满这一行，
+        //   英文标签哪怕再长也不会一枚被撑成两行、另一枚还停在单行（1029 的观感就是
+        //   「下面那枚掉下去了」）。文字用 setSingleLine 强制单行 + 省略号兜底。
+        bar.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(CONTROL_H_DP)));
+
         MaterialButton clear = makeTonalButton(null);
         clear.setText(Strings.CACHE_CLEAR.get(mLang));
-        clear.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        clear.setSingleLine(true);
+        clear.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        clear.setShapeAppearanceModel(connectedShape(0, 2, CONTROL_H_DP / 2f));
+        clear.setLayoutParams(new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.MATCH_PARENT, 1f));
         clear.setOnClickListener(v -> onClearCacheClicked());
-        root.addView(clear);
+        bar.addView(clear);
+
+        MaterialButton clearPrefetch = makeTonalButton(null);
+        clearPrefetch.setText(Strings.CACHE_CLEAR_PREFETCH.get(mLang));
+        clearPrefetch.setSingleLine(true);
+        clearPrefetch.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        clearPrefetch.setShapeAppearanceModel(connectedShape(1, 2, CONTROL_H_DP / 2f));
+        LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        pp.setMarginStart(dp(GROUP_GAP_DP));
+        clearPrefetch.setLayoutParams(pp);
+        clearPrefetch.setOnClickListener(v -> onClearPrefetchClicked());
+        bar.addView(clearPrefetch);
+
+        root.addView(bar);
 
         parent.addView(root);
     }
 
     /** 「字幕缓存功能」被用户翻转（属于**草稿**改动，仍需保存，与其余配置行一致）。 */
     private void onSubtitleCacheToggled(boolean enabled) {
+        // 🔴【code 1030】关掉**只停止写新缓存 / 不再从缓存恢复**，绝不删已有缓存。
+        //   旧版没有在这里清，但总开关那边有（见 onExperimentalToggled 的说明）；
+        //   这里补一条注释把口径钉死，免得以后又被"顺手清一下"。
         mDraft.subtitleCacheEnabled = enabled;
         markDirty();
     }
 
     /**
-     * 「清除所有字幕缓存」。
+     * 「清除已缓存字幕」。
      *
      * 先二次确认（删掉的是用户已经攒下来的离线字幕，且**不可逆**），确认后把清理请求
      * 显式广播给宿主；宿主清完会回一条统计（0 条 / 0 字节）。
@@ -2441,6 +3259,25 @@ public class SettingsActivity extends AppCompatActivity {
                 .setPositiveButton(Strings.OK.get(mLang), (dlg, which) -> {
                     mPendingClearToast = true;
                     ConfigBus.sendCacheClear(this);
+                })
+                .show();
+    }
+
+    /**
+     * 【code 1030】「清除预取字幕」。
+     *
+     * <p>与 {@link #onClearCacheClicked} 同一套「确认 → 广播 → 等回执再提示」，
+     * 只是发的是另一条 action（宿主侧落到 {@code ZiptreePrefetch.clearAll()}）。
+     * 清它会删掉「为换轨提前抓好的作品文件树」，所以确认文案单独写，不共用。
+     */
+    private void onClearPrefetchClicked() {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(Strings.PREFETCH_CLEAR_CONFIRM_TITLE.get(mLang))
+                .setMessage(Strings.PREFETCH_CLEAR_CONFIRM_MSG.get(mLang))
+                .setNegativeButton(Strings.CANCEL.get(mLang), null)
+                .setPositiveButton(Strings.OK.get(mLang), (dlg, which) -> {
+                    mPendingPrefetchToast = true;
+                    ConfigBus.sendPrefetchClear(this);
                 })
                 .show();
     }
@@ -2504,6 +3341,10 @@ public class SettingsActivity extends AppCompatActivity {
         if (mPendingClearToast) {
             mPendingClearToast = false;
             toast(Strings.CACHE_CLEAR_DONE.get(mLang));
+        }
+        if (mPendingPrefetchToast) {
+            mPendingPrefetchToast = false;
+            toast(Strings.PREFETCH_CLEAR_DONE.get(mLang));
         }
     }
 
@@ -2636,9 +3477,8 @@ public class SettingsActivity extends AppCompatActivity {
                     markDirty();
                     updatePreview();
                 });
-        mHintBackdropLum = makeHintView(Strings.LIQUID_GLASS_BACKDROP_LUM_HINT);
-        parent.addView(mHintBackdropLum);
-
+        // 【code 1034 / Ari 第 3 条】小字说明从“行下方独立 TextView”改挂“行头副标题”
+        //   （supportingForRow 查表），与「字幕间行距」同一位置。
         // ③ 通透度（0–100，步长 5，默认 50）
         mRowTransparency = addSliderRow(parent, Strings.LIQUID_GLASS_TRANSPARENCY,
                 SubtitleConfig.LIQUID_GLASS_TRANSPARENCY_MIN,
@@ -2649,9 +3489,7 @@ public class SettingsActivity extends AppCompatActivity {
                     markDirty();
                     updatePreview();
                 });
-        mHintTransparency = makeHintView(Strings.LIQUID_GLASS_TRANSPARENCY_HINT);
-        parent.addView(mHintTransparency);
-
+        // 【code 1034 / Ari 第 3 条】同上：副标题由 supportingForRow 提供。
         // ④ 明暗度（0–100，步长 5，默认 50）
         mRowPanelLum = addSliderRow(parent, Strings.LIQUID_GLASS_PANEL_LUM,
                 SubtitleConfig.LIQUID_GLASS_PANEL_LUM_MIN,
@@ -2674,14 +3512,14 @@ public class SettingsActivity extends AppCompatActivity {
                     updatePreview();
                 });
 
-        // ⑥ 恢复默认（末行；小字「全部设置为 50%」由 addResetRow 建好后回填）
-        final int before = parent.getChildCount();
-        mHintLiquidGlassReset = addResetRow(parent, Strings.RESET_LIQUID_GLASS,
-                this::resetLiquidGlassGroup);
-        mHintLiquidGlassReset.setText(Strings.HINT_LIQUID_GLASS.get(mLang));
-        // addResetRow 会追加「按钮行 + 小字」两个子视图 ⇒ 按钮行就是倒数第二个。
-        if (parent.getChildCount() >= before + 2) {
-            mResetRowRoot = parent.getChildAt(parent.getChildCount() - 2);
+        // ⑥ 恢复默认（末行）
+        // 【code 1030】Ari：「删除『液态玻璃默认设置』下方小字说明」。
+        //   改成 showHint=false —— 按钮行自己就是本卡末行，底距走 pinCardLastBottom
+        //   与其它卡片同一套收敛口径（原来是「按钮行 + 一行小字」两个子视图，
+        //   底距钉在小字上，删掉小字后那个 margin 就悬空了）。
+        addResetRow(parent, Strings.RESET_LIQUID_GLASS, this::resetLiquidGlassGroup, false);
+        if (parent.getChildCount() > 0) {
+            pinCardLastBottom(parent, parent.getChildAt(parent.getChildCount() - 1));
         }
 
         applyLiquidGlassBlurVisibility();
@@ -2913,7 +3751,21 @@ public class SettingsActivity extends AppCompatActivity {
             mPreviewLines.addView(tv);
         }
 
+        // 【code 1029】折叠态不再是第二个视图：
+        //   窗口高度由 refreshPreviewMetrics() 从**同一批行**实测，
+        //   收起时只是把这批行裁到 1..3 行 ⇒ 不可能出现两套内容、两套底色。
+
+        // 行被重建 ⇒ 之前的实测尺寸全部作废（字号可能刚被拖动过）
+        mPreviewMetricsValid = false;
         applyPreviewPanel();
+        // 折叠态下调字号 / 换语言会重建行，窗口必须跟着重算，
+        // 否则会停在旧高度（多出或少掉半行）。
+        refreshPreviewMetrics();
+        if (mPreviewCollapsed) {
+            applyPreviewFraction(1f);
+        } else {
+            applyPreviewFraction(0f);
+        }
     }
 
     /**
@@ -3605,12 +4457,14 @@ public class SettingsActivity extends AppCompatActivity {
 
     /** 【code 1003】液态玻璃卡「恢复默认」：四项滑条全部回到 50%（总开关不动）。 */
     private void resetLiquidGlassGroup() {
+        // 【code 1028 / P1-③】与三条重置同一套：先留快照，再改值，回执挂「撤销」。
+        final SubtitleConfig before = mDraft.copy();
         mDraft.liquidGlassPanelLum = SubtitleConfig.LIQUID_GLASS_PANEL_LUM_DEF;
         mDraft.liquidGlassTransparency = SubtitleConfig.LIQUID_GLASS_TRANSPARENCY_DEF;
         mDraft.liquidGlassBackdropLum = SubtitleConfig.LIQUID_GLASS_BACKDROP_LUM_DEF;
         mDraft.liquidGlassBlurPct = SubtitleConfig.LIQUID_GLASS_BLUR_PCT_DEF;
         syncWidgets();
-        toast(Strings.RESET_DONE.get(mLang));
+        snackResetUndo(before);
     }
 
     /**
@@ -3624,21 +4478,47 @@ public class SettingsActivity extends AppCompatActivity {
      * （回灌控件 + 提示）完全一样，收口在一处，将来改提示也只改一条。
      */
     private void onResetMain() {
+        // 【code 1028 / P1-③】恢复默认挂上与保存**同一套** Snackbar 撤销。
+        //   审查稿 P1-③ 的原话是「这一下没有撤销，保存却有」——
+        //   同一页两个破坏性动作，一个有后悔药一个没有，这才是问题本身。
+        final SubtitleConfig before = mDraft.copy();
         resetMainValues();
         syncWidgets();
-        toast(Strings.RESET_DONE.get(mLang));
+        snackResetUndo(before);
     }
 
     private void onResetInactive() {
+        final SubtitleConfig before = mDraft.copy();
         resetInactiveValues();
         syncWidgets();
-        toast(Strings.RESET_DONE.get(mLang));
+        snackResetUndo(before);
     }
 
     private void onResetTypo() {
+        final SubtitleConfig before = mDraft.copy();
         resetTypoValues();
         syncWidgets();
-        toast(Strings.RESET_DONE.get(mLang));
+        snackResetUndo(before);
+    }
+
+    /**
+     * 【code 1028 / P1-③】恢复默认之后的回执：文案 + 一个「撤销」。
+     *
+     * <p>撤销的语义与保存撤销不同 —— 这里只回滚**草稿**（还没落盘），
+     * 所以不写存储、只把 mDraft 换回快照并回灌控件。
+     */
+    private void snackResetUndo(SubtitleConfig before) {
+        snack(Strings.RESET_DONE.get(mLang), Strings.UNDO.get(mLang), () -> undoReset(before));
+    }
+
+    private void undoReset(SubtitleConfig before) {
+        try {
+            mDraft = before.copy();
+            syncWidgets();
+            toast(Strings.UNDO_RESET_DONE.get(mLang));
+        } catch (Throwable t) {
+            Log.w(TAG, "undo reset failed: " + t);
+        }
     }
 
     /** 主字幕 / 活动行这一面的默认值（无副作用，由调用方决定何时 sync / 提示）。 */
@@ -3754,6 +4634,184 @@ public class SettingsActivity extends AppCompatActivity {
             return;
         }
         updatePreview();
+        // 【code 1028 / P1-④】脏态圆点与读数由这里驱动：所有改动最终都会经过 markDirty
+        //   （滑块 / 开关 / 色板 / 分段都是），所以它是唯一可靠的「草稿变了」收口点。
+        updateSaveBar();
+    }
+
+    /**
+     * 【code 1028 / P1-④】浮动工具条的脏态表达。
+     *
+     * <p>上一版保存键永远 enabled、且对「有没有改动」一个字都不说 ——
+     * 用户改完不知道该不该按保存，按了也不知道会不会白按。现在：
+     * 有改动 ⇒ 圆点 + 「有 N 处未保存」；无改动 ⇒ 两者都隐藏，保存键仍可点
+     * （点了给「配置无变化」，行为与 1025 一致，不静默）。
+     */
+    private void updateSaveBar() {
+        boolean dirty = isDirty();
+        int sections = dirty ? Math.max(1, dirtySectionCount()) : 0;
+        if (mDirtyDot != null) {
+            mDirtyDot.setVisibility(dirty ? View.VISIBLE : View.GONE);
+        }
+        if (mDirtyLabel != null) {
+            mDirtyLabel.setVisibility(dirty ? View.VISIBLE : View.GONE);
+            if (dirty) {
+                mDirtyLabel.setText(Strings.UNSAVED_COUNT.format(mLang, sections));
+            }
+        }
+    }
+
+    /**
+     * 【code 1028 / P1-④】「哪几块有未保存的改动」。
+     *
+     * <p>为什么按**分区**数而不是按字段数：用户的心智单位是「我改了排版」，
+     * 不是「我改了 lineSpacingDp」。拖一次滑块如果报「有 1 项未保存」是对的，
+     * 但同时改了行距和折行额外间距就变成「2 项」——这既啰嗦又不像人话。
+     * 分区统计还顺带把「哪一块」和页签结构对齐：字幕 / 行态 / 排版 / 液态玻璃 / 其他。
+     *
+     * <p>⚠️ 新增配置字段时必须同步加到这里，否则会出现「圆点亮着、读数是 0 处」
+     * （{@link #updateSaveBar()} 里有 {@code Math.max(1, …)} 兜底，但那是兜底不是借口）。
+     */
+    private int dirtySectionCount() {
+        int n = 0;
+        // ① 字幕面（原「颜色」面）：颜色 / 阴影 / 不透明度 / 放大倍数
+        if (mDraft.subtitleColor != mSaved.subtitleColor
+                || mDraft.shadowColor != mSaved.shadowColor
+                || mDraft.shadowStrength != mSaved.shadowStrength
+                || mDraft.shadowRadius != mSaved.shadowRadius
+                || mDraft.activeHighlight != mSaved.activeHighlight
+                || Math.abs(mDraft.activeScale - mSaved.activeScale) > 0.0001f) {
+            n++;
+        }
+        // ② 行态面：模糊与缩放两组（各含「启用」开关）
+        if (mDraft.inactiveBlurEnabled != mSaved.inactiveBlurEnabled
+                || mDraft.inactiveBlurSteps != mSaved.inactiveBlurSteps
+                || mDraft.inactiveScaleEnabled != mSaved.inactiveScaleEnabled
+                || mDraft.inactiveScalePct != mSaved.inactiveScalePct) {
+            n++;
+        }
+        // ③ 排版面：对齐 / 行距 / 折行 / 悬浮窗颜色（字重已从界面移除但字段仍在）
+        if (!eq(mDraft.fontWeight, mSaved.fontWeight)
+                || !eq(mDraft.textAlign, mSaved.textAlign)
+                || Math.abs(mDraft.lineSpacingDp - mSaved.lineSpacingDp) > 0.0001f
+                || Math.abs(mDraft.wrapExtraSpacingDp - mSaved.wrapExtraSpacingDp) > 0.0001f
+                || mDraft.floatWindowColor != mSaved.floatWindowColor) {
+            n++;
+        }
+        // ④ 液态玻璃卡
+        if (mDraft.liquidGlass != mSaved.liquidGlass
+                || mDraft.liquidGlassBlurPct != mSaved.liquidGlassBlurPct
+                || mDraft.liquidGlassPanelLum != mSaved.liquidGlassPanelLum
+                || mDraft.liquidGlassTransparency != mSaved.liquidGlassTransparency
+                || mDraft.liquidGlassBackdropLum != mSaved.liquidGlassBackdropLum) {
+            n++;
+        }
+        // ⑤ 「其他」卡与实验性总开关
+        if (mDraft.statusbarSubtitleEnabled != mSaved.statusbarSubtitleEnabled
+                || mDraft.keepScreenOn != mSaved.keepScreenOn
+                || mDraft.hotReload != mSaved.hotReload
+                || mDraft.debugLog != mSaved.debugLog
+                || mDraft.subtitleCacheEnabled != mSaved.subtitleCacheEnabled
+                || mDraft.experimentalEnabled != mSaved.experimentalEnabled) {
+            n++;
+        }
+        return n;
+    }
+
+    private static boolean eq(String a, String b) {
+        return a == null ? b == null : a.equals(b);
+    }
+
+    /**
+     * 【code 1028 / P1-④】溢出菜单（⋯）：只放低频 / 破坏性动作。
+     *
+     * <p>当前只有「重启系统界面」——它原本与保存并排等宽，视觉权重等同于高频保存，
+     * 但它一天用不到一次、还会把 SystemUI 重启（黑屏两秒）。收进这里之后：
+     * 浮动工具条只剩「保存」一个主按钮，破坏性动作要点两下才能触发。
+     */
+    private void showOverflowMenu() {
+        if (mOverflowButton == null) {
+            return;
+        }
+        // 🔴【code 1033 / Ari 第 5 条】两处必须自己控制，系统 PopupMenu 都做不到：
+        //   ① **位置**：Ari「弹出小窗往按钮上面走」。PopupMenu 由 framework 自己挑方向，
+        //      底栏按钮距屏幕底只有 48dp，系统认为「下方放得下」⇒ 菜单一半被裁在屏幕外。
+        //      这里改成自绘 PopupWindow，先量高再**显式**放在按钮上方。
+        //   ② **圆角**：framework 的 popupBackground 是 4dp 档，改不动 ⇒ 自绘 16dp 容器。
+        try {
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            int inset = dp(6);
+            box.setPadding(inset, inset, inset, inset);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setShape(GradientDrawable.RECTANGLE);
+            bg.setCornerRadius(dp(MENU_RADIUS_DP));
+            bg.setColor(attr(com.google.android.material.R.attr.colorSurfaceContainer,
+                    0xFFF3EDF7));
+            box.setBackground(bg);
+            // 圆角必须真的裁住子 View（否则菜单项的水波纹会在四角画出直角块）
+            box.setClipToOutline(true);
+
+            final PopupWindow popup = new PopupWindow(box,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, true);
+            // backgroundDrawable 非 null 才能「点外面关闭」。
+            // 【code 1034 / Ari 第 2 条】原来给透明 ColorDrawable：阴影轮廓跟的是它的
+            //   **矩形** outline，圆角四角下面是直角阴影，与保存键（圆角轮廓）不一套。
+            //   改成把**同款圆角** GradientDrawable 交给 PopupWindow：阴影轮廓跟着
+            //   {@code MENU_RADIUS_DP} 圆角走，elevation 同步提到保存键的 8dp。
+            //   box 自己的背景保留（透明底上 ripple 依然正常）。
+            GradientDrawable popupBg = new GradientDrawable();
+            popupBg.setShape(GradientDrawable.RECTANGLE);
+            popupBg.setCornerRadius(dp(MENU_RADIUS_DP));
+            popupBg.setColor(attr(com.google.android.material.R.attr.colorSurfaceContainer,
+                    0xFFF3EDF7));
+            popup.setBackgroundDrawable(popupBg);
+            popup.setOutsideTouchable(true);
+            // 【code 1034】与保存键（{@code setElevation(dp(8))}）同档，原 6dp 偏轻。
+            popup.setElevation(dp(8));
+            popup.setAnimationStyle(0);
+
+            TextView item = new TextView(this);
+            item.setText(Strings.RESTART_SYSUI.get(mLang));
+            item.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
+            item.setTextColor(attr(com.google.android.material.R.attr.colorOnSurface, Color.BLACK));
+            item.setGravity(Gravity.CENTER_VERTICAL);
+            item.setPadding(dp(16), 0, dp(16), 0);
+            item.setMinHeight(dp(MENU_ITEM_H_DP));
+            item.setMinimumHeight(dp(MENU_ITEM_H_DP));
+            item.setSingleLine(true);
+            TypedValue ripple = new TypedValue();
+            if (getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true)) {
+                item.setBackgroundResource(ripple.resourceId);
+            }
+            item.setOnClickListener(v -> {
+                popup.dismiss();
+                confirmRestartSystemUi();
+            });
+            box.addView(item);
+
+            // 先量一次：PopupWindow 的 WRAP_CONTENT 在 show 之前拿不到高，无法算「上方」的 y
+            box.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            int w = box.getMeasuredWidth();
+            int h = box.getMeasuredHeight();
+
+            int[] loc = new int[2];
+            mOverflowButton.getLocationInWindow(loc);
+            int x = loc[0] + mOverflowButton.getWidth() - w;   // 右边缘与按钮右边缘对齐
+            int y = loc[1] - h - dp(MENU_ANCHOR_GAP_DP);       // 按钮**上方**
+            if (x < 0) {
+                x = loc[0];
+            }
+            if (y < 0) {
+                // 极端窄屏 / 横屏时上方真的放不下 ⇒ 退回下方（总比画在屏幕外好）
+                y = loc[1] + mOverflowButton.getHeight() + dp(MENU_ANCHOR_GAP_DP);
+            }
+            popup.showAtLocation(mOverflowButton, Gravity.NO_GRAVITY, x, y);
+        } catch (Throwable t) {
+            Log.w(TAG, "overflow menu failed: " + t);
+        }
     }
 
     private void doSave() {
@@ -3778,6 +4836,8 @@ public class SettingsActivity extends AppCompatActivity {
             mSaved = mDraft.copy();
             toast(Strings.SAVE_NO_CHANGE.get(mLang));
         }
+        // 【code 1028 / P1-④】保存后脏态归零：圆点与读数立即消失（不必等下一次 markDirty）。
+        updateSaveBar();
     }
 
     /**
@@ -3797,6 +4857,8 @@ public class SettingsActivity extends AppCompatActivity {
             mSaved = restore.copy();
             mDraft = restore.copy();
             syncWidgets();
+            // 撤销保存之后 mSaved 又变回旧值 ⇒ 草稿与它重新相等，脏态应归零。
+            updateSaveBar();
             toast(Strings.UNDO_DONE.get(mLang));
         } catch (Throwable t) {
             Log.w(TAG, "undo failed: " + t);
@@ -3937,7 +4999,7 @@ public class SettingsActivity extends AppCompatActivity {
             return 0;
         }
         if (label == Strings.SUBTITLE_COLOR || label == Strings.SHADOW_COLOR) {
-            return R.drawable.ic_palette;
+            return R.drawable.ic_ui_palette;
         }
         if (label == Strings.SHADOW_STRENGTH) {
             return R.drawable.ic_ui_opacity;
@@ -3986,6 +5048,11 @@ public class SettingsActivity extends AppCompatActivity {
         if (label == Strings.DEBUG_LOG) {
             return R.drawable.ic_ui_log;
         }
+        // 【code 1032 / Ari 第 4 条】「隐藏桌面图标」原本没有配图（返回 0），
+        //   一屏里它是唯一一个「左边空一格」的行 —— 补一枚与全套同规格的图标。
+        if (label == Strings.HIDE_LAUNCHER_ICON) {
+            return R.drawable.ic_ui_launcher;
+        }
         if (label == Strings.SUBTITLE_CACHE) {
             return R.drawable.ic_ui_cache;
         }
@@ -3999,12 +5066,21 @@ public class SettingsActivity extends AppCompatActivity {
      * 【code 1025 / P1-2】行 → 副标题。**只给真正需要区分的行**，不是每行都塞一句。
      *
      * <p>设计审查的原话是「副标题顺带把『阴影强度 vs 半径』讲清」—— 全量堆小字会把
-     * 版式重新塞满（这页刚靠三卡合一腾出空间）。液态玻璃那几行本来就有
-     * {@code *_HINT} 小字在行下方，这里不重复。
+     * 版式重新塞满（这页刚靠三卡合一腾出空间）。
+     * 【code 1034 / Ari 第 3 条】液态玻璃的「环境背景亮度」「通透度」两行的
+     * {@code *_HINT} 小字由“行下方独立 TextView”改挂这张查表（与「字幕间行距」同位），
+     * 文案三语零新增，直接复用枚举。
      */
     private Strings supportingForRow(Strings label) {
         if (label == Strings.SHADOW_STRENGTH) {
             return Strings.SUP_SHADOW_STRENGTH;
+        }
+        // 【code 1034 / Ari 第 3 条】液态玻璃两行说明改挂标题下方（文案复用 *_HINT）。
+        if (label == Strings.LIQUID_GLASS_BACKDROP_LUM) {
+            return Strings.LIQUID_GLASS_BACKDROP_LUM_HINT;
+        }
+        if (label == Strings.LIQUID_GLASS_TRANSPARENCY) {
+            return Strings.LIQUID_GLASS_TRANSPARENCY_HINT;
         }
         if (label == Strings.SHADOW_RADIUS) {
             return Strings.SUP_SHADOW_RADIUS;
@@ -4112,11 +5188,23 @@ public class SettingsActivity extends AppCompatActivity {
         valueView.setMinHeight(dp(ROW_MIN_H_DP));
         valueView.setTextAppearance(com.google.android.material.R.style
                 .TextAppearance_Material3_LabelLarge);
-        valueView.setTextColor(attr(androidx.appcompat.R.attr.colorPrimary, Color.BLACK));
+        // 【code 1028 / P1-⑤】读数由 colorPrimary 改 **colorOnSurface**：
+        //   一屏里 primary 原本出现 8–9 处，读数只是"数值"，不该与保存键同权重。
+        valueView.setTextColor(attr(com.google.android.material.R.attr.colorOnSurface,
+                Color.BLACK));
         header.addView(valueView);
         row.value = valueView;
 
         root.addView(header);
+
+        // 【code 1031】label 与控件之间的空隙统一为 ROW_LABEL_TAIL_DP（与色板行 / 分段行一致）。
+        //   header 本身是 48dp 行、文字垂直居中，下方已有约 14dp 的盒内空白；
+        //   这里补的是**盒外的**那一份，让三种行的「标签基线 → 控件顶边」读数相同。
+        View headerGap = new View(this);
+        headerGap.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(ROW_LABEL_TAIL_DP)));
+        headerGap.setBackgroundColor(Color.TRANSPARENT);
+        root.addView(headerGap);
 
         Slider slider = new Slider(this);
         slider.setValueFrom(from);
@@ -4139,6 +5227,13 @@ public class SettingsActivity extends AppCompatActivity {
         row.slider = slider;
         row.root = root;
 
+        // 【code 1032 / Ari 第 3 条】控件下方的行尾留白统一成 ROW_TAIL_GAP_DP(=4dp)。
+        //   1031 只给分段行补了这一份，滑块行 / 色板行没有 ⇒ 三种行的「控件底边 → 下一行」
+        //   仍然差一截。现在三处读同一个常量。
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.bottomMargin = dp(ROW_TAIL_GAP_DP);
+        root.setLayoutParams(rowLp);
         parent.addView(root);
         return row;
     }
@@ -4260,13 +5355,19 @@ public class SettingsActivity extends AppCompatActivity {
         SegmentedRow row = new SegmentedRow();
 
         LinearLayout labelView = makeRowHead(label).root;
-        labelView.setPadding(0, 0, 0, dp(2));
+        // 【code 1031】2dp → ROW_LABEL_TAIL_DP：与色板行 / 滑块行统一
+        labelView.setPadding(0, 0, 0, dp(ROW_LABEL_TAIL_DP));
         parent.addView(labelView);
 
         LinearLayout track = new LinearLayout(this);
         track.setOrientation(LinearLayout.HORIZONTAL);
-        track.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(CONTROL_H_DP)));
+        // 【code 1031】末尾补 ROW_TAIL_GAP_DP：40dp 的实心轨道原本**贴死行底**，
+        //   与「色板行色点上下各 6dp」「滑块行轨道在 48dp 触摸区里居中」相比少了 6dp，
+        //   这正是「排版那一页看着特别挤」的来源。
+        LinearLayout.LayoutParams trackLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(CONTROL_H_DP));
+        trackLp.bottomMargin = dp(ROW_TAIL_GAP_DP);
+        track.setLayoutParams(trackLp);
         // 【code 974 §3】两段现在都是实底，旧版那圈 1dp colorOutline 描边会在两段之间
         // 画出一道灰缝，故去掉描边；轨道只保留「圆角裁切」这一个作用。
         GradientDrawable trackBg = new GradientDrawable();
@@ -4289,10 +5390,15 @@ public class SettingsActivity extends AppCompatActivity {
             b.setStrokeWidth(0);
             b.setMinHeight(dp(CONTROL_H_DP));
             b.setMinimumHeight(dp(CONTROL_H_DP));
-            b.setCornerRadius(dp(CONTROL_H_DP / 2f));
+            // 【code 1029】M3E 连通组：外侧 = 组高一半（完整胶囊），相邻内侧 = 8dp
+            b.setShapeAppearanceModel(connectedShape(i, options.length, CONTROL_H_DP / 2f));
             b.setPadding(dp(2), 0, dp(2), 0);
-            b.setLayoutParams(new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+            LinearLayout.LayoutParams segLp = new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+            if (i > 0) {
+                segLp.setMarginStart(dp(GROUP_GAP_DP));
+            }
+            b.setLayoutParams(segLp);
             // id 固定为「顺序 + 1」：MaterialButtonToggleGroup 按 id 记选中，
             // 这样语言切换重建行后 setCheckedIndex 依然定位得到同一段。
             b.setId(i + 1);
@@ -4372,7 +5478,8 @@ public class SettingsActivity extends AppCompatActivity {
 
         beginRow(parent);
         LinearLayout labelView = makeRowHead(label).root;
-        labelView.setPadding(0, 0, 0, dp(6));
+        // 【code 1031】走统一常量（值仍是 6dp，但语义与分段行 / 滑块行对齐）
+        labelView.setPadding(0, 0, 0, dp(ROW_LABEL_TAIL_DP));
         parent.addView(labelView);
 
         LinearLayout body = new LinearLayout(this);
@@ -4403,6 +5510,11 @@ public class SettingsActivity extends AppCompatActivity {
         }));
         row.setCustomSelected(!containsColor(colors, initial));
 
+        // 【code 1032 / Ari 第 3 条】与滑块行 / 分段行同一份行尾留白（见 ROW_TAIL_GAP_DP）。
+        LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        bodyLp.bottomMargin = dp(ROW_TAIL_GAP_DP);
+        body.setLayoutParams(bodyLp);
         parent.addView(body);
 
         // 【2.2.9】顺手把本行的三个引用交出去（「悬浮窗颜色」行需要整行置灰，
@@ -4453,7 +5565,10 @@ public class SettingsActivity extends AppCompatActivity {
         root.setMinimumHeight(dp(ROW_MIN_H_DP));
 
         RowHead head = makeRowHead(label);
-        head.label.setTextColor(attr(androidx.appcompat.R.attr.colorPrimary, Color.BLACK));
+        // 【code 1028 / P1-⑤】重置标签由 primary 改 onSurfaceVariant —— accent 只留给
+        //   「可点的三个层级」（语言胶囊 / 保存 / 滑块已走过段），重置是低频动作。
+        head.label.setTextColor(attr(com.google.android.material.R.attr.colorOnSurfaceVariant,
+                Color.GRAY));
         head.root.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(head.root);
@@ -4470,6 +5585,10 @@ public class SettingsActivity extends AppCompatActivity {
         reset.setText(Strings.RESET.get(mLang));
         reset.setOnClickListener(v -> onReset.run());
         root.addView(reset);
+        // 【code 1028 / P0-②】32dp 的胶囊补到 48dp 热区。
+        //   视觉仍是 32dp（与页头语言胶囊等高，975 §4 定下的），但点击矩形向四周
+        //   各扩 8dp —— 上下补齐 MD3 的 48dp 下限，左右也让"手指落在边缘"能命中。
+        attachExpandedTouchTarget(root, reset);
 
         parent.addView(root);
 
@@ -4497,115 +5616,93 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /**
-     * 【code 974 §4 / 976 §1】把「卡片里最下方那一行」的**视觉底边**压到距卡片底边
-     * {@code target} 处，其中 {@code target = 卡片首行文字的「字形顶」距卡片顶边的距离 × 2}。
+     * 【code 1028 / 审查稿 P0-②】把 {@code target} 的触摸矩形向外扩一圈（不改视觉尺寸）。
      *
-     * ─────────────────────────────────────────────────────────────────────
-     * Ari 的两轮指令（这是同一条观感的两次收敛，口径一路在变宽）：
-     *   · 【974】「所有卡片最下方选项文字距离卡片底端 改为 6dp。」（并明确指**字形**，不是控件盒）
-     *   · 【975】「调整的和卡片内最上端边缘与第一个选项文字相同的距离一致。」⇒ 上下对称
-     *   · 【976】「四个卡片内最下方的文字一直都和卡片底贴的**还是很紧**，**再扩宽一倍**。」
-     *     ⇒ 在对称口径上**再×2**：底距 = 首行字形顶距 × 2。
+     * <p>用途：32dp 的「恢复默认」胶囊、以及其它「视觉上必须小巧、但点击必须够大」的控件。
+     * MD3 的无障碍下限是 48×48dp，而这一页的胶囊刻意与语言胶囊同高（975 §4），
+     * 于是只能靠 {@link TouchDelegate} 把热区补出来 —— 全仓此前 {@code TouchDelegate}
+     * 零命中，正是「行抬到 48dp 了，点行里的胶囊还是点不准」的原因。
      *
-     * ── 为什么只把卡片 paddingBottom 调大达不到这个观感 ──────────────────────
-     * 文本视图的**盒子底**与**墨迹底**之间天生隔着两段空档：
-     *   ① `includeFontPadding`：盒子底取字体包围盒的 bottom，它一般比 descent 更低
-     *      （CJK 字体尤其明显，多出约 2dp）；
-     *   ② `lineSpacingMultiplier`（本项目的 Hint 样式是 1.15）：倍数余量会被算进
-     *      **最后一行**的行高，于是又多在末行下方留出约 2.5dp。
-     * 所以「盒子底 N dp」在真机观感上是 N+3~4dp，必须按**墨迹**量。
+     * <p>扩的是**四个方向各 8dp**（32 → 48），并夹在父容器边界内；
+     * 父容器是这一行的 48dp 高容器，所以不会把热区吃到相邻行去。
      *
-     * ── 做法 ─────────────────────────────────────────────────────────────
-     *   ① 先关掉 `includeFontPadding`（第 ① 段空档直接消失）；
-     *   ② **行距倍数不动**（改了会影响小字的换行可读性），改为在**布局完成后**
-     *      量出末行的真实墨迹底 / 盒底，用**底部外边距**把这个差补掉：
-     *          curGap + bottomMargin 增量 = target   ← 恒等
-     *      线性布局把 margin 计入总高 ⇒ 卡片高度随之变化，而文字/按钮的**位置**不受影响。
-     *      ⇒ target 比当前底距大时就加**正** margin（底部留白变宽，这正是 976 要的）；
-     *        比当前小时加**负** margin（等效于把内容下沉，975 曾用它做对称）。
-     *   ③ 负的那一侧夹住（`floor`），避免把文字推出卡片下沿被裁。
+     * <p>⚠️ 必须在布局完成后设置（{@code post}）：{@code getHitRect} 依赖已经量好的位置，
+     * 构建期调用拿到的是 0，会设出一个「哪儿都点不到」的委托。
+     */
+    private void attachExpandedTouchTarget(View host, View target) {
+        if (host == null || target == null) {
+            return;
+        }
+        host.post(() -> {
+            try {
+                if (host.getWidth() <= 0 || host.getHeight() <= 0
+                        || target.getWidth() <= 0 || target.getHeight() <= 0) {
+                    return;
+                }
+                Rect r = new Rect();
+                target.getHitRect(r);
+                int grow = dp(8);
+                r.left = Math.max(0, r.left - grow);
+                r.top = Math.max(0, r.top - grow);
+                r.right = Math.min(host.getWidth(), r.right + grow);
+                r.bottom = Math.min(host.getHeight(), r.bottom + grow);
+                host.setTouchDelegate(new TouchDelegate(r, target));
+            } catch (Throwable ignored) {
+                // 委托失败最多是「热区没变大」，不该影响整行可用性
+            }
+        });
+    }
+
+    /**
+     * 【code 1033】把卡片**末行**的底部外边距钉成 {@link #CARD_LAST_GAP_DP}。
      *
-     * ── 末行是「文字」还是「控件盒」────────────────────────────────────────
-     *   · **文字**（前三张卡：末尾是「恢复默认」下方的小字）⇒ 对齐**字形底**（要减掉
-     *     字体自身的下空档，否则观感偏大）；
-     *   · **容器 / 按钮行**（「其他」卡：末尾是导出+导入那排按钮）⇒ 对齐**盒底**，
-     *     因为按钮自带填充背景，盒底就是视觉底边；硬去追按钮内文字的字形底会压穿按钮。
-     *   两条路共用同一个 target 与同一套 margin 收敛，所以四张卡的底距口径完全一致。
+     * <p>历史：code 974 / 975 / 976 曾在这里做「布局后实测 + 按首行字形顶 × 2 收敛」的
+     * 动态补偿（为了对齐文字**墨迹底**而不是盒子底）。那套算法在**四张卡之间**是自洽的，
+     * 但它的目标值依赖 group 自己的 paddingTop（见 {@link #CARD_LAST_GAP_DP} 的长注释），
+     * 于是在「三卡合一」之后四张卡的目标值就分叉了；再叠上「每次切面新挂一个
+     * OnGlobalLayoutListener」，就成了 Ari 看到的两条现象：
+     * 排版卡底距**跳变**、另外三张卡底距**更宽**。
      *
-     * ⚠️ 这是**一次性**监听：量完立刻摘掉，否则「改外边距 ⇒ 再布局 ⇒ 再回调」会自激。
-     * ─────────────────────────────────────────────────────────────────────
+     * <p>现在改为**纯常量**：不测量、不等布局、不看首行。代价是不再逐字体微调
+     * 「墨迹底 vs 盒底」那 2~3dp —— 但在同一页里四张卡用同一个值，一致性优先。
+     *
+     * <p>⚠️ 末行可能是按钮行 / 色板行 / 小字，一律按**盒底**对齐；这四种行的
+     * 「可见底边」都已经由各自的 {@code ROW_TAIL_GAP_DP} 与控件自身留白收口，
+     * 再叠加本值只会让四个读数一致，不会带进字体差异。
+     *
+     * <p>【code 1034 / Ari 第 4 条】增加带“墨迹补偿”的重载：以「恢复默认」行结尾的卡（字幕外观 /
+     * 液态玻璃），行本体是 48dp、内部垂直居中一颗 32dp 小胶囊 ⇒ 按钮下方藏着
+     * 8dp 不可见空隙，视觉底距 = 8 + 4 + 卡片 paddingBottom(10) = 22dp。而以按钮条
+     * （导出/导入、清除缓存）结尾的卡（其他 / 实验性）按钮吃满整行，
+     * 视觉底距只有 14dp ⇒ Ari 实拍「前两者更窄」。这两类卡调
+     * {@link #CARD_LAST_BTN_INSET_DP}(=8) 的墨迹补偿，四张卡的**可见**底距才真正拉平。
      */
     private void pinCardLastBottom(final LinearLayout group, final View last) {
+        pinCardLastBottom(group, last, 0);
+    }
+
+    private void pinCardLastBottom(final LinearLayout group, final View last,
+            final int extraInkDp) {
         if (group == null || last == null) {
             return;
         }
-        final boolean inkMode = last instanceof TextView;
-        if (inkMode) {
+        if (last instanceof TextView) {
+            // 末行是小字时关掉字体上下额外留白，让「盒底」尽量贴近「墨迹底」。
+            // （旧算法靠它做墨迹对齐，现在没有测量了，这一句仍是纯收益。）
             ((TextView) last).setIncludeFontPadding(false);
         }
-        last.getViewTreeObserver().addOnGlobalLayoutListener(
-                new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
-                    @Override
-                    public void onGlobalLayout() {
-                        if (last.getViewTreeObserver().isAlive()) {
-                            last.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                        }
-                        ViewGroup.LayoutParams lp = last.getLayoutParams();
-                        if (!(lp instanceof LinearLayout.LayoutParams)) {
-                            return;
-                        }
-                        // ① 目标底距 = 卡片**首行文字**的「字形顶」到卡片顶边的距离 × 2
-                        //    （976：在 975 的「上下对称」口径上再翻一倍）
-                        int target = topInkGapOf(group) * 2;
-                        if (target <= 0) {
-                            target = (dp(CARD_PAD_TOP_DP) + dp(ROW_MIN_H_DP) / 3) * 2; // 量不到时的保守值
-                        }
-                        // ② 当前「视觉底边」到卡片底边的距离
-                        int bottomY;
-                        if (inkMode) {
-                            TextView tv = (TextView) last;
-                            android.text.Layout layout = tv.getLayout();
-                            if (layout == null || layout.getLineCount() <= 0) {
-                                return;
-                            }
-                            CharSequence cs = tv.getText();
-                            if (cs == null) {
-                                cs = "";
-                            }
-                            int line = layout.getLineCount() - 1;
-                            int start = Math.min(layout.getLineStart(line), cs.length());
-                            int end = Math.min(layout.getLineEnd(line), cs.length());
-                            if (end < start) {
-                                end = start;
-                            }
-                            Rect ink = new Rect();
-                            tv.getPaint().getTextBounds(cs, start, end, ink);
-                            int baseline = layout.getLineBottom(line) - layout.getLineDescent(line);
-                            bottomY = topRelativeTo(tv, group)
-                                    + tv.getPaddingTop() + baseline + ink.bottom;  // 字形底
-                        } else {
-                            bottomY = topRelativeTo(last, group) + last.getHeight();   // 盒底
-                        }
-                        int curGap = group.getHeight() - bottomY;
-
-                        // ③ 线性布局里「子 View 的 bottomMargin 增量」会等量变成「容器高度增量」，
-                        //    而 bottomY 不受影响 ⇒ 想要的底距与当前的差就是该加的 margin。
-                        int want = target - curGap;
-                        // 只夹住「不要把内容压出卡片下沿」这一侧（宁可多留白，也不能裁字）。
-                        int floor = -Math.max(dp(CARD_PAD_BOTTOM_DP), 0);
-                        if (want < floor) {
-                            want = floor;
-                        }
-                        LinearLayout.LayoutParams llp = (LinearLayout.LayoutParams) lp;
-                        if (llp.bottomMargin == want) {
-                            return;
-                        }
-                        llp.bottomMargin = want;
-                        last.setLayoutParams(llp);
-                    }
-                });
+        ViewGroup.LayoutParams lp = last.getLayoutParams();
+        if (!(lp instanceof LinearLayout.LayoutParams)) {
+            return;
+        }
+        LinearLayout.LayoutParams llp = (LinearLayout.LayoutParams) lp;
+        int want = dp(CARD_LAST_GAP_DP + extraInkDp);
+        if (llp.bottomMargin == want) {
+            return;
+        }
+        llp.bottomMargin = want;
+        last.setLayoutParams(llp);
     }
-
     // ── 【code 976 §5】底部彩蛋 ────────────────────────────────────────────
 
     /** 彩蛋行（滚到底后继续上拉才淡入），见 {@code activity_settings.xml} 的 {@code egg_smile}。 */
@@ -4699,70 +5796,6 @@ public class SettingsActivity extends AppCompatActivity {
         mEggShown = shown;
         mEggRow.animate().cancel();
         mEggRow.animate().alpha(shown ? 1f : 0f).setDuration(EGG_FADE_MS).start();
-    }
-
-    /**
-     * 【code 975】卡片**首行文字**的「字形顶」到卡片顶边的距离（px）。
-     *
-     * <p>用于让卡片末行内容的底距与它对称、再翻倍（见 {@link #pinCardLastBottom}）。
-     * 首行可能是 {@code TextView}（色板行 / 分段行的标签直接挂在卡片上），
-     * 也可能是 {@code LinearLayout}（滑块行 / 开关行先建了一行容器）——
-     * 所以这里递归找**第一个可见的 TextView**。
-     *
-     * @return 距离（px）；找不到可量的文字时返回 -1
-     */
-    private int topInkGapOf(LinearLayout group) {
-        TextView first = findFirstTextView(group);
-        if (first == null || first.getLayout() == null || first.getLayout().getLineCount() <= 0) {
-            return -1;
-        }
-        CharSequence cs = first.getText();
-        if (cs == null || cs.length() == 0) {
-            return -1;
-        }
-        android.text.Layout lay = first.getLayout();
-        int start = Math.min(lay.getLineStart(0), cs.length());
-        int end = Math.min(lay.getLineEnd(0), cs.length());
-        if (end <= start) {
-            return -1;
-        }
-        Rect ink = new Rect();
-        first.getPaint().getTextBounds(cs, start, end, ink);
-        int inkTop = lay.getLineBaseline(0) + ink.top;   // 首行字形顶（相对内容区顶）
-        return topRelativeTo(first, group) + first.getPaddingTop() + inkTop;
-    }
-
-    /** 在子树里找第一个可见的 {@link TextView}（含自身）。 */
-    @Nullable
-    private static TextView findFirstTextView(View v) {
-        if (v == null || v.getVisibility() != View.VISIBLE) {
-            return null;
-        }
-        if (v instanceof TextView) {
-            return (TextView) v;
-        }
-        if (v instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) v;
-            for (int i = 0; i < g.getChildCount(); i++) {
-                TextView t = findFirstTextView(g.getChildAt(i));
-                if (t != null) {
-                    return t;
-                }
-            }
-        }
-        return null;
-    }
-
-    /** 累加 {@code v} 各层 {@code getTop()}，得到它相对祖先 {@code ancestor} 的纵向偏移。 */
-    private static int topRelativeTo(View v, View ancestor) {
-        int y = 0;
-        View c = v;
-        while (c != null && c != ancestor) {
-            y += c.getTop();
-            android.view.ViewParent p = c.getParent();
-            c = (p instanceof View) ? (View) p : null;
-        }
-        return y;
     }
 
     // ── 【2.3.2 §2.3 / §2.6】行与行的统一「起手式」 ────────────────────

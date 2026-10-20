@@ -1,13 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 【code 1025 / P1-2】调试日志：页面轮廓 + 三条记录行
-     规格：24x24 视口、实心 path、颜色交给 ImageView.setColorFilter（onSurfaceVariant）。 -->
+<!-- 【code 1032 / Ari 第 4 条】ic_ui_log：记录清单（调试日志）
+     规格：24x24 视口、**描边 2dp + 圆头圆角**、颜色交给 ImageView.setColorFilter。
+     ⚠️ 全套统一 2dp 描边 —— 1025 那批是手绘实心块（3dp / 4dp / 2dp 混用），
+        一屏里「有粗有细」正是 Ari 点出的问题；改成同一条描边后由构造保证一致。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <path android:fillColor="#FF000000" android:fillType="evenOdd"
-        android:pathData="M4,3H20V21H4Z M6,5H18V19H6Z" />
-    <path android:fillColor="#FF000000"
-        android:pathData="M7,7H17V9H7Z M7,11H17V13H7Z M7,15H13V17H7Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M8,6.5H20.5M8,12H20.5M8,17.5H15" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4.2,6.5H4.3M4.2,12H4.3M4.2,17.5H4.3" />
 </vector>

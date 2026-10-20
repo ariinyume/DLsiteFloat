@@ -41,7 +41,7 @@ plugins {
 //                    只是仓库内可读别名 ⇒ 改它**不必重新出包**。
 //                 ⚠️ 2026-10-14 回溯：1013~1017 都构建于 10-14，label 已由 `1008.30`
 //                    回填为 `1014.1`~`1014.5`；10-13 及更早的条目**保留旧值**（历史记录）。
-def appVersionTag = '2.3.5'
+def appVersionTag = '2.4.0'
 // ⚠️ 写成 int 字面量 925（不要写 0925 —— Groovy 可能按八进制/前导零解析）：
 //    versionCode 的**数值**是 925，管理器里显示 925，可读语义看 appVersionCodeLabel。
 // ── 版本履历（code 994 / label 1008.15）──
@@ -391,9 +391,206 @@ def appVersionTag = '2.3.5'
 //   ③ **渲染路径、配置项、设置页一字未动**，本轮只增加可观测性。
 //   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1027、label 推到 1019.3。
 //      版本号 2.3.5 不变、code 1026 升 1027。
-def appVersionCode = 1027
-def appVersionCodeLabel = '1019.3'
-def appVersionName = '2.3.5'
+// 【code 1028】设置页第二轮审查：页签语义 / 热区 / 撤销 / 字阶 / 浮动工具条 / 迷你预览
+//   依据：`DLsiteFloat_设置页_M3E设计审查_1026.html` + Ari 2026-10-19 12:25 的七条指令
+//   （其中第 6、7 条指向同一件事，合并为一处）。
+//   ① **页签改名**：TAB_COLOR「颜色」→ **「字幕」**（行态 / 排版不动）。
+//      这一面 6 项里有 4 项不是颜色（阴影强度 / 半径 / 活动行不透明度 / 放大倍数），
+//      叫「颜色」会让想改悬浮窗底色的人先点进来、再扑空。
+//      「悬浮窗颜色」按 Ari 指令**留在排版面不动**（上一稿建议搬到字幕面，本轮明确不搬）。
+//   ② **三个不到 48dp 的可点元素补热区**（审查稿 P0-②）：
+//      语言胶囊包一层 48dp 容器（胶囊本体仍 32dp）、恢复默认胶囊加 TouchDelegate
+//      （四向各扩 8dp，32→48）、外观页签组 40→48dp（圆角 20→24 跟半个高度）。
+//      全仓此前 `TouchDelegate` 零命中 —— 这正是「行抬到 48dp 了、点行里的胶囊还是点不准」。
+//   ③ **恢复默认挂 Snackbar 撤销**（P1-③）：三个面 + 液态玻璃卡，四个入口统一
+//      「先 mDraft.copy() 快照 → 改值 → 回执带撤销」。撤销只回滚草稿（还没落盘），
+//      与保存撤销（写回存储）刻意区分，回执文案也不同（UNDO_RESET_DONE）。
+//   ④ **字阶**（P1-⑤）：页头 26→28sp；五个节标题 14→16sp、primary→onSurfaceVariant、
+//      bold(700)→600（Android 无 600 族，API 28+ 用 Typeface.create(w=600)，
+//      24–27 回落 sans-serif-medium）；滑块读数 primary→onSurface；重置标签同改。
+//   ⑤ **底栏 → FloatingToolbarLayout**（P1-④，material 1.14.0 官方件）：
+//      不再真实占位、浮在内容之上；内容是 [脏态圆点][有 N 处未保存][⋯][保存]。
+//      脏态按**分区**统计（字幕/行态/排版/液态玻璃/其他，`dirtySectionCount()`），
+//      「重启系统界面」移进 ⋯ 溢出菜单（低频 + 破坏性，不该与保存等权）。
+//      滚动区改用固定 96dp 的 paddingBottom 让位 —— 不测高度，规避 2.1.4 的老坑。
+//   ⑥ **迷你预览**（审查稿 §09，Ari 第 6、7 条）：折叠态不再只剩一根标题条，
+//      改显示三行摘要（非活动 / 活动 / 非活动，下标 1/2/3）。三行与完整预览、
+//      与真窗**同源**：同一份 SubtitleStyle + 同一个 stylePreviewLine。
+//      收起动画里 card 从 H→0 与 mini 从 0→target 同时走，总高单调递减（无"先缩后弹"）。
+//   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1028、label 推到 1019.4。
+//      版本号 2.3.5 不变、code 1027 升 1028。
+// 【code 1029】设置页第三轮：预览收起重做 / 连通按钮组 / 底栏真悬空 / 语言循环 / 预存 16 部
+//   依据：Ari 2026-10-19 13:52 的录屏（31s）+ 14:12 的 LSPosed 日志包，五条指令。
+//   ① **预览收起改「单面裁切」**（反馈原话：「现在是百叶窗的效果不符合直觉」）：
+//      1028 的折叠态是**另一个视图** preview_mini（三行 1/2/3），收起时 card 高度 H→0
+//      与 mini 高度 0→target 同时走 —— 两张内容几乎一样但不同源的画面逐帧交叉淡入，
+//      看上去就是一片片横向文字在对穿。现在**删掉 preview_mini**，折叠 = 同一张卡
+//      的高度收到「三行实测高」，内容顶部锚定、底边被 clipChildren 裁掉 ⇒ 底边向上抬；
+//      展开同一条线反向 ⇒ 底边向下落。位移 dy 让 1..3 行对齐窗口顶部（否则活动行被压到最下沿）。
+//   ② **顺带修「收起后背景取色变了」**：mini 的面板层固定走 floatWindowColor 渐变、
+//      不跟液态玻璃；容器合一后背景 / 面板 / 字幕全是同一批 View、同一份 drawable、同一次
+//      applyPreviewPanel 上色 ⇒ 取色不可能再变。
+//   ③ **三处按钮组改 M3E 连通组**（Ari：3dp 间距 + 相邻内侧 8dp + 外侧保持圆角）：
+//      外观页签（字幕/行态/排版）、对齐组（左/中/右）、备份组（导出/导入）。
+//      用 ShapeAppearanceModel 逐角设 —— setCornerRadius 是四角同值，会把外侧也削平。
+//   ④ **底栏彻底悬空**（Ari：「底层还留了一层底部覆盖」）：清掉 FloatingToolbarLayout
+//      自带的浅色胶囊（background / backgroundTint / elevation 全清），只保留它的 insets 行为；
+//      溢出键补一枚自己的 40dp tonal 圆底（bg_toolbar_icon，外套 4dp inset，命中区仍 48dp），
+//      否则裸图标浮在正文上既不像按钮、对比度也不达标。
+//   ⑤ **语言胶囊点一下换一种**（简中 → 繁中 → EN → 简中），**删除选择弹窗**；
+//      初始仍跟随系统（SYSTEM 显示的是 resolve() 之后的短名）；SYSTEM 态下首次点击
+//      从「系统解析出来的那个语言」的下一个开始，不退回简体。
+//   ⑥ **预存字幕上限 8 → 16 部作品**（ZiptreePrefetch.MAX_WORKS）。
+//   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1029、label 推到 1019.5。
+//      版本号 2.3.5 不变、code 1028 升 1029。
+// 【code 1030】设置页第四轮：预览裁窗口径 / 页签对齐 / 缓存拆分 / 底栏去容器 / 贴底
+//   依据：Ari 2026-10-19 15:01 的录屏 + 15:01 的 LSPosed 日志包 + 一张折叠态截图，九条指令。
+//   ① **预览窗上下各藏一行**（Ari：「应该上下各隐藏一行非活动行，而不是隐藏下方两行」；
+//      并指出「英文状态下迷你预览窗显示行不全」）：窗口本来就是 1..3 行，问题在
+//      **窗口上沿那条 paddingTop 高的条带里露出的是第 0 行的尾巴** —— 中文一行短看不出，
+//      英文换行后那行有两行高，就看到半行英文，于是「看着像下面藏了两行」。
+//      现在给 preview_lines 加 clipBounds，从「第 1 行的顶边」开始裁；并让窗口高度
+//      随 preview_lines 的**真实宽度**重量（OnLayoutChangeListener），宽度一变就重算
+//      —— 英文换行数变了，三行窗口的高度必须跟着变，否则第三行会被切掉半行。
+//   ② **页签离卡顶太近**：卡内 paddingTop 10 → 16dp（与左右 16dp 同宽）。
+//   ③ **页签高度与配色对齐「对齐」那排**：48dp → CONTROL_H_DP(40dp)；
+//      已选 = colorPrimary/colorOnPrimary（深重点色），未选 = colorSecondaryContainer/
+//      onSecondaryContainer —— 与 addSegmentedRow 完全同一套。1028 的两档灰太接近，
+//      截图里根本看不出选中态。
+//   ④ **「对齐」搬到「悬浮窗颜色」正上方**（原来是排版面的第一行，把两支行距滑块切开了）。
+//   ⑤ **关掉字幕缓存 / 实验性功能不再清缓存**：旧版 onExperimentalToggled(false) 里发了
+//      sendCacheClear —— 关一个开关顺手删掉用户的离线字幕，不可逆。现在只关闭能力、留数据。
+//   ⑥ **缓存清理拆成两枚按钮**：「清除所有字幕缓存」→「清除已缓存字幕」，
+//      右边新增「清除预取字幕」。两者落在宿主私有空间的不同子项：
+//      前者 = data.SubtitleCache（播放过的正文），后者 = hook.ZiptreePrefetch
+//      （提前抓的作品文件树）。新增 ACTION_SUBTITLE_PREFETCH_CLEAR + ZiptreePrefetch.clearAll()。
+//   ⑦ **删掉「液态玻璃默认设置」下方那行小字**（addResetRow 走 showHint=false）。
+//   ⑧ **底栏换掉 FloatingToolbarLayout → 普通 LinearLayout**：Ari 两轮都说「还留了一层
+//      底部覆盖」，并给出「滚到液态玻璃卡片时出现、往上滑又消失」= 随状态变化 ⇒ 那层不是
+//      普通背景，是控件在自身状态变化时重新装回来的 MaterialShapeDrawable，清 XML 属性管不住。
+//      去掉容器后没有可被重装的层，两个按钮各自带背景、真正悬空。
+//   ⑨ **卡片贴底**：滚动区 paddingBottom 96 → 12dp（96dp 是「底栏真实占位」时代的让位，
+//      1028 起底栏已不占高度）⇒ 滚到底时最后一张卡贴底，只留 12+20dp 给彩蛋。
+//   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1030、label 推到 1019.6。
+//      版本号 2.3.5 不变、code 1029 升 1030。
+// 【code 1031】设置页第五轮：间距统一 / 预览几何重算 / 实验卡空白 / 图标隐藏
+//   依据：Ari 2026-10-19 16:25~16:41 的六张真机截图，十条指令。
+//   ① **三个页签内选项间距不一致（排版特别挤）**：差异不在行间 spacer，而在每行**尾部** ——
+//      色板行的色点在 34dp 热区里居中（视觉底边约 6dp）、滑块行的轨道在 48dp 触摸区里居中
+//      （约 2dp），而分段行的 40dp 实心轨道**贴死行底**（0dp）。现在统一为 label 下 6dp、
+//      控件下 6dp；行间留白 9 → 12dp。
+//   ② **迷你预览窗还是少一行 / 英文活动行显示不全**：真因是首次测量的**宽度兜底值**只减了
+//      卡片 margin(32dp)、没减 preview_lines 自己的左右 padding(14dp×2) ⇒ 推算的可用宽比
+//      真实值宽 28dp，英文长句少换一行、行高被低估，窗口就短一截。另把窗口几何拆成三个独立
+//      量（第 1 行顶 / 第 3 行底 / 裁剪区间）：卡高 = 三行净高、不含容器 padding；折叠态改为
+//      布局完成之后才收（此前在 layout 前就收，用的全是推测值）。
+//   ③ **四张卡内上下距离不一致**：上一轮只把字幕外观卡改成 16dp，另外三张还是 6dp。
+//      现在四张卡 paddingTop/Bottom 一律 10dp（XML 与 CARD_PAD_TOP/BOTTOM_DP 同值）。
+//   ④ **重新打开实验性功能后按钮下方巨大空白**：pinCardLastBottom 是**一次性**监听，
+//      卡片 GONE 时容器高为 0、curGap 变成大负数，算出的 bottomMargin 荒谬地大；重启页面时
+//      卡一开始就可见所以正常。现在 GONE 时直接不计算，转可见后再跑一次 repinExperimentalLast。
+//   ⑤ **英文模式清除预取字幕按钮向下位移**：两枚按钮原先 wrap_content，英文标签换两行把那
+//      一枚撑高、另一枚还停在单行。现在整排钉 CONTROL_H_DP、按钮 MATCH_PARENT + 单行省略；
+//      英文标签同步缩成 Clear cached / Clear prefetch，缓存说明小字也压短一行。
+//   ⑥ **页头副标题**改为 DLsiteSound 悬浮窗 · 状态栏字幕模块（英文同步缩到一行）。
+//   ⑦ **桌面图标名**去掉「设置」二字，统一为 DLsiteFloat（settings_label）。
+//   ⑧ **新增「隐藏桌面图标」开关**（其他卡，摆在调试日志上面）：桌面入口独立成
+//      activity-alias，开关走 setComponentEnabledSetting 启停它 —— 不动 SettingsActivity
+//      本身（否则 LSPosed 也唤不起来）。状态存 UI prefs，点下即生效、不参与保存设置。
+//   ⑨ **保存按钮上抬 + 悬浮阴影**：bottom_bar marginBottom 12 → 28dp；按钮关掉
+//      stateListAnimator、给恒定 elevation(8dp)，溢出键 4dp；容器 clipChildren=false。
+//   ⑩ **LSPosed 简介**改为 DLsiteSound 悬浮窗 & 状态栏字幕模块，并新增 values-en 提供英文版。
+//   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1031、label 推到 1019.7。
+// 【code 1032】设置页第六轮：修 1031 的真机回归 + 图标成套 + 隐藏图标安全绳
+//   依据：Ari 2026-10-19 17:36 的录屏 + 九条指令（其中第 6 条是**真机事故**）。
+//   ① **页签下方首个选项比别的卡更贴**：另外三张卡的「卡顶 → 首个选项」= 卡片 paddingTop(10)
+//      + 行头自带内缩；card_main 是「页签 marginBottom(6) + 同一份内缩」⇒ 差 4dp。
+//      现在页签 marginBottom 直接取 CARD_PAD_TOP_DP（XML 与代码各写一次，同常量）。
+//   ② **预览窗从第二行起整片不显示（英文全不显示）** —— 这是 1031 引入的**新**回归，真因不在
+//      位移也不在裁剪，而在**父级把内容压扁**：折叠时把 preview_card 高度改成「三行净高」，
+//      而 preview_lines 是它的直接子 View、高度又是 wrap_content ⇒ FrameLayout 用
+//      AT_MOST(三行净高) 量它，竖直 LinearLayout 的每行只能拿到「上一行用剩下的高度」
+//      ⇒ 第 2 行起被压、第 4/5 行归零。中文首行短所以只丢后面几行，英文首行就换行、
+//      首行吃光配额 ⇒ 五行全没。修法：折叠态把 preview_lines 的 layout_height 钉成
+//      自然全高（EXACTLY），溢出部分交给卡片自己的 clipChildren 裁；展开态放回 wrap_content。
+//      ⚠️ 顺序必须在设置卡片高度**之前**。
+//   ③ **控件下边距统一 4dp**（ROW_TAIL_GAP_DP 6→4），并把这一份补齐给滑块行 / 色板行
+//      —— 1031 只给分段行补了，另两种行的行尾是 0。
+//   ④ **小图标成套**：1025 那批是手绘实心块，3dp / 4dp / 2dp 混用，一屏里「有粗有细」。
+//      全部重画为 24dp 视口 + **统一 2dp 描边 + 圆头圆角**，粗细从此由 strokeWidth 保证；
+//      并给「隐藏桌面图标」补一枚（原先 iconForRow 返回 0，那一行左边是空的）。
+//   ⑤ **保存键再上抬**：bottom_bar marginBottom 28 → 48dp。
+//   ⑥ 🔴 **打开「隐藏桌面图标」后连 LSPosed 的「打开」也消失，Ari 被锁在门外**。
+//      根因：alias 一关，包内一条 launcher 入口都不剩，getLaunchIntentForPackage() 返回 null，
+//      LSPosed 与系统「应用信息」的「打开」都按 null 隐藏。修法两条：
+//        · SettingsActivity 挂常驻 MAIN + CATEGORY_INFO（getLaunchIntentForPackage 会**先**找它，
+//          它不是桌面分类 ⇒ 不多出图标，但保证包永远可被程序唤起）；
+//        · applyLauncherIconState 增加**运行期安全绳**：隐藏前先看 launch intent 解出来的组件
+//          是不是 alias 自己，是就拒绝隐藏并把开关弹回去（宁可不能隐藏，也不能锁死）。
+//   ⑦ **页签离卡顶太近**：card_main 内层 paddingTop 10 → 16dp（另外三张卡不动）。
+//   ⑧ **保存键四角直角阴影 + 底部平切**：阴影画在盒子外，祖先链**任何一层** clipChildren=true
+//      都会在矩形边界处切断它。1031 只关了 bottom_bar 一层，上面还有三层在裁 ⇒ 现在
+//      settings_root / settings_coord / bottom_bar / 内层 wrap_content 容器四层全部关掉。
+//   ⑨ **LSPosed 简介的英文没上去**：1031 拆成 values / values-en 两份，而 LSPosed 用
+//      调用方进程的语言解析（ApplicationInfo.loadDescription 走 PackageManager 当前配置），
+//      系统是中文就只显示中文那份。现在把中英**合并成一串**写死在两个 values 里。
+//   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1032、label 推到 1019.8。
+//   ⚠️ 升级提示：1031 里点过「隐藏桌面图标」的用户，**必须先卸载再安装**本包 ——
+//      组件启用状态存在系统的 package-restrictions.xml 里，覆盖安装不会清，卸载才会清。
+// 【code 1033】设置页第七轮：卡片底距统一 / 菜单上弹 / 预览窗不再自己弹回完整
+//   依据：Ari 2026-10-19 18:51 的两段录屏 + 八条指令。
+//   ① 🔴 **卡片末行底距「跳变」+ 四张卡不一致**（第 1、2 条）。1025~1032 的算法是
+//      「布局完后实测，把末行底距收敛到**首行字形顶距 × 2**」—— 而首行字形顶取决于
+//      group 自己的 paddingTop：group_main 没有 padding（目标 ≈14dp），
+//      group_liquidglass / experimental / misc 有 10dp（目标 ≈34dp）
+//      ⇒ 四张卡差 20dp，正是「液态玻璃 / 实验性 / 其他 比字幕 / 行态更宽」。
+//      至于「跳变」：旧实现每次切面都新挂一个 OnGlobalLayoutListener，快速切换时多个
+//      回调在同一次布局后依次触发，后一个读到的 group.getHeight() 还是旧值
+//      ⇒ 各自算出不同 bottomMargin、互相覆盖 ⇒ 一帧内宽窄各来一次。
+//      现在改成纯常量（CARD_LAST_GAP_DP = ROW_TAIL_GAP_DP）：不测量、不等布局、不看首行
+//      ⇒ 四张卡 + 三个面统一「总底距 14dp（4 + 卡片 paddingBottom 10）」。
+//   ② **三个页签离卡片上端再远一点**（第 3 条）：card_main 内层 paddingTop 16 → 24dp。
+//      ⚠️ 只动这一个值 —— 页签 → 首个选项的那 10dp 由 appearance_tabs.marginBottom 负责。
+//   ③ **删掉「隐藏桌面图标」下方那行说明小字**（第 4 条）：开关行回到单行 48dp。
+//      安全绳不依赖常驻文案 —— 被拒时走 Toast（Strings.HIDE_ICON_UNSUPPORTED）。
+//   ④ **「重启系统界面」的弹出小窗跑到屏幕外**（第 5 条）。底栏按钮距屏幕底只有 48dp，
+//      系统 PopupMenu 判定「下方放得下」⇒ 菜单一半被裁在屏幕外。改成自绘 PopupWindow：
+//      先 measure 再**显式**放在按钮上方 8dp；容器圆角 16dp（M3E 档）
+//      —— framework 的 popupBackground 是 4dp 档且改不动。上方真的放不下才退回下方。
+//   ⑤ 🔴 **编辑字幕 / 切语言时预览窗自己从迷你弹回完整**（第 6、8 条）。真因是
+//      refreshPreviewMetrics 的「坐标可信」判据 getHeight() >= full：它默认
+//      「高度对得上 ⇒ 布局也是按这批子 View 做的」，但行刚被重建时 getHeight() 还是
+//      **上一次**的值（折叠态被 pin 着），而新的子 View 一个都没 layout 过
+//      ⇒ getTop()/getBottom() 全 0 ⇒ 判据为真、取到 (0,0) ⇒ return ⇒ valid=false
+//      ⇒ applyPreviewFraction 走「量不出来 ⇒ WRAP_CONTENT」⇒ 弹成完整模式。
+//      修法两条：metrics 改成 forceLayout + measure + **一律累加**
+//      （累加只依赖刚量出的 measuredHeight，与有没有 layout 过无关）；
+//      applyPreviewFraction 的兜底分支改成「折叠态沿用上次实测窗口高」，绝不展开。
+//   ⑥ **连点切换时预览窗回弹**（第 7 条）：两个 ValueAnimator 同时在写 mPreviewFraction。
+//      新增字段 mPreviewAnim，开新动画前先 cancel 上一条。
+//   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1033、label 推到 1019.9。
+//   ⚠️ 索引 schema 仍为 4 ⇒ 升级后缓存不清零；本轮无清单 / 组件变更 ⇒ 可直接覆盖安装。
+
+// 【code 1034】Ari 五条：①吸顶时状态卡漏进状态栏（coord 裁剪恢复 true）②溢出菜单阴影对齐保存键
+//   （PopupWindow 背景换同款圆角 + elevation 8dp）③液态玻璃两行小字改挂行头副标题④实验/其他卡底距
+//   补墨迹补偿 8dp 拉平四卡可见底距。⑤四条历史判据收口（锚随 1023/1024/1031 形态改写）。
+//   ⚠️ versionName 保持 2.3.5，只升 code ⇒ versionCode 推到 1035、label 推到 1019.11。
+//   ⚠️ 索引 schema 仍为 4 ⇒ 升级后缓存不清零；本轮无清单 / 组件变更 ⇒ 可直接覆盖安装。
+// 【code 1035】Ari 返工：1034 的 coord clipChildren=true 真机仍漏状态栏 —— 传统裁剪
+//   对 AppBarLayout 行为位移在硬件渲染下不可靠，改铺大底色 + setClipToOutline(true)
+//   （RenderNode 级裁剪；outline 由 coord 的底色背景提供，两处成对出现）。
+// 【code 1036】Ari 返工：吸顶区随滚动渐深成卡片色、与状态栏 249 脱节 —— M3 liftOnScroll
+//   抬升色作祟，关掉后吸顶区恒为页面大底色（Ari 方案 B；方案 A 受 e2e 限制不可行）。
+// 【code 1037 / 2.4.0】验证链两处根治 ＋ 日常日志降噪：①dump 坏缓存加完整性哨兵（半截转储
+//   不再被永久复用）、②临时 dex 改覆盖写不删（删除次数归零 ⇒ 不再撞批量删除保护）、
+//   ③历史包缺失的脚本改「当前最新包」做现状复验、④缓存层日志出口拆「日常明细只走调试开关 /
+//   告警里程碑常开」、⑤生命周期两行 + 预取命中四行 + 标签普查倒出归调试。
+//   ⚠️ 本轮 Ari 指令**升语义版本号** ⇒ versionName / tag 2.3.5 升 2.4.0、
+//      versionCode 推到 1037、label 推到 1020.1（跨日归 1）。
+//   ⚠️ 索引 schema 仍为 4 ⇒ 升级后缓存不清零；本轮无清单 / 组件变更 ⇒ 可直接覆盖安装。
+def appVersionCode = 1037
+def appVersionCodeLabel = '1020.1'
+def appVersionName = '2.4.0'
 
 android {
     namespace 'io.github.ariinyume.dlsitesoundfloat'

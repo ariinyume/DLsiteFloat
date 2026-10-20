@@ -2744,7 +2744,10 @@ public class ActivityButtonHook {
                     if (!activity.getClass().getName().equals(ACTIVITY_CLASS)) {
                         return;
                     }
-                    XposedCompat.log(TAG + " activity onResume -> ensureButton");
+                    // 【code 1037】每次进出播放页各一条，且与下面的 button shown /
+                    //   capsule group hidden 内容重复（那两条带 reason 与延迟，信息更足）
+                    //   ⇒ 生命周期这两行只算诊断级。
+                    LogGate.debug(TAG, " activity onResume -> ensureButton");
                     ensureButton(activity, repo);
                 }
             });
@@ -2761,7 +2764,7 @@ public class ActivityButtonHook {
                     if (!activity.getClass().getName().equals(ACTIVITY_CLASS)) {
                         return;
                     }
-                    XposedCompat.log(TAG + " activity onPause -> removeButton");
+                    LogGate.debug(TAG, " activity onPause -> removeButton");
                     removeButton(activity);
                 }
             });

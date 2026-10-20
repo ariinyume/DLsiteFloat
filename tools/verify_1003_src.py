@@ -106,10 +106,21 @@ def main():
     check('卡片内六项的构建顺序齐全', all(p >= 0 for p in pos), str(pos))
     check('★ 顺序 = 总开关 → 环境背景亮度 → 通透度 → 明暗度 → 模糊强度 → 恢复默认',
           all(pos[i] >= 0 and pos[i] < pos[i + 1] for i in range(len(pos) - 1)))
-    check('恢复默认小字用 HINT_LIQUID_GLASS（全部设置为 50%）',
-          'Strings.HINT_LIQUID_GLASS' in body)
-    check('环境背景亮度有说明小字', 'LIQUID_GLASS_BACKDROP_LUM_HINT' in body)
-    check('通透度有说明小字', 'LIQUID_GLASS_TRANSPARENCY_HINT' in body)
+    # 【code 1030】**有意改写**：Ari 要求删掉「液态玻璃默认设置」下方那行小字，
+    #   于是 addResetRow 走 showHint=false（不建小字，按钮行自己就是末行）。
+    #   原判据「小字用 HINT_LIQUID_GLASS」在新设计下必然为假，改为判「按钮行末尾带 false」。
+    check('恢复默认走 showHint=false（1030 起不再有小字）',
+          'addResetRow(parent, Strings.RESET_LIQUID_GLASS' in body
+          and 'this::resetLiquidGlassGroup, false)' in body
+          and 'HINT_LIQUID_GLASS' not in body)
+    # 【code 1034 有意改写】两条说明小字由「行下方独立 TextView」改挂行头副标题
+    #   （supportingForRow 查表，与「字幕间行距」同位）⇒ 构建段不再引用 *_HINT，
+    #   判据跟到 supportingForRow（文案仍是同一枚举，三语零改动）。
+    sup = method_body(sa, 'private Strings supportingForRow(')
+    check('环境背景亮度有说明（1034 起挂行头副标题）',
+          'LIQUID_GLASS_BACKDROP_LUM_HINT' in sup)
+    check('通透度有说明（1034 起挂行头副标题）',
+          'LIQUID_GLASS_TRANSPARENCY_HINT' in sup)
 
     # ══════════ ③ 总开关关闭 ⇒ 下方全隐藏 ══════════
     vis = strip_comments(method_body(sa, 'private void applyLiquidGlassBlurVisibility()'))

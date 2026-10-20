@@ -164,8 +164,10 @@ def main():
     check('兜底仍优先用**本次换轨的目标键**',
           'pendingTrackIdentity != 0L ? pendingTrackIdentity' in repo
           and 'pendingTrackSelection != 0L ? pendingTrackSelection' in repo)
-    check('已确认离线直读本地仍在',
-          'isOffline() && tryResumeFromDisk(where, newIdentity, newSelection)' in repo)
+    # 【code 1034 改写】code 1023 给离线兜底加了「预取池」并列分支 ⇒ 原串多了一层括号。
+    #   离线直读语义未变，判据跟新形态。
+    check('已确认离线直读本地仍在（1023 起带预取并列括号形态）',
+          'isOffline() && (tryResumeFromDisk(where, newIdentity, newSelection)' in repo)
     check('提前收窗仍取 min(NO_SUBTITLE_EARLY_CLOSE_MS, grace)',
           'Math.min(NO_SUBTITLE_EARLY_CLOSE_MS, grace)' in repo)
     check('提前收窗有「已裁决即 no-op」的卫语句',
@@ -294,8 +296,17 @@ def main():
         check('收尾句口径自洽（版本号 == 当前 name、code-after == 横幅 code）',
               b_eff == name and d == hcode,
               'B=%s name=%s D=%s 横幅=%s' % (b_eff, name, d, hcode))
-    check('履历段写明本轮「不动语义版本号」',
-          '版本号 2.3.3 不变' in hist)
+    # 【code 1034 改写】原锚钉死「版本号 2.3.3 不变」字样 —— 那是 1021 当轮履历的措辞。
+    #   铁律 82：滚动工作区上的「本轮判据」必须泛化 ⇒ 改判收尾句里出现「版本号 X.Y.Z 不变」
+    #   分支；具体版本号由上一条「收尾句口径自洽」守（b_eff == 当前 name）。
+    # 【code 1037 再泛化】1034 把原锚泛化成「一定出现『版本号 X 不变』分支」——
+    #   而 1037 是**第一次真升语义版本号**（2.3.5 → 2.4.0）⇒「必出现不变分支」也不再恒成立。
+    #   改成两条真正恒成立的不变量：①版本号动作只有「升 / 不变」两种写法；
+    #   ②收尾句必须在履历段**末尾**（其后只剩空白）—— 防以后往履历末尾追加正文破坏模板。
+    check('收尾句位于履历段末尾且版本号动作只有「升 / 不变」两种',
+          re.search(r'版本号 \d+\.\d+\.\d+ (?:升|不变)(?: \d+\.\d+\.\d+)?'
+                    r'、code \d+ (?:升|不变) \d+。\s*$', hist) is not None)
+
     hit_bad = [w for w in BANNER_FORBIDDEN if w in hist]
     check('履历段不点名本轮新标识符（防空/负向探针自命中）',
           not hit_bad, '违禁词：%r' % hit_bad)

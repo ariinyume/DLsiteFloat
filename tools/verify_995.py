@@ -45,6 +45,7 @@ import zipfile
 
 BT = r'F:\WorkBuddyCache\DLSiteSound_Plus\toolchain\android-sdk\build-tools\34.0.0'
 DEXDUMP = os.path.join(BT, 'dexdump.exe')
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根（code 1037：dump 落到 app/build/，不再污染工作区根）
 
 PKG = 'io/github/ariinyume/dlsitesoundfloat'   # dex 格式：包名用 / 分隔
 C_POLICY = 'L%s/hook/AnchorDeadPolicy;' % PKG
@@ -83,10 +84,14 @@ def dexdump_all(apk, out):
     """把 APK 里所有 dex 的 dexdump 落盘（大 dex 内存吃不消，分开转再拼）。"""
     # 【code 1001】同上：删不掉就覆盖写，避免把上一轮的 dump 追加进来。
     _rm(out)
+    # code 1037：临时 dex 落到 app/build/_dextmp/ 覆盖写复用、**不删除**
+    # （同上：删除次数归零，避免撞批量删除保护）。
+    scratch = os.path.join(ROOT, 'app', 'build', '_dextmp')
+    os.makedirs(scratch, exist_ok=True)
     with zipfile.ZipFile(apk) as z:
         dexs = [n for n in z.namelist() if re.match(r'.*\.dex$', n)]
         for i, n in enumerate(dexs):
-            tmp = out + '.' + os.path.basename(n)
+            tmp = os.path.join(scratch, os.path.basename(out) + '.' + os.path.basename(n))
             with open(tmp, 'wb') as f:
                 f.write(z.read(n))
             r = subprocess.run([DEXDUMP, '-d', tmp],
@@ -94,7 +99,6 @@ def dexdump_all(apk, out):
                                errors='replace', encoding='utf-8')
             with open(out, 'a' if i else 'w', encoding='utf-8') as f:
                 f.write(r.stdout)
-            _rm(tmp)
     return out
 
 
@@ -179,7 +183,9 @@ def main():
             print('找不到 APK: %s' % a)
             return 2
 
-    work = os.path.dirname(os.path.abspath(apk_new))
+    scratch_root = os.path.join(ROOT, 'app', 'build', '_dextmp')
+    os.makedirs(scratch_root, exist_ok=True)
+    work = scratch_root   # code 1037：dump 不再落在 APK 旁边（工作区根曾堆满 dexdump_*.txt）
     dn = os.path.join(work, 'dexdump_995.txt')
     print('主验 dexdump: %s' % apk_new)
     dexdump_all(apk_new, dn)

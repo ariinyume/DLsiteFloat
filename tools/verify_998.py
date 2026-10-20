@@ -26,7 +26,13 @@ verify_998.py —— code 998 的 dex 字节码层验证（**液态玻璃样式�
    字符串层查不到值）⇒ 必须读 dexdump 的 `value :` 行。
 
 用法：
-    python verify_998.py <apk_998> <apk_997>
+    python verify_998.py <apk_主验> <apk_997>
+
+⚠️ 【code 1037】code 998 的 APK 已不在工作区（历史包只留到 995/996/997/999），
+   ⇒ 主验位改由 **run_all_verify.py 传「当前最新包」**（NEEDS_APK 里写 'latest'）。
+   判据语义随之从「本轮回退生效」升级为「**998 的回退一直保持到当前最新版**」：
+   若将来某轮真的又改了 LiquidGlassDrawable 的这几个常量，本脚本会 FAIL —— 那是**真信号**，
+   届时按当轮意图改写期望值，不要为了变绿去放宽判据。
 """
 import os
 import re
@@ -175,7 +181,7 @@ class Checker:
     def report(self):
         print()
         print('=' * 80)
-        print('code 998 —— dex 验证（主验 998 回退版 / 对照 997 锁定版）')
+        print('code 998 —— dex 验证（主验 = 998 回退版或其后续保持版 / 对照 997 锁定版）')
         print('=' * 80)
         print('%-4s %-5s %s' % ('998', '997', '判据'))
         print('-' * 80)
@@ -204,6 +210,9 @@ def main():
     tmp = os.environ.get('TMP', '.')
     print('主验 =', os.path.basename(apk_new))
     print('对照 =', os.path.basename(apk_old))
+    if 'code998' not in os.path.basename(apk_new):
+        print('         （998 包已归档不可得 ⇒ 主验位为当前最新包，'
+              '判据语义＝「998 的回退保持至今」）')
 
     tn, to = all_dex_text(apk_new), all_dex_text(apk_old)
     dn = dump_candidates(apk_new, C_BUTTON, tmp) + dump_candidates(apk_new, C_GLASS, tmp)

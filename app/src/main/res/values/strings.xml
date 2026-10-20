@@ -3,7 +3,19 @@
     <!-- LSPosed 模块列表里显示的名字（同时也作为桌面图标名） -->
     <string name="app_name">DLsiteFloat</string>
     <!-- LSPosed 模块列表里显示的简介（2.0.0 起由 android:description 提供，不再用 meta-data） -->
-    <string name="app_description">DLsite Sound 字幕悬浮窗插件</string>
+    <!--
+      【code 1032 / Ari 第 9 条】LSPosed 模块列表里显示的「简介」。
+
+      ⚠️ 这里是**中英双语写死在同一串**里，不是靠 values-en 分语言。
+         Ari 的原话是「DLsiteSound 悬浮窗 & 状态栏字幕模块 / DLsiteSound Floating Window
+         & Status Bar Subtitle Module」—— 她要的是**两行都给出来**。
+         1031 把它拆成 values / values-en 两份，结果 LSPosed 按调用方进程的语言解析
+         （`ApplicationInfo.loadDescription` 走 PackageManager 的**当前配置**），
+         系统是中文就只显示中文那一份 ⇒ Ari 看到的就是「英文没放上去」。
+         ⇒ 合并成一串，任何语言环境下两条都在。
+      ⚠️ values-en/strings.xml 里的同名键必须与本行**逐字相同**，别只改一处。
+    -->
+    <string name="app_description">DLsiteSound 悬浮窗 &amp; 状态栏字幕模块 / DLsiteSound Floating Window &amp; Status Bar Subtitle Module</string>
     <string name="channel_name">Floating Subtitle Service</string>
     <string name="channel_desc">Keep the floating subtitle window alive</string>
     <string name="service_notification_title">DLsiteSound Floating Subtitle</string>
@@ -16,5 +28,5 @@
       ui/Strings.java 的三语表（与本模块既有 util/I18n.java 的做法一致）。
       这里只放清单/桌面图标要用的静态标签。
     -->
-    <string name="settings_label">DLsiteFloat 设置</string>
+    <string name="settings_label">DLsiteFloat</string>
 </resources>

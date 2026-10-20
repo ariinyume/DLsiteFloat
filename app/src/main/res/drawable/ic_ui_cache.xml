@@ -1,11 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 【code 1025 / P1-2】字幕缓存：三层叠放（库存示意）
-     规格：24x24 视口、实心 path、颜色交给 ImageView.setColorFilter（onSurfaceVariant）。 -->
+<!-- 【code 1032 / Ari 第 4 条】ic_ui_cache：数据库圆筒（字幕缓存）
+     规格：24x24 视口、**描边 2dp + 圆头圆角**、颜色交给 ImageView.setColorFilter。
+     ⚠️ 全套统一 2dp 描边 —— 1025 那批是手绘实心块（3dp / 4dp / 2dp 混用），
+        一屏里「有粗有细」正是 Ari 点出的问题；改成同一条描边后由构造保证一致。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <path android:fillColor="#FF000000"
-        android:pathData="M4,4H20V8H4Z M4,10H20V14H4Z M4,16H20V20H4Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4,6.5C4,4.8 7.6,3.5 12,3.5S20,4.8 20,6.5S16.4,9.5 12,9.5S4,8.2 4,6.5Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4,6.5V17.5C4,19.2 7.6,20.5 12,20.5S20,19.2 20,17.5V6.5" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4,12C4,13.7 7.6,15 12,15S20,13.7 20,12" />
 </vector>

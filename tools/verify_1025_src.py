@@ -269,7 +269,12 @@ def main():
                             ''.join(re.findall(r'pathData="([^"]*)"', chevron)))) <= set())
     check('F8 折叠方法在位', has(activity_code, 'private void applyPreviewCollapsed('))
     check('F9 展开/收起都会转箭头', has(activity_code, 'rotation(collapsed ? 180f : 0f)'))
-    check('F10 收起走高度动画（下面内容不跳）', has(activity_code, 'ValueAnimator.ofInt(from, 0)'))
+    # 【code 1029】本条判据**有意改写**：原来钉死 `ValueAnimator.ofInt(from, 0)`，
+    #   而 1029 把「收起程度」抽成 0..1 的浮点，高度由 applyPreviewFraction 逐帧插值。
+    #   要守的意图没变 —— 收起必须走**确定像素值**的高度动画，不能两态硬切（否则下方内容会跳）。
+    check('F10 收起走高度动画（下面内容不跳）',
+          has(activity_code, 'ValueAnimator.ofFloat(mPreviewFraction, target)')
+          and has(activity_code, 'mPreviewWinH - mPreviewFullH'))
     check('F11 点条即落盘', has(activity_code, 'mStore.savePreviewCollapsed(mPreviewCollapsed)'))
     check('F12 进页面恢复上次状态', has(activity_code, 'mStore.readPreviewCollapsed()'))
     check('F13 ConfigStore 有读方法', has(store, 'public boolean readPreviewCollapsed()'))
@@ -289,9 +294,15 @@ def main():
     check('G1 页头仍 scroll（不是 scroll|enterAlways，975/976 的成果）',
           has(layout, 'app:layout_scrollFlags="scroll"')
           and not has(layout, 'layout_scrollFlags="scroll|enterAlways"'))
-    check('G2 底栏仍是**真实占位**的兄弟节点（2.1.4 的成果）',
-          layout.rfind('android:id="@+id/bottom_bar"')
-          > layout.rfind('</androidx.coordinatorlayout.widget.CoordinatorLayout>'))
+    # 【code 1028 判据更新】底栏形态被 Ari 指令**有意推翻**：
+    #   1025/2.1.4 的「真实占位兄弟节点」在 1028 改成 FloatingToolbarLayout 浮层
+    #   （审查稿 P1-④；让位改用滚动区固定 96dp paddingBottom）。
+    #   ⇒ 这里不再判「在 CoordinatorLayout 之后」，改判「bottom_bar 仍是 CoordinatorLayout
+    #   的**直接子 View**」——两种形态都成立，2.1.4 真正要守的「底栏不靠时序测量」由
+    #   1028 的 E5（固定 paddingBottom）继续守。
+    check('G2 底栏仍是 CoordinatorLayout 的直接子 View（1028 起形态改为浮动工具条）',
+          bool(re.search(r'\n    <(?:LinearLayout|com\.google\.android\.material\.floatingtoolbar'
+                         r'\.FloatingToolbarLayout)\n        android:id="@\+id/bottom_bar"', layout)))
     check('G3 卡内仍无分隔线', not has(activity_code, 'setDividerDrawable')
           and not has(activity_code, 'DividerItemDecoration'))
     check('G4 吸顶下沿仍留 5dp', has(layout, 'android:paddingBottom="5dp"'))
@@ -320,9 +331,10 @@ def main():
     check('H3 label 形态 = 月日.当日第几版', label and re.fullmatch(r'\d{4}\.\d+', label.group(1)))
     # 🔴 铁律 94：label 的日期段跟「构建当天」（MMDD.当日第几版），跨日就会变
     #   ⇒ 只守**形态**，绝不钉具体字面值（1025 轮跨了 10-18 / 10-19 两天，实踩）
+    #   【code 1034】当日轮次进到两位数（1019.10）⇒ 尾段放宽为 \d+
     check('H4 履历块按「版本号不变 / code 升」口径收尾',
           has(gradle, 'versionName 保持 2.3.5') and has(gradle, '1025、label 推到 ')
-          and re.search(r"appVersionCodeLabel = '10\d\d\.\d'", gradle) is not None)
+          and re.search(r"appVersionCodeLabel = '10\d\d\.\d+'", gradle) is not None)
     check('H5 上一轮 code 1024 在履历里可追溯', has(gradle, '1024'))
 
     print('\n── I 设置页 P1/P2（设计审查 §06）────────────────────────────')
@@ -374,8 +386,11 @@ def main():
     icon_dir = os.path.join(SRC, 'res', 'drawable')
     icons = [n for n in os.listdir(icon_dir) if n.startswith('ic_ui_') and n.endswith('.xml')]
     # 【code 1026】ic_ui_sync 随「跟随宿主字幕样式」一起删除 => 13 枚（原 14）。
-    check('I3c 行图标 13 枚（1026 起；sync 已随功能删除）',
-          len(icons) == 13 and 'ic_ui_sync.xml' not in icons, '实际 %d' % len(icons))
+    # 【code 1032】有意改写 13 -> 15：本轮把旧 Material 实心 ic_palette 换成统一描边
+    #   的 ic_ui_palette（+1），并给「隐藏桌面图标」那一行补了 ic_ui_launcher（+1）。
+    #   两枚都进 ic_ui_* 成套目录，所以本判据的枚数随之上调；判据意图（成套 + sync 已删）不变。
+    check('I3c 行图标 15 枚（1026 起 13；1032 起 palette 换代 + launcher 新增）',
+          len(icons) == 15 and 'ic_ui_sync.xml' not in icons, '实际 %d' % len(icons))
     bad_v = []
     for n in icons:
         txt = read(os.path.join(icon_dir, n))

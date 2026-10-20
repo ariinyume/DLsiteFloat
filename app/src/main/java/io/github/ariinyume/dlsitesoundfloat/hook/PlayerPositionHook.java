@@ -547,7 +547,7 @@ public class PlayerPositionHook {
                         if (LogGate.enabled() && now - sLastPollLogMs > POLL_LOG_EVERY_MS) {
                             sLastPollLogMs = now;
                             // 自证「轮询还活着、手上握着几个实例」—— 本轮问题的第一现场就在这条线上
-                            XposedCompat.log(TAG + " poll tick #" + sPollTicks
+                            LogGate.debug(TAG, " poll tick #" + sPollTicks
                                     + " players=" + sLastPlayers.size()
                                     + " idle=" + idle + "ms interval=" + sPollIntervalMs + "ms");
                         }

@@ -127,21 +127,44 @@ def _rm(p):
         return False
 
 
+def _dump_cache_ok(out, n_dex):
+    """缓存是否**完整**（code 1037 起必须带哨兵）。
+
+    ⚠️ 踩过的坑：旧判据只看「文件存在且 >1MB」。一次被环境保护中断的 dump
+    只写完前 1~2 个 dex，体积照样 >1MB ⇒ 被当成有效缓存**永久复用**
+    ⇒ 后面所有「类存在」判据全判 false ⇒ 36/45 假 FAIL（看着像大回归，其实没验）。
+    现在写完追加 `#DUMPCOMPLETE <dex数>`，复用时校验**行在、数对**。
+    """
+    if not os.path.exists(out) or os.path.getsize(out) < 1_000_000:
+        return False
+    size = os.path.getsize(out)
+    with open(out, 'rb') as f:
+        f.seek(max(0, size - 64))
+        tail = f.read().decode('utf-8', 'replace')
+    return ('#DUMPCOMPLETE %d' % n_dex) in tail
+
+
 def dexdump_all(apk, out):
-    if os.path.exists(out) and os.path.getsize(out) > 1_000_000:
-        return out                     # 复用缓存（按包 sha 命名，不会串包）
-    _rm(out)
     with zipfile.ZipFile(apk) as z:
         dexs = [n for n in z.namelist() if re.match(r'.*\.dex$', n)]
+    if _dump_cache_ok(out, len(dexs)):
+        return out                     # 复用缓存（按包 sha 命名，且已过完整性哨兵）
+    # 临时 dex 统一落 app/build/_dextmp/ 并**覆盖写复用、不删除**：
+    # 每脚本 9 个 dex、每个删一次 ⇒ 一轮累计 70+ 次删除 ⇒ 撞上环境的批量删除保护，
+    # 进程被外部掐断、判据没跑完 ⇒ run_all 记 ENVBLOCK（看着像失败，其实没验完）。
+    scratch = os.path.join(ROOT, 'app', 'build', '_dextmp')
+    os.makedirs(scratch, exist_ok=True)
+    tmp = os.path.join(scratch, os.path.basename(out) + '.dex')
+    with zipfile.ZipFile(apk) as z:
         for i, n in enumerate(dexs):
-            tmp = out + '.tmp'
             with open(tmp, 'wb') as f:
                 f.write(z.read(n))
             r = subprocess.run([DEXDUMP, '-d', tmp], capture_output=True, text=True,
                                errors='replace', encoding='utf-8')
             with open(out, 'a' if i else 'w', encoding='utf-8') as f:
                 f.write(r.stdout)
-            _rm(tmp)
+    with open(out, 'a', encoding='utf-8') as f:
+        f.write('\n#DUMPCOMPLETE %d\n' % len(dexs))
     return out
 
 

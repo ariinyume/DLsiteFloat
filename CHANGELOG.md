@@ -3952,3 +3952,927 @@ Ari 给了 1026 的真机日志（`LSPosed_20261019_115745.zip`），并问两�
   `MISMATCH #n` / `MISMATCH PERSISTENT` ⇒ 判据改守语义（有 `MISMATCH` 且写明
   `rendering NOT changed`），不再钉文案。
 
+## 2.3.5 / code 1028 —— 设置页第二轮审查：页签语义 / 热区 / 撤销 / 字阶 / 浮动工具条 / 迷你预览
+
+> 依据：`DLsiteFloat_设置页_M3E设计审查_1026.html`（按 code 1026 源码实测的第二轮审查稿）
+> ＋ Ari 2026-10-19 12:25 的七条指令。第 6、7 条指向同一件事（折叠态迷你预览），合并为一处实现。
+> 基线：code 1027（只加诊断、未发版）；版本号仍是 2.3.5，只升 code。
+
+### 【一】页签改名：「颜色」→「字幕」
+
+`Strings.TAB_COLOR` 三语从「颜色 / 顏色 / Color」改成「字幕 / 字幕 / Subtitles」，
+行态 / 排版两段不动。
+
+理由不是审美，是**这一面里 6 项有 4 项不是颜色**（阴影强度、阴影半径、活动行不透明度、
+放大倍数），叫「颜色」会让想改悬浮窗底色的人先点进来、再扑空。
+上一稿曾建议把「悬浮窗颜色」搬进这一面，本轮 Ari 明确**不搬**——它继续留在排版面，
+所以这次只改名字、不动任何一行。
+
+### 【二】三个不到 48dp 的可点元素补热区
+
+审查稿 P0-② 的原话是「行抬到 48dp 了，但行里那三个可点的东西还停在 32 / 32 / 40dp」。
+本轮逐个补齐，**视觉尺寸一律不动**（该小的地方仍然小）：
+
+- **语言胶囊**（`activity_settings.xml`）：胶囊本体仍 32dp，外面包一层 48dp 容器、
+  `gravity=center` 让它垂直居中 ⇒ 点在胶囊上下那 8dp 空白里也命中；
+- **恢复默认胶囊**（`SMALL_CONTROL_H_DP = 32`）：新增 `attachExpandedTouchTarget()`，
+  用 `TouchDelegate` 把命中矩形四向各扩 8dp（32 → 48），并夹在行容器边界内。
+  全仓此前 **`TouchDelegate` 零命中** —— 这正是「行够了、胶囊还是点不准」的根因；
+- **外观页签组**：`appearance_tabs` 40 → **48dp**，圆角跟着走半个高度（20 → 24）。
+
+### 【三】恢复默认挂上与保存同一套撤销
+
+审查稿 P1-③：「这一下**没有撤销**，保存却有」。本轮四个入口（字幕 / 行态 / 排版 /
+液态玻璃）统一走 `snackResetUndo()`：
+
+- 改值前先 `mDraft.copy()` 留一眼快照；
+- 回执是同一个 `snack(msg, UNDO, action)`，与保存撤销同一套组件与停留时长；
+- 撤销**只回滚草稿**（还没落盘，不需要写存储），回执文案用 `UNDO_RESET_DONE`
+  （「已撤销本次恢复默认」），与保存撤销的「已撤销上一次保存」刻意区分。
+
+### 【四】字阶与 accent 通胀
+
+- 页头 26 → **28sp**；
+- 五个节标题：`?attr/textAppearanceTitleSmall`（14sp）→ 新增
+  `TextAppearance.DLsiteFloat.SectionTitle`（**16sp** / `colorOnSurfaceVariant` /
+  `textStyle=normal`），并在代码里落 **600** 字重 —— Android 没有 600 字重族，
+  口径是 API 28+ `Typeface.create(current, 600, false)`、API 24–27 回落
+  `sans-serif-medium`（500）。改动前节标题**比行标签（15sp）还小 1sp**，层级全靠颜色撑；
+- 滑块读数 `colorPrimary` → **`colorOnSurface`**；
+- 「恢复默认」标签 `colorPrimary` → **`colorOnSurfaceVariant`**。
+
+改完一屏 `colorPrimary` 只剩三处可点的层级：语言胶囊、保存、滑块已走过段。
+
+### 【五】底栏 → `FloatingToolbarLayout`（material 1.14.0 官方件）
+
+底栏从「两条等宽按钮 + 真实占位 70dp」改成浮动工具条，内容是
+`[脏态圆点] [有 N 处未保存] [⋯] [保存]`：
+
+- **不占高度**：工具条浮在内容之上，滚动区改用固定 **96dp** `paddingBottom` 让位。
+  ⚠️ 这个值刻意写死、**不测工具条高度** —— 2.1.4 那次返工正是因为
+  「量底栏高 → 写进 padding → 拉不到底」，任一环节对不上最后一行就再也滚不出来；
+- **脏态**：`updateSaveBar()` 由 `markDirty()` / `doSave()` 驱动；
+  `dirtySectionCount()` 按**分区**统计（字幕 / 行态 / 排版 / 液态玻璃 / 其他），
+  所以读数是「有 2 处未保存」而不是「有 7 项未保存」—— 用户的心智单位是区块，不是字段；
+- **溢出**：`restart_button` 从布局里删除，「重启系统界面」移进 ⋯ 的 `PopupMenu`。
+  它低频、破坏性（SystemUI 会重启），不该和保存并排等权；
+- `applyPageBackground()` **不再**给 `bottom_bar` 刷页面底色：官方样式自带容器色 + 28dp
+  圆角 + 阴影，照旧调用会把整块背景刷平、工具条"消失"；
+- 根布局的 insets 已经让出导航栏，故显式 `app:marginBottomSystemWindowInsets="false"`，
+  避免官方样式再叠一次。
+
+### 【六】折叠态的迷你预览（第 6、7 条合并）
+
+`preview_mini`：折叠时显示三行摘要（非活动 / 活动 / 非活动，下标 1 / 2 / 3），
+与完整预览、与真窗**同源**——同一份 `SubtitleStyle`、同一个 `stylePreviewLine()`，
+不另写一套字号 / 颜色 / 阴影换算。
+
+- 收起动画里两块**同帧改高度**：card 从 H → 0、mini 从 0 → 实测高度，
+  两者相加 H → target **一路递减**，不会出现「先缩到底、再弹出 90dp」；
+- 迷你高度取 `measure()` 实测值，不写死 88/90dp —— 用户把字号调大后它跟着长；
+- 面板层固定走 `floatWindowColor` 的顶部 0x92 → 底部 0x5B 渐变（液态玻璃档同样如此）：
+  90dp 高的条上看不出玻璃模糊场，却要为它每帧重建一张背景图，不划算；
+  **迷你条不承担「面板材质」的反馈**，那是展开态预览的职责。
+
+### 【不改的】
+
+- 「悬浮窗颜色」仍在排版面（按 Ari 指令，不搬去字幕面）；
+- 三条恢复默认仍各管一面（1026 拆开的结论不变）；
+- 色板仍是 6 项 + 自定义色环；`ColorSwatchRow` 的 48dp 热区与弹性网格不动；
+- 预览卡仍是三层（backdrop / panel / lines），AppBar 的 `noScroll` 分界线不动；
+- 发送给宿主的配置键、渲染路径、缓存与预取一字未动。
+
+### 【验证】
+
+- 源码层 `tools/verify_1028_src.py`：**42 / 42 PASS**（页签语义 3、热区 4、撤销 4、
+  字阶 6、工具条 10、迷你预览 6、版本 6、边界 3）。
+- 产物层 `tools/verify_1028.py`：**26 / 26 PASS，15 个有区分力锚，10 条如实标注无区分力**。
+  主验 `code1028` / 对照 `code1027`：
+  - 新增文案 3 条（未保存读数 / 撤销恢复 / 更多操作）new>0、old=0；
+  - 新增资源 9 枚；`id/restart_button` 只在上一般存在；
+  - 布局里出现 `floatingtoolbar.FloatingToolbarLayout`（旧包 0）；
+  - **页签组高 48dp / 上一版 40dp**（`xmltree` 实测，P0-② 的产物证据）。
+- ⚠️ 产物层**不做**的判据（如实写在脚本 H 段）：48dp 热区、16/28sp 字号、600 字重、
+  色槽切换 —— 全是编译期常量或整型资源 id，`javac` 内联后无法归属到调用点，
+  伪造判据只会自欺。验收口径 = 源码层 + 真机目视。
+- 唯一有意推翻的历史判据：`verify_1025_src.py` 的 G2（「底栏是真实占位兄弟节点」）
+  已按本轮设计改写为「`bottom_bar` 仍是 CoordinatorLayout 的直接子 View」，
+  并在注释里写明「让位改由滚动区固定 96dp 承担」——2.1.4 真正要守的
+  「底栏不靠时序测量」没有丢。
+- 可复现性：`clean assembleDebug` 两次逐字节一致（与 1025 起确立的口径相同）；
+  本轮**仍不做传统双闭环**（构建链与设置页同批改动，revert 基线不可比）。
+
+### 产物
+
+- `DLsiteFloat-2.3.5-code1028-debug.apk`
+- 体积 **7,216,666 B**（上一版 1027：7,210,534 B，+6,132 B）
+- sha256 `7c3887262f49ea334b04d1ee0294bcfccc94d41060051c381d317424472dcf25`
+- `versionCode 1028` / `versionName 2.3.5`（不变）/ `minSdk 24` / `targetSdk 36` /
+  `compileSdk 36`
+- 未提交、未打 tag、未发版 —— 由 Ari 决定何时发。
+- 安装提示：装过更高 code 的包须先卸载（`versionCode` 只能升不能降）。
+
+## 2.3.5 / code 1029 —— 设置页第三轮：预览收起重做 / 连通按钮组 / 底栏真悬空 / 语言循环 / 预存 16 部
+
+> 依据：Ari 2026-10-19 13:52 的 31 秒真机录屏 ＋ 14:12 的 LSPosed 日志包（111 MB）。
+> 日志包内本模块无异常（唯一成串的 `ClassCastException` 来自另一个模块 ColorOSMod）。
+> 基线：code 1028（设置页 M3E 第二轮）；版本号仍是 2.3.5，只升 code。
+
+### 【一】预览收起改成「单面裁切」——「百叶窗」的根因在哪
+
+Ari 原话：「预览窗的大小变化应该是直接向上缩短或者向下变长，现在是百叶窗的效果不符合直觉；
+另外背景的取色也变了？」
+
+**根因**（1028 的设计错误，不是动画参数问题）：折叠态被实现成**第二个视图**
+`preview_mini`（三行，取示例字幕的 1/2/3 行），收起时同时执行两件事 ——
+card 高度从五行实测值收到 0、mini 高度从 0 长到三行实测值。两张画面**内容几乎一样但不同源**，
+逐帧交叉淡入淡出，看上去就是一片片横向文字在对穿：这就是「百叶窗」。
+背景取色变了也是同一个原因 —— mini 的面板层固定走 `floatWindowColor` 渐变、
+不跟液态玻璃档，所以一收起材质就换了。
+
+**现在**：删掉 `preview_mini`，折叠**只有一张卡在动**。
+
+| 方向 | 行为 |
+|---|---|
+| 收起 | 同一张 `preview_card` 的高度从五行实测高收到三行实测高，内容顶部锚定、底边被 `clipChildren` 裁掉 ⇒ 底边**向上抬** |
+| 展开 | 同一条线反向 ⇒ 底边**向下落** |
+| 内容位移 | 折叠时给 `preview_lines` 加 `translationY = -WINDOW_FIRST 之前各行高度`，把 1..3 行对齐到窗口顶部（不做这步，活动行会被压到窗口最下沿） |
+
+三个实现细节：
+
+- **实测而非写死**：`refreshPreviewMetrics()` 用 `UNSPECIFIED` 量 `preview_lines` 的自然高，
+  算出「五行全高 / 三行窗口高 / 折叠位移」三个值，动画逐帧只用缓存（60 帧 × 5 个 TextView 的文本排版没有意义）。
+  用户把字号调大、行距拉开，窗口跟着长。
+- **两端落回确定值**：`f<=0` 用 `WRAP_CONTENT`（让布局自己决定），`f>=1` 用算出来的三行像素高。
+  用插值结果的像素去钉死展开态，字号一变就会差几个像素、边缘露出半行。
+- **行被重建后重贴**：`updatePreview()` 末尾把 `mPreviewMetricsValid` 置 false 再按当前折叠态重算一次，
+  否则折叠态下拖字号滑块，窗口会停在旧高度。
+
+背景取色随之不再可能变：背景 / 面板 / 字幕全是**同一批 View、同一份 drawable、
+同一次 `applyPreviewPanel()` 上色**。
+
+### 【二】三处按钮组改 M3E 连通组（Connected Button Group）
+
+Ari：「以 3dp 间距排列，只把相邻的内侧圆角缩小到 8dp，外侧保持圆角」。三处都改：
+外观页签（字幕 / 行态 / 排版）、对齐组（左对齐 / 居中 / 右对齐）、备份组（导出 / 导入）。
+
+- 新增 `connectedShape(index, count, outerDp)`：**逐角**构造 `ShapeAppearanceModel` ——
+  「有邻居的那一侧 = 8dp，没有邻居的那一侧 = 外侧胶囊半径」。
+  ⚠️ 不能用 `setCornerRadius()`：那是四角同值，设 8dp 会把外侧也削平，整组变成三个圆角方块。
+- 外侧半径：页签组 24dp（组高 48 的一半）、分段行与备份组 20dp（控件高 40 的一半）。
+- 间距常量 `GROUP_GAP_DP = 3`。分段行原来贴死（0dp），页签组原来 2dp，导出/导入原来 10dp。
+- 分段行的**轨道**（`trackBg`）保留：它的圆角只承担「外沿裁切」，不是按钮圆角。
+
+### 【三】底栏彻底悬空（去掉那层「底部覆盖」）
+
+Ari：「保存设置的底层还留了一层底部覆盖而不是完全的按钮悬空」。
+那层浅色胶囊来自 `Widget.Material3.FloatingToolbar` 自带的 `backgroundTint` + `shapeAppearance`。
+现在把工具条自身的四样全清：`android:background`、`app:backgroundTint`（系统 transparent）、
+`app:elevation`、`android:padding`，只保留官方的 insets 行为。
+
+代价与补偿：容器一走，溢出键就是一枚裸图标浮在正文上 —— 既看不出是按钮，对比度也不到 WCAG AA。
+所以给它补一枚自己的圆形 tonal 底（`bg_toolbar_icon`）：`colorSurfaceContainerHigh` 实心圆，
+外套 **4dp inset**（视觉 40dp、命中区仍 48dp）。不用 primary 系：底栏已经有一枚 primary 实心键当主行动。
+
+### 【四】语言胶囊：点一下换一种（删掉选择弹窗）
+
+Ari：「点击语言循环出现『简中/繁中/EN』并改变页面语言显示，初始语言显示跟随系统设置，关闭弹窗选择语言功能」。
+
+- `cycleLanguage()`：**先 `resolve()` 再取下一个** —— 系统是英文的用户第一次点，应该从「EN 的下一个」
+  开始，而不是退回简体（那会像在往回走）。
+- 一旦点过，`ui_language` 就落成具体值（不再回 SYSTEM）：显式选择比隐式跟随更符合「我刚亲手点了它」。
+- 初始仍跟随系统：`ui_language` 默认 `system`，而 `nativeShortName()` 对 SYSTEM 返回的是
+  `resolve()` 之后的短名 —— 按钮上永远是「页面此刻实际在用的语言」。
+- 弹窗代码整段删除；无障碍文案补 `LANGUAGE_CYCLE_HINT`（点击切换语言 / 點擊切換語言 / Tap to switch language），
+  否则读屏用户不知道点下去会发生什么。
+- 不产生脏态：仍走 `applyLanguage()` 原路径（立即独立落盘 + 重建行 + 回灌草稿）。
+
+### 【五】预存字幕上限 8 → 16 部作品
+
+`ZiptreePrefetch.MAX_WORKS` 8 → 16。淘汰口径不变（`LinkedHashMap` 的 `removeEldestEntry`
+在 `size() > MAX_WORKS` 时淘汰最久未用的一部），只改数字。
+代价仍然很小：单部 30~300 KB，16 部约 1~5 MB。
+
+### 【不改的】
+
+- 预览卡的**三层结构**（backdrop / panel / lines）、液态玻璃预览的 `LiquidGlassDrawable` 路径、
+  真窗同源口径（`SubtitleStyle` + `stylePreviewLine`）—— 一行没动。
+- 三个面各自的「恢复默认 + 撤销」、脏态分区统计、溢出菜单（重启系统界面）、
+  96dp 滚动让位、色板热区 48dp。
+- 版本号 2.3.5 不变。
+
+### 【验证】
+
+- 源码层 `verify_1029_src.py`：**40/40**（A 预览单面裁切 8 / B 连通组 8 / C 底栏 6 / D 语言 7 / E 上限 2 / F 版本 5 / G 边界 3）。
+- 产物层 `verify_1029.py`：**24/24，11 个有区分力锚**（新包有 / 旧包无）：
+  三条新文案、`bg_toolbar_icon` 新增、`preview_mini` 四个 id 全部去包、底栏节点四属性、
+  溢出键背景指向新 drawable、淘汰阈值 `const/16 = 16`（旧包 8）。
+  **3 条如实标注无区分力**：连通组内侧 8dp / 3dp 间距（运行时 `ShapeAppearanceModel`，无资源）、
+  语言循环与删弹窗（代码结构）、预览收起方向（纯运行时行为）。
+- 两条**历史脚本按新设计有意改写**（并在脚本里写明原因）：
+  `verify_1028_src.py` 的 F 段（迷你预览已删，改判单面裁切）、
+  `verify_1025_src.py` 的 F10（原来钉死 `ValueAnimator.ofInt(from, 0)`，现判「收起走确定像素高度动画」的意图）。
+  另把两处**版本钉死**改成下界 / 动态拼（铁律 82/94）。
+- 全量：42 个脚本 **37 PASS / 4 FAIL / 1 SKIP**（另有 4 个被环境拦截，非判据失败）。
+  4 条 FAIL（`1021_src` / `1020_src` / `1019_src` / `1007_src`）都是
+  **基线 HEAD 上本来就有的**历史遗留（历史锚被后续合法改动作废），上一轮已在干净 HEAD 上证实，
+  不是本轮回归。
+
+### 产物
+
+- `DLsiteFloat-2.3.5-code1029-debug.apk`
+- 体积 **7,217,434 B**（上一版 1028：7,216,666 B，+768 B）
+- sha256 `ef82383a94ff08da4b68d9d6fd2bde7c0308b6a2bbdcd6177718765f06e6002a`
+- `versionCode 1029` / `versionName 2.3.5`（不变）/ `minSdk 24` / `targetSdk 36` /
+  `compileSdk 36`
+- 未提交、未打 tag、未发版 —— 由 Ari 决定何时发。
+- 安装提示：装过更高 code 的包须先卸载（`versionCode` 只能升不能降）。
+
+## 2.3.5 / code 1030 —— 设置页第四轮：预览上下各藏一行 / 页签与「对齐」对齐 / 缓存清理拆两枚 / 底栏彻底去容器
+
+> 依据：Ari 2026-10-19 15:01 的真机录屏（`Record_2026-10-19-15-01-12_c54783fc…mp4`）
+> ＋ 日志包（`LSPosed_20261019_150155.zip`）＋ 一张折叠态截图，九条指令。
+> 基线：code 1029；版本号仍是 2.3.5，只升 code。
+
+### 【一】预览窗折叠：上下各藏一行，而不是「下面藏两行」
+
+Ari 的原话是「缩小时应该上下各隐藏一行非活动行，而不是隐藏下方两行（英文状态下迷你预览窗显示行不全）」。
+
+看上去像「窗口位置错了」，实际是**窗口取的行对、上沿的裁切口不对**：
+位移只把第 1..3 行顶到窗口顶部，而窗口顶部那条 `paddingTop` 高的带子里，
+落的还是**第 0 行的尾巴**。中文一行短、尾巴细，看不出；英文长句换行后那行有两行高，
+露出来的半截就成了一整条英文 —— 观感自然变成「下面藏了两行」。
+
+- 窗口下标改成活动行 **±1**（1..3），上下各一行；
+- 上沿不再靠位移躲，改成**按内容坐标** `setClipBounds`：
+  `clipTop = 前面各行高之和 + 容器 paddingTop`，`f` 线性收口（`f=0` 不裁、`f=1` 正好切在行边界）；
+- 加 `OnLayoutChangeListener` 重量：英文换行数随宽度变 ⇒ 三行窗口的高度必须跟着变，
+  否则第三行被切半行。用 `mPreviewMeasuredW` 挡住递归。
+
+### 【二】「字幕 / 行态 / 排版」离卡片上端太近
+
+外观卡内层 `paddingTop` 10dp → **16dp**，与左右内边距同宽，按钮不再贴卡片上沿。
+
+### 【三】页签高度与配色改成和「对齐」那排一致
+
+- 组高 48dp → **40dp**（`CONTROL_H_DP`）。1028 当初抬到 48 是为了点准，
+  但同一张卡里两排胶囊一高一矮反而更刺眼；XML 里写 40dp 只给设计稿对齐，
+  **真值仍以代码 `dp(CONTROL_H_DP)` 为准**，常量一改两排同步走；
+- 已选 = `colorPrimary` / `colorOnPrimary`，未选 = `colorSecondaryContainer` / `colorOnSecondaryContainer`；
+- 外侧圆角 = `CONTROL_H_DP / 2f`（与对齐按钮同一个表达式）。
+
+### 【四】「对齐」搬到「悬浮窗颜色」上面
+
+排版面内顺序改为：行距 → 换行额外行距 → **对齐** → 悬浮窗颜色。
+`mRowAlign` 只建一次，整体搬位（不是复制）。
+
+### 【五】关开关不再清字幕缓存
+
+`onExperimentalToggled(false)` 里原来会顺手发一次 `sendCacheClear` 并挂「已清理」提示 ——
+关一个功能开关就把用户攒的缓存删掉，代价与收益完全不对等。
+现在这条连带路径整段删掉：**关开关只是关功能，数据留着**。
+（「清除已缓存字幕」按钮那条链不动，仍然只由用户主动点。）
+
+### 【六】缓存清理拆成两枚，各管各的
+
+文案：`CACHE_CLEAR`「清除所有字幕缓存 / 清除所有字幕快取 / Clear all subtitle cache」
+→ **「清除已缓存字幕 / 清除已快取字幕 / Clear cached subtitles」**，
+确认弹窗与完成提示同步改，并各加一句「预取的字幕文件不受影响」。
+
+UI：原来单枚整行按钮 → **两枚并排连通组**（各占一半、外侧 = 组高一半、内侧 8dp）。
+
+链路（正文与预取是两套存储，必须两条 action）：
+
+- 正文：`ACTION_SUBTITLE_CACHE_CLEAR`（原有，不动）→ 宿主私有目录 `data.SubtitleCache`；
+- 预取：**新增** `ACTION_SUBTITLE_PREFETCH_CLEAR` → `Protocol` 常量 + `selfCheck()` 登记
+  → `ConfigBus.sendPrefetchClear()` / `handlePrefetchClear()` → `ZiptreePrefetch.clearAll()`
+  （清 `PACKS` + 删 `baseDir()` 下直接子项 + `sIndexLoaded = false`，**不越界**）；
+- 两枚按钮各自有自己的确认弹窗与完成提示，互不冒名。
+
+### 【七】删掉「液态玻璃默认设置」下面那行小字
+
+`addResetRow(..., showHint = false)`。`HINT_LIQUID_GLASS` 常量仍留声明
+（不打断历史判据），但体内不再引用。
+
+### 【八】底栏那层「底部覆盖吸底」 —— 这次换掉控件，不再擦属性
+
+Ari 的描述很关键：「**是页面向下滑到液态玻璃卡片时出现，往上滑又消失**」。
+随滚动状态出现/消失 ⇒ 它不是 XML 里的背景属性，而是控件在**自身状态变化时把
+`MaterialShapeDrawable` 重新装回来了** —— 1029 那轮清 `background` / `backgroundTint` /
+`elevation` / `padding` 四个属性治不住它，因为清的是属性、不是它后来自己塞进去的绘制。
+
+本轮直接换掉容器类型：`FloatingToolbarLayout` → 普通 **`LinearLayout`**。
+不是「又擦了一遍属性」，是**根本没有那个控件**，它没有机会再装回去。
+
+`bottom_bar` 的 id、`mBottomBar` 引用、`dirty_dot` / `dirty_label` / `overflow_button` /
+`save_button` 全部保留，吸底定位（`layout_gravity="bottom|end"` + `marginBottom 12dp`）不变；
+溢出键继续自带圆形底（去掉容器后靠它自己站住）。
+
+### 【九】其他卡片下方留白过多
+
+滚动区 `paddingBottom` 96dp → **12dp**。96dp 是 1028 给浮动工具条让位用的，
+现在底栏是自己的普通容器、高度已知，不再需要那么大的空档；12dp 只留给彩蛋那行。
+效果是**卡片贴底**，不再有约 1/5 屏的空白。
+
+### 【验证】
+
+- 源码层 `verify_1030_src.py`：**42/42**（A 预览 7 / B 页签 6 / C 顺序 3 / D 关开关 4 /
+  E 缓存拆分 6 / F 小字 2 / G 底栏贴底 5 / H 版本 5 / I 边界 4）。
+- 产物层 `verify_1030.py`：**36/36，20 个有区分力锚**（新包有 / 旧包无）：
+  四语文案改名（含繁体旧名清干净）、预取清理四个调用点
+  （`clearAll` / `deleteRecursively` / `handlePrefetchClear` / `sendPrefetchClear`）
+  ＋ ACTION 常量串、`onExperimentalToggled` 方法体里 `sendCacheClear` 已绝迹、
+  底栏标签名不再是 `FloatingToolbarLayout` 且四属性消失而吸底仍成立、
+  页签 40dp / 滚动区 12dp / 外观卡 16dp。
+  **5 条如实标注无区分力**：预览上下各藏一行（纯运行时几何）、
+  页签着色（运行时 `ColorStateList`）、对齐行顺序（代码顺序）、
+  删液态玻璃小字（`HINT_LIQUID_GLASS` 字符串两包都在，枚举常量未被 R8 裁）、
+  两枚按钮连通组（运行时逐角 `ShapeAppearanceModel`）。
+- 两条**历史脚本按新设计有意改写**（并在脚本里写明原因）：
+  `verify_1029_src.py` 的 B5（连通组外侧半径）、C1–C4（底栏容器不存在 + 零背景）、
+  F1（版本钉死 → 下界）；`verify_1028_src.py` 的 B2 / E1 / E2 / E5（页签 48→40、
+  底栏改判「浮起容器 + 无样式无背景」、让位 96→12），
+  其中 E2 踩到一个坑：**注释里正好在解释「为什么不用 FloatingToolbarLayout」**，
+  判据被自己的说明文字打死 ⇒ 判「不存在」前先剥 XML 注释。
+  `verify_1003_src.py` 一条（小字已删，改判「恢复默认行 showHint=false」）。
+- 全量：44 个脚本 **33 PASS / 4 FAIL / 1 SKIP / 6 ENVBLOCK**。
+  4 条 FAIL（`1021_src` / `1020_src` / `1019_src` / `1007_src`）都是
+  **基线 HEAD 上本来就有的**历史遗留（历史锚被后续合法改动作废），上一轮已在干净 HEAD 上证实，
+  不是本轮回归；6 个 ENVBLOCK 是临时文件清理撞上环境的批量删除保护，**不是判据失败**。
+
+### 产物
+
+- `DLsiteFloat-2.3.5-code1030-debug.apk`
+- 体积 **7,220,861 B**（上一版 1029：7,217,434 B，+3,427 B）
+- sha256 `cfdbf97be6f7302f8a2f3995001e6075cb9921e96f993fed5c1b28f1adeeb55f`
+- `versionCode 1030` / `versionName 2.3.5`（不变）/ `minSdk 24` / `targetSdk 36` /
+  `compileSdk 36`
+- 未提交、未打 tag、未发版 —— 由 Ari 决定何时发。
+- 安装提示：装过更高 code 的包须先卸载（`versionCode` 只能升不能降）。
+---
+
+## 2.3.5 / code 1031 —— 设置页第五轮：行距统一 / 预览几何重算 / 实验卡空白 / 桌面图标隐藏
+
+> 依据：Ari 2026-10-19 16:25~16:41 的六张真机截图，十条指令。
+
+### 【一】三个页签内选项间距不一致（「排版」特别挤）
+
+差异不在「行与行之间」，而在**每一行的尾部** —— 三种行把内容在自己的热区里居中，
+而热区高度不一样：
+
+| 行类型 | 控件高度 | 内容在行内的落位 |
+|---|---|---|
+| 色板行 | 34dp 色点热区 | 居中 ⇒ 视觉底边离行底约 6dp |
+| 滑块行 | 48dp 触摸区 | 轨道居中 ⇒ 约 2dp |
+| 分段行 | 40dp 实心轨道 | 贴死行底 ⇒ 0dp |
+
+所以「加行间 spacer」治不了，越加越怪。现在统一三个量：
+
+- `ROW_LABEL_TAIL_DP = 6`（标签与控件的固定间距）
+- `ROW_TAIL_GAP_DP = 6`（控件底边到行底的留白）
+- `ROW_SPACER_DP = 12`（行间留白，原 9dp）
+
+`addSegmentedRow` 给 label 加 6dp 下 padding、给轨道加 6dp 下 margin；`addSliderRow`
+在 header 之后插一个高 6dp 的占位；`addColorRow` 从写死的 `dp(6)` 改为同一个常量。
+
+### 【二】迷你预览窗少一行 / 英文活动行显示不全
+
+真因是首次测量的**宽度兜底值**：
+
+```java
+width = widthPixels - dp(32)                       // ← 只扣了卡片 margin
+      - mPreviewLines.getPaddingLeft()
+      - mPreviewLines.getPaddingRight();           // ← 漏了这两项
+```
+
+`preview_lines` 自己还有左右各 14dp 的 padding，于是推算出的可用宽度比真实值**宽 28dp**。
+英文长句因此少换一行 ⇒ 行高被低估一行 ⇒ 窗口短一截，活动行被切掉下半。简中 / 繁中句子短，
+宽度有余量所以「少换行」不明显，但窗口同样偏短 ⇒ 第三行被裁。
+
+同时把窗口几何从「两个口径各算一半」改成**全读真实布局坐标**：
+
+- 第 1 行顶 = `getChildAt(WINDOW_FIRST).getTop()`
+- 第 3 行底 = `getChildAt(WINDOW_LAST).getBottom()`
+- 卡高 = 两者之差（**净高、不含容器 padding**）；容器上下各 18dp 不再计入
+
+裁剪区间也拆成上下两个独立量：上边界 `mPreviewClipTop`、下边界 `mPreviewClipBottom`，
+折叠插值 `f` 时两边一起线性收口（原来只收上边、下边固定为满高，所以折叠后底部总留半行）。
+
+第三件事是**时序**：`bindViews` 里原先在 layout 之前就调用 `applyPreviewCollapsed`，
+此时 `getHeight()` 全是 0 或推测值，算出的裁剪区间必然错。现在折叠搬到
+`mPreviewCard.post(...)` 里做 —— 布局完成后再收。
+
+### 【三】四张卡内上下距离不一致
+
+上一轮只把「字幕外观」卡改成 16dp，另外三张还是 6dp。现在四张卡
+（字幕外观 / 液态玻璃 / 实验性功能 / 其他）一律 `paddingTop = paddingBottom = 10dp`，
+XML 与 `CARD_PAD_TOP_DP` / `CARD_PAD_BOTTOM_DP` 同值 —— 改一边另一边立刻对不上。
+
+### 【四】重新打开实验性功能后，清除按钮下方出现巨大空白
+
+Ari 给的判据很关键：「重启设置页就正常」。重启时这张卡一开始就是 VISIBLE、高度正常；
+重新打开时是 **GONE → VISIBLE**，而 `pinCardLastBottom` 是**一次性**监听：
+
+```java
+curGap        = group.getHeight() - bottomY;      // 卡 GONE 时 group 高 = 0
+bottomMargin  = curGap - last.getHeight();        // ⇒ 0 - bottomY - h = 巨大负数
+```
+
+负 margin 被当成「往上顶」，父容器的剩余空间全被这张卡吃掉 ⇒ 下面是巨大空白。修法两条：
+
+1. 监听开头加高度守卫：`group.getHeight() <= 0 || last.getHeight() <= 0` 直接 return
+2. GONE → VISIBLE 之后重跑一次 `repinExperimentalLast()`（先把自己上一轮的 margin 归零再重算）
+
+### 【五】英文模式下「清除预存字幕」按钮向下位移
+
+两枚按钮原本都是 `wrap_content`，英文标签 `Clear prefetched subtitles` 换了两行把那枚撑高，
+旁边那枚还是单行 ⇒ 两个按钮底边不齐、整排看着向下坠。
+
+修：整排钉死 `CONTROL_H_DP`，两枚都 `MATCH_PARENT` + `setSingleLine(true)` + 尾部省略；
+同时按 Ari 的要求把英文文案缩短 —— `Clear cached` / `Clear prefetch`，缓存说明小字也压成一行：
+
+> Played tracks are cached automatically. The oldest entries are removed first at the storage limit.
+
+### 【六】页头副标题
+
+`DLsiteSound悬浮窗·状态栏字幕外观调整` → `DLsiteSound 悬浮窗 · 状态栏字幕模块`；
+英文同步从长句缩到一行：`DLsiteSound floating window · status bar subtitles`。
+
+### 【七】桌面图标名去掉「设置」
+
+`settings_label` → `DLsiteFloat`。⚠️ 只动 `settings_label`，`app_name` 不动 ——
+两者在清单里是不同位置（application label vs alias label），但**字符串值必须一致**，
+否则设置页标题栏和桌面图标会显示成两个名字。
+
+### 【八】新增「隐藏桌面图标」开关
+
+摆在「其他」卡里、调试日志开关**上面**。
+
+关键取舍：**不能直接禁用 SettingsActivity**。`setComponentEnabledSetting()` 只能按组件开关，
+把 SettingsActivity 禁掉的话，LSPosed 里那个「打开」按钮也会一起失效 ——
+用户再也没法把开关关回去，是自我锁死。所以桌面入口独立成 `activity-alias`：
+
+```xml
+<activity-alias
+    android:name="io.github.ariinyume.dlsitesoundfloat.ui.LauncherAlias"
+    android:targetActivity="io.github.ariinyume.dlsitesoundfloat.ui.SettingsActivity"
+    android:enabled="true" android:exported="true"
+    android:icon="@mipmap/ic_launcher"
+    android:label="@string/settings_label">
+  <intent-filter>
+    <action android:name="android.intent.action.MAIN" />
+    <category android:name="android.intent.category.LAUNCHER" />
+  </intent-filter>
+</activity-alias>
+```
+
+开关只启停这个 alias，`DONT_KILL_APP` 保住进程；并且**只在状态真的不同时才写**
+（`getComponentEnabledSetting(alias) == want` 就短路），否则每次进设置页同步状态都会让图标闪一下。
+状态存 UI prefs，点下即生效、**不参与「保存设置」**。
+
+### 【九】保存按钮上抬 + 悬浮阴影
+
+- `bottom_bar` 的 `layout_marginBottom` 12 → **28dp**
+- `mSaveButton` 显式 `setStateListAnimator(null)` —— MaterialButton 自带的 stateListAnimator
+  **只在按压时**给 elevation，所以平时看起来是「贴在纸上」而不是「浮在纸上」
+- 恒定 `setElevation(dp(8))` + `setTranslationZ(dp(2))`；溢出键 4dp（次要按钮浅一档）
+- `bottom_bar` 加 `clipChildren="false"` / `clipToPadding="false"` —— 阴影画在盒子外，
+  父级裁剪的话只剩硬边
+
+> 踩坑：这两个属性第一次写进了代码（`mBottomBar.setClipChildren(false)`），编译报
+> 「找不到符号」—— `mBottomBar` 声明成 `View`，而这两个方法在 `ViewGroup` 上。改由 XML 承担。
+
+### 【十】LSPosed 简介
+
+`app_description` → `DLsiteSound 悬浮窗 & 状态栏字幕模块`；新建 `values-en/strings.xml`
+提供英文版 `DLsiteSound Floating Window & Status Bar Subtitle Module`。
+（此前没有 `values-en`，英文环境下显示的是中文。）
+
+### 【验证】
+
+- 源码层 `verify_1031_src.py`：**59/59**（A 行距与卡内距 9 / B 预览几何 9 / C 实验卡空白 5 /
+  D 缓存按钮 6 / E 文案与清单 7 / F 图标隐藏 7 / G 保存栏 4 / H 版本 5 / I 边界 4）。
+- 产物层 `verify_1031.py`：**31/31**，硬锚（新包有 / 旧包无）：`Clear cached subtitles`
+  计数 2→1、`Clear prefetched subtitles` 2→1、`paddingBottom=10dp` 0→4 处、
+  `paddingTop=10dp` 1→5 处、底栏 `12dp → 28dp`、`clipChildren=false` 0→1、
+  四个新方法（`applyLauncherIconState` / `buildLauncherIconRow` / `repinExperimentalLast` /
+  `onHideLauncherIconToggled`）旧包全无。
+  **5 条如实标注无区分力**：预览窗折叠几何（纯运行时像素计算）、
+  行尾空隙两个常量（Java 里 `dp()` 现算，无资源条目）、保存键 8dp / 溢出键 4dp 阴影
+  （`setElevation` 在 onResume 链上执行，非 XML）、缓存按钮单行 + 等高（`setSingleLine` /
+  `MATCH_PARENT` 均为代码调用）、`pinCardLastBottom` 的高度守卫（逻辑分支，只在源码层验）。
+- 两条**历史脚本按新设计有意改写**（脚本内写明原因）：
+  `verify_1030_src.py` 六处 —— A2（ClipBounds 第四参不再是 full）、A4（改判
+  `mPreviewClipTop = winTop`）、A5（有效性判据简化）、B6（16dp → 10dp）、
+  E1 / E2（英文标签缩短），仍 **42/42**；
+  `verify_1029_src.py` 一处 —— A6 改为接受 `getChildAt(WINDOW_FIRST)` /
+  `getChildAt(WINDOW_LAST)` 两个真实边界，仍 **40/40**。
+- 全量：46 个脚本 **7 FAIL / 1 SKIP / 4 ENVBLOCK**。7 条 FAIL **都不是本轮回归**：
+  `1021.py` / `1020.py` / `1019.py` 是**缺对照 APK**（`gradle clean` 把历史包清了），
+  `1021_src` / `1020_src` / `1019_src` / `1007_src` 是**基线 HEAD 上本来就有的**
+  历史遗留（历史锚被后续合法改动作废，上一轮已在干净 HEAD 上证实）。
+  4 个 ENVBLOCK 是临时文件批量删除撞上环境的删除保护，**非判据失败**。
+
+### 产物
+
+- `DLsiteFloat-2.3.5-code1031-debug.apk`
+- 体积 **7,223,716 B**（上一版 1030：7,220,861 B，+2,855 B）
+- sha256 `8b8b1f1aa76f0ddfade9341cabe80708441f246bbcb423f91045fb630e2624e7`
+- `versionCode 1031` / `versionName 2.3.5`（不变）/ `minSdk 24` / `targetSdk 36` / `compileSdk 36`
+- `application-label: 'DLsiteFloat'`
+- 未提交、未打 tag、未发版 —— 由 Ari 决定何时发。
+- 安装提示：装过更高 code 的包须先卸载（`versionCode` 只能升不能降）。
+
+> ⚠️ **桌面图标改动要等桌面重读**：改 `settings_label` 或启停 alias 之后，部分桌面
+> （MIUI / HyperOS 尤甚）不会立刻刷新，需要等一下或重启桌面。这是系统缓存，不是模块问题。
+> ⚠️ 索引 schema 仍为 4，升级后缓存**不清零**（与 1030 一致）。
+
+## 2.3.5 / code 1032 —— 设置页第六轮：预览窗压扁根因 / 图标成套重画 / 桌面图标自我锁死修复
+
+> 1031 真机录屏复核后 Ari 提的九条。其中第六条是**事故级**：打开「隐藏桌面图标」
+> 之后重启，桌面图标与 LSPosed 里的「打开」**一起消失**，模块再也进不去。
+
+### 【一】「排版」首个选项离页签更近，另三张卡不是
+
+现象只在第一张卡出现：`appearance_tabs` 的下外边距是 6dp，而其余三张卡是
+`CARD_PAD_TOP_DP`（10dp）—— 第一张卡的页签和它的第一行之间天然少 4dp。
+修法：页签 `layout_marginBottom` 6 → **10dp**，改用同一个常量，
+以后改一处两边一起动。
+
+### 【二】迷你预览窗：简中 / 繁中从**第二行**起不显示，英文**五行全不显示**
+
+🔴 这是 1031 引入的**新回归**，根因不在裁剪、不在宽度，而在**父级把内容量矮了**。
+
+- 1031 为了「折叠时上下各藏一行」，把 `preview_card` 的高度改成了「三行净高」；
+  而 `preview_lines` 是它的**直接子 View**、高度 `wrap_content`。
+- FrameLayout 于是用 `AT_MOST(三行净高)` 去量这个竖直 LinearLayout：**每一行只能拿到
+  「上一行用剩下的配额」** ⇒ 第 1 行够用、第 2 行起被压扁、第 4/5 行归零。
+- 中文首行短，所以只丢后面几行；**英文首行就换行、一次吃光配额 ⇒ 五行全没了**。
+  两个症状、一个原因。
+
+修法：折叠态把 `preview_lines` 的 `layout_height` 钉成 `mPreviewFullH`（`EXACTLY`），
+溢出交给卡片的 `clipChildren` 去裁；展开态放回 `WRAP_CONTENT`。
+⚠️ 钉高度必须发生在**改卡片高度之前**，否则那一帧还是被压的；量不出高度时也要
+`releasePreviewContentHeight()`，不能把脏状态留到下帧。
+
+### 【三】所有卡片控件下边距改成 4
+
+`ROW_TAIL_GAP_DP` 6 → **4**，滑条行与色板行**两处**都吃这个常量（`addSliderRow` 与
+`addColorRow` 的 8 参重载），避免只改一处。
+（1031 那份「行尾 6dp」的判据随之失效，已在历史脚本里同步改写。）
+
+### 【四】小图标有粗有细 + 「隐藏桌面图标」没有图标
+
+不是调几个 `pathData` 能解决的 —— 1025 那批是**手绘实心块**，3dp / 4dp / 2dp 混用，
+绘制范式本身不统一。本轮把 15 枚全部重画到同一模板：
+
+- **24×24 viewport**、`fillColor="#00000000"`、`strokeWidth="2"`、
+  `strokeLineCap="round"`、`strokeLineJoin="round"`；
+- 粗细从此由**一个参数**保证，加新图标照模板写就不会再走散；
+- 旧 Material 实心 `ic_palette` **删除**，换成 `ic_ui_palette` 并入成套；
+- 新增 `ic_ui_launcher`（圆角方框 + 斜杠），给「隐藏桌面图标」那一行。
+
+### 【五】保存设置按钮再上抬
+
+底栏 `layout_marginBottom` 28 → **48dp**。
+
+### 【六】🔴 打开「隐藏桌面图标」后，桌面与 LSPosed 的「打开」一起没了
+
+**这是本轮最严重的一条。** 1031 的实现是禁用 `activity-alias`；而
+`getLaunchIntentForPackage()` 在找不到 `MAIN + CATEGORY_LAUNCHER` 时返回 **null**，
+LSPosed 与系统「应用信息」页的「打开」按钮都靠它 ⇒ 开关一开，**包里没有任何东西能
+把设置页叫起来**，等于把自己锁在门外。
+
+三层修法：
+
+1. **包里留一条独立于 alias 的入口**：`SettingsActivity` 加常驻 intent-filter
+   `MAIN + CATEGORY_INFO`。`CATEGORY_INFO` 不是桌面分类 ⇒ **桌面不会多出图标**，
+   但 `getLaunchIntentForPackage()` 的第一优先分类**正是 INFO**，能找到就不返回 null。
+2. **运行期自检**：隐藏前先解一次 launch intent，如果解出来的组件**正是 alias 本身**
+   （说明没有兜底入口），**拒绝隐藏**、把开关弹回去并 Toast 说明。
+3. **回填也过一遍**：进设置页读开关时同样校验，发现落盘是 `true` 但已无兜底入口，
+   直接把落盘纠正回 `false`，别让事故状态一直留着。
+
+⚠️ **已经踩进去的用户**：1031 那版隐藏后只能靠 `adb` 或重装恢复；本轮之后不会再锁死。
+
+### 【七】「字幕 / 行态 / 排版」离卡片上端又太近
+
+`card_main` 内层 `paddingTop` 10 → **16dp**。
+
+### 【八】保存设置按钮四个角有直角阴影、下方看得出平切
+
+阴影 `elevation` 画在控件盒子**外面**，祖先链上**任何一层** `clipChildren=true` 都会在
+矩形边界处把它切掉。1031 只关了 `bottom_bar` 一层，上面还压着三层，于是四角被削成
+直角、底部被平切。本轮把 `clipChildren` / `clipToPadding` **四层全关**：
+`settings_root`、`settings_coord`、`bottom_bar`、`bottom_bar` 内的 wrap_content 容器。
+
+### 【九】LSPosed 应用简介补上英文
+
+改为 `DLsiteSound 悬浮窗 & 状态栏字幕模块 / DLsiteSound Floating Window & Status Bar Subtitle Module`。
+
+🔴 **不能**拆成 `values/` + `values-en/` 两份 —— `ApplicationInfo.loadDescription()` 走的是
+PackageManager **当前配置**，拆开只会在一个语言下显示一份。正解是把中英**合并成一串**，
+在两个 `values` 目录里写**逐字相同**的内容。
+
+### 【验证】
+
+- 源码层 `verify_1032_src.py`：**44/44**（A 页签与卡顶 5 / B 预览压扁修复 6 / C 行尾 4dp 4 /
+  D 图标成套 6 / E 保存栏 6 / F 安全绳 7 / G 简介 3 / H 版本 4 / I 边界 3）。
+- 产物层 `verify_1032.py`：**21/21**，硬锚（新包有 / 旧包无）：`hasFallbackEntry` /
+  `pinPreviewContentHeight` / `releasePreviewContentHeight` 三个方法旧包全无；
+  `ic_ui_*` 资源数 13 → **15**；中文兜底提示串 0 → 1；dex 里已引用 `ic_ui_launcher`。
+  **5 条如实标注无区分力**：控件下边距 4dp（Java `dp()` 现算，无资源条目）、
+  图标「粗细一致」（矢量图二进制按资源 id 存取，纯视觉判）、阴影不再被裁
+  （`elevation` 是运行时栅格化，XML 只能验 `clipChildren`）、预览窗「三行都在」
+  （纯运行时几何，只能验钉高度的方法存在）、页签→首项与卡顶→首项的**观感相等**。
+- **三条历史脚本按新设计有意改写**（脚本内写明原因）：
+  `verify_1025_src.py` 一处 —— I3c 图标枚数 13 → **15**（palette 换代 +1、launcher 新增 +1），
+  仍 **94/94**；`verify_1031_src.py` 五处 —— A4 控件下 6→4、A5 卡内上距 16dp、
+  F3/F4 签名 `void`→`boolean`、F5 `==`→`!=`、G1 底栏 28→48dp，仍 **59/59**；
+  `verify_1030_src.py` 一处 —— B6 改判 `card_main` 16dp 且 `paddingTop="10dp"` 仍 4 处，
+  仍 **42/42**。
+- 全量：48 个脚本 **7 FAIL / 1 SKIP / 5 ENVBLOCK**。
+  · 4 条源码层 FAIL（`1021_src` / `1020_src` / `1019_src` / `1007_src`）：用临时 worktree
+    在**干净 HEAD** 上复跑，同样失败、且失败项**更多** ⇒ 是历史锚被后续合法改动作废，
+    非本轮回归。
+  · 3 条产物层 FAIL（`1021.py` / `1020.py` / `1019.py`）：这几条**只读 APK 参数、与工作区
+    源码无关**，失败表现为 dex 常量表抽取结果为 0 项（2.3.3 老包 9 个 dex、单个
+    `dexdump` 输出 116MB），属工具链在老包上的既有问题。
+  · 5 个 ENVBLOCK 是临时文件批量删除撞上环境的删除保护，**判据未跑完、非判据失败**；
+    `verify_1030.py` 单独复跑 **36/36** 已证。
+
+### 产物
+
+- `DLsiteFloat-2.3.5-code1032-debug.apk`
+- 体积 **7,227,421 B**（上一版 1031：7,223,716 B，+3,705 B）
+- sha256 `c7b33ec04d78d34913d0f5637bf99318d344629410a1ff656172b7d9a19e90cd`
+- `versionCode 1032` / `versionName 2.3.5`（不变）/ `minSdk 24` / `targetSdk 36` / `compileSdk 36`
+- `application-label: 'DLsiteFloat'`
+- 未提交、未打 tag、未发版 —— 由 Ari 决定何时发。
+- 安装提示：装过更高 code 的包须先卸载；**在 1031 里点过「隐藏桌面图标」的用户必须先
+  卸载再安装** —— 旧的 alias 已经被禁用，直接覆盖安装后图标仍然不出现。
+
+> ⚠️ 索引 schema 仍为 4，升级后缓存**不清零**（与 1030 / 1031 一致）。
+> ⚠️ 桌面缓存不是模块问题：改 label 或启停 alias 之后，部分桌面（MIUI / HyperOS 尤甚）
+> 不会立刻刷新，需要等一下或重启桌面。
+
+## 2.3.5 / code 1033 —— 设置页第七轮：卡片底距统一 / 菜单上弹 / 预览窗不再自己弹回完整
+
+> 1032 真机录屏（18:38 / 18:47 两段）复核后 Ari 的八条。核心是**预览窗的两个时序回归**
+> 和**卡片底距的观感不一致**，外加一个「菜单跑到屏幕外」的布局缺陷。
+
+### 【一 + 二】卡片末行底距「跳变」且四张卡不一致
+
+两条是**同一个根因**。1025~1032 的算法是「布局完成后实测，把末行底距收敛到
+**首行字形顶距 × 2**」，而这个目标值取决于 group 自己的 paddingTop：
+
+- `group_main` 没有 padding ⇒ 目标 ≈14dp；
+- `group_liquidglass` / `group_experimental` / `group_misc` 有 10dp ⇒ 目标 ≈34dp。
+
+四张卡差 20dp —— 正是 Ari 说的「液态玻璃 / 实验性 / 其他 比字幕 / 行态更宽」。
+「跳变」则来自实现方式：每次切面都新挂一个 `OnGlobalLayoutListener`，快速切换时多个
+回调在同一次布局后依次触发，后一个读到的 `group.getHeight()` 还是**旧值** ⇒
+各自算出不同 bottomMargin、互相覆盖 ⇒ 一帧内宽窄各来一次。
+
+修法：整个改成**纯常量**（`CARD_LAST_GAP_DP = ROW_TAIL_GAP_DP = 4dp`），
+不测量、不等布局、不看首行。四张卡 + 三个面的总底距 = 4 + 卡片 paddingBottom(10) = **14dp**，
+全页只有这一个口径；旧测量三件套（`topInkGapOf` / `topRelativeTo` / `findFirstTextView`）一并删除。
+
+### 【三】三个页签离卡片上端再远一点
+
+`card_main` 内层 `paddingTop` 16 → **24dp**。只动这一个值 —— 页签 → 首个选项的
+那 10dp 由 `appearance_tabs.marginBottom` 单独负责，两者互不影响。
+
+### 【四】删掉「隐藏桌面图标」下方说明小字
+
+该行回到单行 48dp。安全绳不依赖常驻文案 —— 被拒绝隐藏时仍走 Toast
+（`Strings.HIDE_ICON_UNSUPPORTED`），用户照样知道发生了什么。
+
+### 【五】「重启系统界面」弹出小窗跑到屏幕外 + 圆角
+
+底栏按钮距屏幕底只有 48dp，系统 `PopupMenu` 判定「下方放得下」⇒ 菜单一半被裁在
+屏幕外；而且它的圆角是 framework 的 popupBackground（4dp 档），改不动。
+改成**自绘 PopupWindow**：先 measure 再显式放在**按钮上方 8dp**；容器圆角 16dp（M3E 档）
++ `setClipToOutline(true)` 把水波纹也裁住；上方放不下时才退回下方。
+
+### 【六 + 八】编辑字幕 / 切语言时预览窗自己从迷你弹回完整
+
+真因是 `refreshPreviewMetrics()` 的「坐标可信」判据 `getHeight() >= full`：
+它默认「高度对得上 ⇒ 布局也是按这批子 View 做的」，但行刚被 `updatePreview()` /
+`applyLanguage()` 重建时，`preview_lines.getHeight()` 还是**上一次**的值（折叠态被 pin 着），
+而新的子 View 一个都没 layout 过 ⇒ `getTop()/getBottom()` 全 0 ⇒ 判据为真、取到 (0,0)
+⇒ `winBottom <= winTop` ⇒ 提前 return ⇒ `mPreviewMetricsValid` 留 false
+⇒ `applyPreviewFraction` 走「量不出来 ⇒ 无条件 WRAP_CONTENT」⇒ 弹成完整模式。
+
+修法两条：
+1. metrics 改成 `forceLayout()` + measure + **一律累加** —— 累加只依赖刚量出的
+   `measuredHeight`，与「有没有 layout 过」完全无关；
+2. `applyPreviewFraction` 的兜底分支改成「折叠态沿用上次实测窗口高」，**绝不展开**。
+
+### 【七】连点切换时预览窗回弹
+
+两个 `ValueAnimator` 同时在写 `mPreviewFraction`，后一帧被前一个覆盖。
+新增字段 `mPreviewAnim`，开新动画前先 `cancel()` 上一条。
+
+### 【验证】
+
+- 源码层 `verify_1033_src.py`：**36/36**（A 底距常量 6 / B 页签上距 3 / C 隐藏图标小字 3 /
+  D 菜单 6 / E 预览窗 8 / F 版本 5 / G 边界 5；另有 3 项如实标注无区分力）。
+- 产物层 `verify_1033.py`：**16/16**，硬锚：`PopupWindow` 引用 1→2、`PopupMenu` 2→1、
+  旧测量三方法 `1→0`、五个新字段（`CARD_LAST_GAP_DP` / `MENU_RADIUS_DP` / `MENU_ITEM_H_DP` /
+  `MENU_ANCHOR_GAP_DP` / `mPreviewAnim`）旧包全无、`getTextBounds` 不增；
+  `paddingTop=24dp` 0→1（10dp 仍 4 处）、四卡 `paddingBottom=10dp`×4。
+  **5 条如实标注无区分力**（底距观感 / 跳变消失 / 圆角观感 / 菜单位置 / 预览不弹回）。
+  ⚠️ PopupWindow/PopupMenu 两类的引用**不是从 0 开始**（三方库各占一处）⇒ 判据改判**增量**，
+  不能判「新包有 / 旧包无」（那样会假 FAIL）。
+- **五条历史脚本有意改写**（脚本内写明原因）：
+  `verify_1032_src.py` 两处 —— A4 上内距 16→24、D6 生成器脚本留档改判「一次性脚本已清理」，
+  仍 **44/44**；`verify_1031_src.py` 四处 —— A5 上内距 24、B3 真实坐标→累加、B7 反向守旧判据消失、
+  C1 底距改纯常量，仍 **59/59**；`verify_1030_src.py` B6（24dp），仍 **42/42**；
+  `verify_1029_src.py` A6（接受累加形态），仍 **40/40**；`verify_1028_src.py` E9（PopupWindow），
+  仍 **42/42**。
+- `run_all_verify.py` 登记 1033 两条 + `NEEDS_APK['verify_1033.py']=(1033,1032)`，现共 **50 个**。
+
+### 产物
+
+- `DLsiteFloat-2.3.5-code1033-debug.apk`
+- 体积 **7,227,458 B**（上一版 1032：7,227,421 B，+37 B）
+- sha256 `e6358c7f85f598aa83702044c47170882540ac03a74bfb9098ca04461a9258e1`
+- `versionCode 1033` / `versionName 2.3.5`（不变）/ `minSdk 24` / `targetSdk 36` / `compileSdk 36`
+- `application-label: 'DLsiteFloat'`
+- 未提交、未打 tag、未发版 —— 由 Ari 决定何时发。
+- 安装提示：本轮无清单 / 组件变更 ⇒ 可直接覆盖安装（不像 1031→1032 需要先卸载）。
+
+> ⚠️ 索引 schema 仍为 4，升级后缓存**不清零**（与 1030 / 1031 / 1032 一致）。
+
+## 2.3.5 / code 1034 —— 设置页第八轮：吸顶不漏状态栏 / 弹窗阴影对齐保存键 / 说明改挂标题下 / 四卡底距拉平 / 四条历史判据收口
+
+> 1033 真机录屏与截图复核后 Ari 的五条。四条观感 + 一条验证债清偿。
+
+### 【一】状态卡内容漏进状态栏
+
+预览窗吸顶后继续上滚，页头行与状态卡的内容会画进状态栏区域。根因是
+`settings_coord` 的 `clipChildren="false"`（v1.5 建档就有的样板写法）：
+AppBarLayout 上移后越出 coord 顶界的部分不被裁，直接画进根布局为状态栏
+留出的 top padding。恢复 `clipChildren="true"` 后滚出顶界的内容被切在
+状态栏下沿，状态栏处只剩页面纯底色。投影链核对过：保存键投影走
+「内容容器 → bottom_bar → settings_root」，不经过 coord，不受影响；
+顺手把 1032 注释里「投影链含 settings_coord」的口径笔误改正。
+
+### 【二】「重启系统界面」弹窗阴影对齐保存键
+
+PopupWindow 的影子轮廓跟着 backgroundDrawable 的 outline 走 —— 原来给的是
+透明 `ColorDrawable`（矩形轮廓），圆角四角下面露出直角影子且浮得偏轻。
+改成把同款 16dp 圆角 `GradientDrawable` 直接交给 PopupWindow 当背景
+（影子轮廓跟随圆角），elevation 6 → 8dp 与保存键同档。
+
+### 【三】「环境背景亮度」「通透度」说明改挂标题下
+
+两行的说明小字从「滑条下方独立 TextView」改为行头副标题
+（`supportingForRow` 查表新增两行），与「字幕间行距」同位；文案直接复用
+既有 `*_HINT` 三语枚举零新增；`mHintBackdropLum` / `mHintTransparency`
+两字段保留声明不再赋值（同 `mHintLiquidGlassReset` 先例，护历史判据）。
+
+### 【四】四张卡可见底距拉平
+
+实验性功能 / 其他两卡以**按钮条**收尾（按钮吃满整行，盒底=墨迹底），
+可见底距 14dp；字幕外观 / 液态玻璃以「恢复默认」行收尾（48dp 行内垂直
+居中 32dp 胶囊，按钮下藏 8dp 不可见空隙），可见底距 22dp —— 正好差 8dp，
+即 Ari 说的「前两者更窄」。新增 `CARD_LAST_BTN_INSET_DP = 8` 墨迹补偿，
+只允许经 `pinCardLastBottom(group, last, extraInkDp)` 消费；实验卡
+GONE→VISIBLE 的重钉走同一口径。四卡可见底距拉平为 22dp。
+
+### 【五】4 FAIL 历史判据收口
+
+`verify_1007 / 1019 / 1020 / 1021` 四脚本逐条回源核实，全部是后续轮次
+**合法重构**让旧锚失配、非回归：1023 预取并列括号（R5/T9/离线直读）、
+1024 作品维桶装（补盖写索引 + 同身份让位）、未命中计数插入（身份未知早退
+正则）、1031 英文压缩（V3）。判据全部改写为新形态并在脚本内注明。
+另：本轮横幅履历按九段（①..⑨）书写 —— 1033 只写了七段，是三脚本
+「九段判据」的共同 FAIL 源；历史段按「追加式不覆盖」保持原样。
+
+**口径**：versionName 2.3.5 不变、code 1033 升 1034、label 1019.10；
+无清单/组件变更、INDEX_SCHEMA 仍为 4 ⇒ 可从上一版直接覆盖安装。
+
+## 2.3.5 / code 1035 —— 设置页返工：吸顶漏状态栏改用渲染层裁剪根治
+
+> 1034 真机录屏复核：状态卡内容依旧漏进状态栏（与系统时钟重叠）。
+
+### 根因修正
+
+1034 把 `settings_coord` 的 `clipChildren` 恢复 true，包内属性核对无误，但真机实测
+AppBarLayout 收起时 Behavior 位移越出 coord 顶界的部分**照样画进状态栏**——传统
+`clipChildren` 对这种位移在硬件渲染路径下不可靠（判据「属性进包」≠「绘制结果正确」）。
+
+修法换成 RenderNode 级裁剪：
+
+- 给 `mCoord` 铺「页面大底色」（与 `mRoot` / `mAppBar` 绑同值）：既补齐
+  `clipToOutline` 需要的 outline 来源（outline 由背景提供），又把裁剪线两侧底色绑死；
+- `mCoord.setClipToOutline(true)`：outline 裁剪作用在渲染节点层、对整棵子树生效，
+  吸顶收起越出顶界的部分一律切在 coord 矩形内，状态栏处只剩根布局纯底色。
+
+副作用核对：需要溢出 coord 的只有 bottom_bar（它是 coord 的**兄弟节点**，不受影响）；
+卡片投影横向有 16dp 边距兜着，裁剪范围与 1034 恢复 clipChildren=true 后完全一致。
+
+### 常开横幅纪律（本轮踩坑）
+
+常开横幅（`XposedCompat.log`）全期**只许一行** = 当前 code；历史段只进 `LogGate.debug`
+履历行。本轮误加第二条常开行被 verify_1018 / 1007 / 1004 当场拦下，已改为「替换不改行数」。
+
+**口径**：versionName 2.3.5 不变、code 1034 升 1035、label 1019.11；无清单/组件变更、
+INDEX_SCHEMA 仍为 4 ⇒ 可直接覆盖安装。
+
+## 2.3.5 / code 1036 —— 设置页返工：吸顶区随滚动变卡片色根治（liftOnScroll）
+
+> 1035 真机录屏复核：预览窗吸顶后，其周围颜色随滚动进度渐深成「卡片色」，与恒为
+> 页面底色的状态栏脱节。
+
+### 根因与修法
+
+逐帧采样（21:44 录屏）：吸顶区色带页顶 249 → 已滚 243 → 滚深 237，状态栏恒 249。
+渐变来源是 **Material AppBarLayout 的 `liftOnScroll` 抬升效果**（M3 默认行为）：内容一滚
+自动给 appbar 叠加 elevation overlay，随滚动量渐显 —— 非项目代码铺色。
+
+**取 Ari 方案 B（吸顶区不变色）**：appbar 显式 `app:liftOnScroll="false"`，吸顶区恒为
+applyPageBackground 铺的页面大底色，与状态栏 / 根布局同值，任何滚动位置都无色差。
+
+**方案 A（状态栏跟随渐变）不取**：targetSdk 36 强制 edge-to-edge，`setStatusBarColor`
+在 Android 15+ 已废弃失效，只能画假状态栏色带模拟 —— 多一层且与 §1.16「状态栏区域
+不染色」既有口径冲突。
+
+### 踩坑补记
+
+履历段收尾句有两条历史判据（verify_1018_src 钉字面「、code (b-1) 升 b。」、
+verify_1019_src 钉正则「版本号 X 不变、code Y 升 Z。」）—— 收尾句必须按模板书写，
+任何前后缀插入都会被拦。
+
+**口径**：versionName 2.3.5 不变、code 1035 升 1036、label 1019.12；无清单/组件变更、
+INDEX_SCHEMA 仍为 4 ⇒ 可直接覆盖安装。
+## 2.4.0 / code 1037 —— 验证链三处根治 ＋ 日常日志降噪
+
+### ① 验证链：dump 坏缓存「永久化」（4 FAIL 的真因）
+
+产物层脚本把 `dexdump -d` 全文落成 `app/build/_dump_<sha12>.txt` 复用，判据只有一条
+「文件存在且 > 1MB」。问题在于：**一次被环境保护中断的 dump 只写完前 1~2 个 dex，
+体积照样远超 1MB** ⇒ 被当成有效缓存，此后每次跑都复用同一份半截文件。
+
+后果不是报错，而是「看起来像大回归」：`verify_1018.py` 一次跑出 **36/45 FAIL**，
+全部落在「这个类在不在包里」——而包里明明有（`DetectGatePolicy` 在 `classes5.dex`）。
+
+修法：dump 写完追加一行 `#DUMPCOMPLETE <dex数>` 哨兵，复用时校验「哨兵在、数对得上」，
+对不上就重算。受影响脚本：`verify_1018/1019/1020/1021.py`。
+
+### ② 验证链：临时文件批量删除 → 进程被掐断（ENVBLOCK 的真因）
+
+每个脚本按 dex 个数逐个 `os.remove` 临时 dex（9 个/包 × 2 个包），一轮 8 个脚本
+累计 **70+ 次删除**，撞上环境的「单轮删除需确认」保护 ⇒ 命令被外部中断，
+判据没跑完 ⇒ `run_all_verify.py` 只能记 ENVBLOCK。
+
+修法：临时 dex 统一落到 `app/build/_dextmp/`，**覆盖写复用、不删除**（该目录由
+`gradle clean` 清），删除次数归零。受影响脚本：`verify_994/995/1018/1019/1020/1021/1029/1030.py`。
+
+### ③ 验证链：`verify_998.py` 不再 SKIP
+
+code 998 的 APK 已不在工作区（历史包只留到 995/996/997/999）。`NEEDS_APK` 新增
+`'latest'` 语义：主验位取**当前最大 code** 的包，判据期望值一个都没放宽 ——
+语义从「本轮回滚生效」升级为「该回滚一直保持到当前最新版」。将来若真改了
+`LiquidGlassDrawable` 的那几个常量，它会 FAIL，那是真信号。
+
+**结果：`run_all_verify.py` 50/50 全绿，0 FAIL / 0 SKIP / 0 ENVBLOCK。**
+
+### ④ 日常日志降噪（主项）：缓存层日志出口是「双写」
+
+`SubtitleCache.log()` 原来同时调 `XposedCompat.log` **和** `LogGate.debug` ——
+等于「调试日志」开关对缓存层完全无效。而它的调用点里：
+
+- `put work=… tc=… idx=…`（每轨写入一条）
+- `stamp duration: …`（每轨盖时长戳一条）
+- `HIT (identity): …`（每次切轨命中一条）
+
+都是**与播放时长成正比**的量。现在拆成两路：
+
+| 出口 | 去向 | 内容 |
+|---|---|---|
+| `log()` | 只走调试开关 | 每轨读写明细、命中判定过程 |
+| `logWarn()` | 常开 | 初始化失败、身份冲突、拒收、文件读不出、用户主动清理（12 个点） |
+
+### ⑤ 另外三组随操作次数增长的日志
+
+1. `ActivityButtonHook`：`activity onResume -> ensureButton` / `onPause -> removeButton`
+   —— 每次进出播放页各一条，且与 `button shown` / `capsule group hidden`（带 reason 与延迟）
+   内容重复 ⇒ 归调试。
+2. `ZiptreePrefetch`：`HIT` / `MISS`（两处）/ `AMBIGUOUS` —— 每次换轨一条，
+   外层 `SubtitleRepository` 已常开落了结论 ⇒ 归调试。
+3. `SubtitleViewHook.dumpTagSamples`：一次倒出几百字符，锚点全丢时可反复触发 ⇒ 归调试。
+
+另外把 `PlayerPositionHook` 的 `poll tick` 从「手写 `if (LogGate.enabled())` + 常开出口」
+统一成 `LogGate.debug`（**行为不变**，只统一写法）。
+
+### 常开侧守住了什么
+
+挂载与一次性探针（hook/attach/compat/first）、换轨结论（`>>> track changed`、
+`track decision`、`disk/prefetch HIT`）、一切失败与 WARN、用户主动动作（点击、清理）、
+行一致观测的分钟级汇总（每 60s 一行，Ari 明确要的尺子）。
+
+**口径**：版本号 2.3.5 升 2.4.0、code 1036 升 1037。
+label 1019.12 升 1020.1（跨日归 1）；无清单 / 组件变更、INDEX_SCHEMA 仍为 4 ⇒ 可直接覆盖安装。

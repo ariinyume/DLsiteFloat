@@ -114,12 +114,22 @@ public enum Strings {
     LANG_NATIVE_ZH_TW("繁體中文", "繁體中文", "繁體中文"),
     LANG_NATIVE_EN("English", "English", "English"),
     FOLLOW_SYSTEM("跟随系统", "跟隨系統", "Follow system"),
+    /**
+     * 【code 1029】语言胶囊的无障碍动作名。
+     *
+     * <p>1029 起语言改成了「点一下换一种」（简中 → 繁中 → EN 循环），
+     * 不再弹选择框 ⇒ 读屏用户必须从 contentDescription 里知道「点下去会发生什么」，
+     * 否则会以为它是个纯展示标签。
+     */
+    LANGUAGE_CYCLE_HINT("点击切换语言", "點擊切換語言", "Tap to switch language"),
 
     // ── 分组标题 ──────────────────────────────────────────────────────
     /** 页头大标题下的副标题（参考稿：DLsiteSound 悬浮窗 · 状态栏字幕外观调整）。 */
-    HEADER_SUBTITLE("DLsiteSound 悬浮窗 · 状态栏字幕外观调整",
-            "DLsiteSound 懸浮窗 · 狀態欄字幕外觀調整",
-            "DLsiteSound floating window · status bar subtitle appearance"),
+    // 【code 1031】Ari：「外观调整」这个说法把模块说小了 —— 它做的是字幕本身，
+    //   不只是外观。改成「字幕模块」，英文同步压短（原句在窄屏上换两行，挤掉了页头）。
+    HEADER_SUBTITLE("DLsiteSound 悬浮窗 · 状态栏字幕模块",
+            "DLsiteSound 懸浮窗 · 狀態欄字幕模組",
+            "DLsiteSound floating window · status bar subtitles"),
     /** 参考稿的「调整预览窗」节标题（预览卡：示例字幕随草稿参数实时变化）。 */
     PREVIEW_TITLE("调整预览窗", "調整預覽窗", "Preview"),
     /**
@@ -137,8 +147,15 @@ public enum Strings {
      * 现在只有一个标题、一张卡，卡内用 connected button group 切三个维度。
      */
     GROUP_APPEARANCE("字幕外观", "字幕外觀", "Subtitle appearance"),
-    /** 卡内 button group 的三段（顺序即视觉顺序，见 {@code buildAppearanceTabs}）。 */
-    TAB_COLOR("颜色", "顏色", "Color"),
+    /**
+     * 卡内 button group 的三段（顺序即视觉顺序，见 {@code buildAppearanceTabs}）。
+     *
+     * 【code 1028 / Ari 指令】第一段由「颜色」改名 **「字幕」**。
+     * 理由（审查稿 P0-①）：这一段里 6 项有 4 项不是颜色（阴影强度 / 半径、
+     * 活动行不透明度、放大倍数），叫「颜色」会让人点进来找悬浮窗颜色却扑空。
+     * 「行态」「排版」两段不动；「悬浮窗颜色」按 Ari 指令**留在排版面**。
+     */
+    TAB_COLOR("字幕", "字幕", "Subtitles"),
     TAB_LINE_STATE("行态", "行態", "Lines"),
     TAB_TYPE("排版", "排版", "Layout"),
     GROUP_MAIN("主字幕 / 活动行调整", "主字幕 / 活動行調整", "Main subtitle / active line"),
@@ -187,6 +204,37 @@ public enum Strings {
             "因功能限制，本開關無法直接撤銷已賦予外掛的 SystemUI 權限，請在 Xposed 外掛管理員中自行撤銷",
             "Due to a platform limitation, this switch cannot revoke the SystemUI permission already granted to the module. "
                     + "Please revoke it manually in your Xposed module manager"),
+    /**
+     * 【code 1031】「隐藏桌面图标」开关（Ari 第 8 条：放在「调试日志」上面）。
+     *
+     * <p>它是**纯界面偏好**，不进 {@code SubtitleConfig}、不发广播、不参与「保存设置」——
+     * 点下即刻生效（走的 {@code PackageManager#setComponentEnabledSetting}）。
+     */
+    HIDE_LAUNCHER_ICON("隐藏桌面图标", "隱藏桌面圖示", "Hide home screen icon"),
+    /**
+     * 「隐藏桌面图标」下方的说明小字。
+     *
+     * <p>⚠️ 【code 1032】口径已改：1031 这里写的是「之后再从 LSPosed 模块列表打开本页」——
+     *    但 1031 的实现根本没给 LSPosed 留入口（alias 一关，整包没有 launcher 入口），
+     *    Ari 实测把自己锁在门外。现在 SettingsActivity 上挂了常驻的 MAIN+CATEGORY_INFO，
+     *    LSPosed 的「打开」**不再受影响**，所以这句直接写「仍可从 LSPosed 打开」。
+     */
+    HIDE_LAUNCHER_ICON_HINT("开启后桌面图标立即消失，本设置页不受影响，之后仍可从 LSPosed 模块列表打开",
+            "開啟後桌面圖示立即消失，本設定頁不受影響，之後仍可從 LSPosed 模組清單開啟",
+            "The icon disappears at once; this page still opens from the LSPosed module list"),
+
+    /**
+     * 【code 1032】隐藏桌面图标被安全绳拒绝时的提示（见
+     * {@code SettingsActivity#applyLauncherIconState}）。
+     *
+     * <p>触发条件：包内除了被禁用的 alias 之外没有别的启动入口。此时若照做，
+     * LSPosed 的「打开」与系统「应用信息」的「打开」会一起消失 —— 用户再也回不来。
+     * 所以宁可不隐藏，也必须如实告诉她。
+     */
+    HIDE_ICON_UNSUPPORTED("此设备不支持隐藏桌面图标，已自动恢复显示",
+            "此裝置不支援隱藏桌面圖示，已自動恢復顯示",
+            "Hiding the app icon isn't supported on this device; it stays visible"),
+
     /**
      * 【2.2.7 / code 979】「调试日志」开关的标签（摆在「其他」卡片：状态栏字幕功能 下方、备份恢复 上方）。
      *
@@ -268,8 +316,10 @@ public enum Strings {
     /** 「字幕缓存」开关下方的常驻说明小字（三语；【code 1016】按 Ari 口径改写）。 */
     SUBTITLE_CACHE_HINT("播放过的音轨字幕会自动缓存，超出储存上限后按最早缓存顺序自动清除",
             "播放過的音軌字幕會自動快取，超出儲存上限後依最早快取順序自動清除",
-            "Subtitles of tracks you have played are cached automatically; "
-                    + "once the storage limit is reached, the oldest ones are removed first"),
+            // 【code 1031】英文缩到一行半：原句 3 行，在 5.5 寸机上会把「清除」那排按钮
+            //   一路顶到下沿，Ari 反馈「文字太长了」。语义不减，只压掉从句。
+            "Played tracks are cached automatically. "
+                    + "The oldest entries are removed first at the storage limit."),
     /** 缓存占用读数：{@code 已缓存 %1$d 轨 · 占用 %2$s / %3$s}。 */
     CACHE_USAGE("已缓存 %1$d 轨 · 占用 %2$s / %3$s",
             "已快取 %1$d 軌 · 佔用 %2$s / %3$s",
@@ -303,18 +353,40 @@ public enum Strings {
     CACHE_USAGE_OFF("宿主未运行，暂时无法读取缓存占用",
             "宿主未執行，暫時無法讀取快取佔用",
             "DLsiteSound not running — cache usage unavailable"),
-    /** 「清除所有字幕缓存」按钮标签。 */
-    CACHE_CLEAR("清除所有字幕缓存", "清除所有字幕快取", "Clear all subtitle cache"),
+    /**
+     * 「清除已缓存字幕」按钮标签（【code 1030】Ari 要求把「所有」改成「已缓存」——
+     * 这里清的是**已经缓存下来的正文**，不包括预取的作品文件树，见 {@link #CACHE_CLEAR_PREFETCH}）。
+     */
+    // 【code 1031】英文改成短标签：两枚按钮并排（各占一半宽），
+    //   "Clear cached subtitles" / "Clear prefetched subtitles" 会被强制换成两行，
+    //   一枚两行、一枚一行 ⇒ 高度不齐、观感像「有一枚掉下去了」。
+    //   全称保留在确认弹窗的标题里，语义不丢。
+    CACHE_CLEAR("清除已缓存字幕", "清除已快取字幕", "Clear cached"),
     /** 清除前的二次确认（标题 / 正文）—— 删的是用户已经攒下来的离线字幕，必须给一次确认。 */
-    CACHE_CLEAR_CONFIRM_TITLE("清除所有字幕缓存？", "清除所有字幕快取？", "Clear all subtitle cache?"),
+    CACHE_CLEAR_CONFIRM_TITLE("清除已缓存字幕？", "清除已快取字幕？", "Clear cached subtitles?"),
     CACHE_CLEAR_CONFIRM_MSG("将删除已缓存的全部音轨字幕。此后断网 / 飞行模式下这些音轨不再显示字幕，"
-            + "直到联网重新播放过一遍。",
+            + "直到联网重新播放过一遍。预取的字幕文件不受影响。",
             "將刪除已快取的全部音軌字幕。此後斷網 / 飛航模式下這些音軌不再顯示字幕，"
-                    + "直到連線重新播放過一遍。",
+                    + "直到連線重新播放過一遍。預取的字幕檔案不受影響。",
             "All cached subtitles will be deleted. Offline playback will show none for these "
-                    + "tracks until you play them online again."),
+                    + "tracks until you play them online again. Prefetched files are kept."),
     /** 清除成功提示（由宿主回执触发，不是点下按钮就报成功）。 */
-    CACHE_CLEAR_DONE("已清除所有字幕缓存", "已清除所有字幕快取", "All subtitle cache cleared"),
+    CACHE_CLEAR_DONE("已清除已缓存字幕", "已清除已快取字幕", "Cached subtitles cleared"),
+    /**
+     * 【code 1030】「清除预取字幕」按钮标签。
+     *
+     * <p>「预取」= 换轨前提前抓下来的**作品文件树 + 各轨 json**（{@code ZiptreePrefetch}），
+     * 它让切轨不卡；清掉之后下一次换轨要重新抓，但已经缓存下来的字幕正文还在。
+     */
+    CACHE_CLEAR_PREFETCH("清除预取字幕", "清除預取字幕", "Clear prefetch"),
+    PREFETCH_CLEAR_CONFIRM_TITLE("清除预取字幕？", "清除預取字幕？", "Clear prefetched subtitles?"),
+    PREFETCH_CLEAR_CONFIRM_MSG("将删除为快速换轨而提前抓取的全部作品文件树。"
+            + "已缓存的字幕正文不受影响；之后换轨会重新抓取一次，可能稍慢。",
+            "將刪除為快速換軌而提前抓取的全部作品檔案樹。"
+                    + "已快取的字幕正文不受影響；之後換軌會重新抓取一次，可能稍慢。",
+            "All prefetched work trees will be deleted. Cached subtitles are kept; "
+                    + "switching tracks will re-fetch once and may be slightly slower."),
+    PREFETCH_CLEAR_DONE("已清除预取字幕", "已清除預取字幕", "Prefetched subtitles cleared"),
     BACKUP_RESTORE("字幕配置备份与恢复", "字幕配置備份與恢復", "Backup & restore"),
     EXPORT("导出", "匯出", "Export"),
     IMPORT("导入", "匯入", "Import"),
@@ -410,6 +482,18 @@ public enum Strings {
     /** 【code 1025 / P2-1】保存回执上的「撤销」动作与撤销结果。 */
     UNDO("撤销", "復原", "Undo"),
     UNDO_DONE("已撤销上一次保存", "已復原上一次儲存", "Last save undone"),
+    /** 【code 1028 / P1-③】恢复默认的撤销回执（与保存撤销同一套 Snackbar，但文案要分清动作）。 */
+    UNDO_RESET_DONE("已撤销本次恢复默认", "已復原本次恢復預設", "Reset undone"),
+    /**
+     * 【code 1028 / P1-④】浮动工具条上的脏态读数。
+     *
+     * ⚠️ 单位是「**处**」不是「项」：这一版按四个分区（字幕 / 行态 / 排版 / 液态玻璃）
+     * 统计「哪一块有改动」，不是一个字段一条 —— 逐字段数会把「拖了一次滑块」
+     * 说成「有 1 项未保存」，而用户改的其实是「字幕这一块」。
+     */
+    UNSAVED_COUNT("有 %1$d 处未保存", "有 %1$d 處未儲存", "%1$d unsaved section(s)"),
+    /** 溢出菜单按钮的读屏名（可见文案是 ⋯ 图标）。 */
+    MORE("更多操作", "更多操作", "More actions"),
     LOAD_RESET("原配置文件已损坏，已重置为默认值", "原設定檔已損毀，已重設為預設值",
             "The config file was corrupted and has been reset to defaults"),
     /** PRD §12 E-05：未保存退出的二次确认（三选：保存 / 不保存 / 取消）。 */

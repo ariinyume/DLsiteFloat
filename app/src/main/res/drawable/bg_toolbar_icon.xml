@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  【code 1029】底栏「更多操作」的圆形 tonal 底。
+
+  背景：1029 去掉了 FloatingToolbarLayout 那层浅色胶囊（Ari：底栏还有一层底部覆盖，
+  不是完全的按钮悬空）。容器一走，这枚 ⋯ 就变成裸图标浮在正文上 ——
+  既看不出它是按钮，与正文的对比度也不到 WCAG AA 的 3:1。
+
+  所以每个控件自己承担自己的「悬空」：
+    · 保存键 = colorPrimary 填充胶囊（MaterialButton 自带）；
+    · 溢出键 = 本文件这枚 colorSurfaceContainerHigh 圆底。
+
+  为什么外面套一层 4dp inset：控件本体是 48dp（无障碍触达下限），
+  但 48dp 的实心圆在 48dp 高的底栏里会顶满、显得比保存键还重；
+  视觉圆 40dp + 4dp 内缩，命中区仍是 48dp —— 观感与触达两头都要。
+  ⚠️ 不用 colorPrimary 系：底栏已经有一枚 primary 实心键当主行动，
+     第二枚同色会抢主次。次级容器色既有分离度，又明确「我不是主行动」。
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="4dp">
+    <shape android:shape="oval">
+        <solid android:color="?attr/colorSurfaceContainerHigh" />
+    </shape>
+</inset>

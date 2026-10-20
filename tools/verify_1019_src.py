@@ -312,8 +312,12 @@ def main():
         check('补盖改用同一把尺子', 'if (!timelineFits(e, identity)) {' in sm)
         check('补盖被拒的诊断日志仍在（回归锚，真机 416 次靠它取证）',
               'stamp REFUSED (timeline mismatch)' in sm)
-        check('补盖成功后仍写 byIdentity + persistIndex（回归锚）',
-              'byIdentity.put(identity, e);' in sm and 'persistIndexLocked();' in sm)
+        # 【code 1034 改写】原锚 byIdentity.put(identity, e); 被 code 1024「作品维强约束」
+        #   合法重构为桶装（同一身份允许多部作品并存），补盖成功后的落点变成
+        #   byIdentity.put(identity, bucket) + bucket.add(e)；persistIndex 语义未变。
+        #   按纪律改写判据并注明，非回归。
+        check('补盖成功后仍写 byIdentity + persistIndex（回归锚；1024 起桶装形态）',
+              'byIdentity.put(identity, bucket);' in sm and 'persistIndexLocked();' in sm)
     check('旧的内联时间轴判据绝迹（剥注释后）',
           'if (e.maxEnd > 0 && e.maxEnd > durMs / 1000.0 + TIMELINE_TOLERANCE_SEC) {' not in cache)
     n_tol = len(re.findall(r'private static final double TIMELINE_TOLERANCE_SEC = 2\.0;', cache))

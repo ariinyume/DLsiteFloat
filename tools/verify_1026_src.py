@@ -203,9 +203,13 @@ def main():
     check('K1 versionCode >= 1026（下界，防后面轮次假 FAIL）',
           re.search(r'^def appVersionCode = (\d+)$', gradle, re.M) is not None
           and int(re.search(r'^def appVersionCode = (\d+)$', gradle, re.M).group(1)) >= 1026)
-    check('K2 versionName / tag 仍是 2.3.5（未发版不动语义版本号）',
-          re.search(r"^def appVersionName = '2\.3\.5'$", gradle, re.M) is not None
-          and re.search(r"^def appVersionTag = '2\.3\.5'$", gradle, re.M) is not None,
+    # 【code 1037 泛化】原钉死 2.3.5（「未发版不动语义版本号」）；1037 真的升到 2.4.0
+    #   ⇒ 只留后半句那条真正的不变式：tag == name（tag 进 APK 文件名）。
+    check('K2 versionName / tag 成型且相等',
+          re.search(r"^def appVersionName = '(\d+\.\d+\.\d+)'$", gradle, re.M) is not None
+          and re.search(r"^def appVersionTag = '%s'$"
+                        % re.escape(re.search(r"^def appVersionName = '(\d+\.\d+\.\d+)'$",
+                                              gradle, re.M).group(1)), gradle, re.M) is not None,
           'tag == name 必须成立（tag 进 APK 文件名）')
     # 铁律 94：label 只守形态（构建当天 MMDD.N），绝不钉死字面值
     label = re.search(r"^def appVersionCodeLabel = '(\d{4}\.\d+)'$", gradle, re.M)
@@ -225,8 +229,9 @@ def main():
             break
     live = re.search(r'XposedCompat\.log\("\[DLsiteSoundFloat\] ==== BUILD ([\d.]+) / code (\d+)"\);',
                      module)
-    check('K5 常开标题行 >= code 1026 且 name 仍 2.3.5',
-          live is not None and int(live.group(2)) >= 1026 and live.group(1) == '2.3.5',
+    check('K5 常开标题行 >= code 1026 且 name 成型',
+          live is not None and int(live.group(2)) >= 1026
+          and re.fullmatch(r'\d+\.\d+\.\d+', live.group(1)) is not None,
           live.groups() if live else '未匹配')
     check('K6 调试横幅自报本轮两项 + 未发版',
           banner != '' and '跟随宿主字幕样式' in banner

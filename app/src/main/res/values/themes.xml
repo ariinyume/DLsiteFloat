@@ -83,6 +83,27 @@
         <item name="android:textSize">15sp</item>
     </style>
 
+    <!--
+      【code 1028 / 审查稿 P1-⑤】节标题（「字幕外观」「液态玻璃效果调整」…）。
+
+      改动前：直接引用 ?attr/textAppearanceTitleSmall（14sp）+ bold + colorPrimary。
+      三个问题叠在一起：
+        · **字阶倒挂** —— 节标题 14sp 比它下面的行标签 15sp 还小 1sp，
+          「层级」只能靠颜色撑，读起来是「一堆同级的行」；
+        · **accent 通胀** —— 整页 colorPrimary 用在 12 类位置，一屏可见 8–9 处；
+        · bold 让本就偏小的标题更"重"，与 M3E 的克制字重相反。
+
+      现在：16sp / colorOnSurfaceVariant / 字重 600（Android 无 600 字重族，
+      由代码落到 sans-serif-medium 或 API 28+ 的 Typeface.create(w=600)）。
+      ⚠️ 不要在这里写 android:textColor 的十六进制：必须走色槽，动态取色才跟得上。
+    -->
+    <style name="TextAppearance.DLsiteFloat.SectionTitle" parent="TextAppearance.Material3.TitleSmall">
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
+        <item name="android:letterSpacing">0.01</item>
+    </style>
+
     <!-- 「恢复默认」下方的小字说明（PRD DK-04） -->
     <style name="TextAppearance.DLsiteFloat.Hint" parent="TextAppearance.Material3.BodySmall">
         <item name="android:textSize">12sp</item>
