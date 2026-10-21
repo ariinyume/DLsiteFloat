@@ -29,6 +29,20 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 脚本 → (类别, 一句话说明它验什么)
 # ⚠️ 说明必须与脚本内部判据一致；改判据时同步改这里，否则索引表本身就会骗人。
 SCRIPTS = [
+    ('verify_1040.py', 'dex 字节码层',
+     'code 1040 / 2.4.1（只升 code）：aapt2 versionCode=1040/versionName=2.4.1、'
+     '新横幅串与【code 1040 履历串、ZiptreePrefetch.hasCandidate 方法及签名、'
+     'SubtitleRepository 对 hasCandidate 的调用、预取命中日志仍在（9 项）'),
+    ('verify_1039.py', 'dex 字节码层',
+     'code 1039 / 2.4.1（只升 code）：aapt2 versionCode=1039/versionName=2.4.1、新横幅串与【code 1039 '
+     '履历串在包、预取池受限推断三串（ambiguous work key / some prefetched work has / '
+     'unique work key across）、无字幕负包日志串、裁决窗到点预取兜底串；'
+     '反向锚旧 no work key hint 绝迹（13 项）'),
+    ('verify_1038.py', 'dex 字节码层',
+     'code 1038 / 2.4.1：aapt2 versionCode=1038/versionName=2.4.1、新横幅串与【code 1038 '
+     '履历串在包、旧记忆位（PREF_HOST_SCOPE_SEEN/mHostScopeSeen/mHostSeenOnce）绝迹、'
+     'ZiptreePrefetch Track.workKey / noSubtitleTracks / NoSubtitleTrack / workKeyOfAudio 进包、'
+     '反向锚 noSubtitleDurations 不在包（12 项）'),
     ('verify_1037_src.py', '源码层',
      'code 1037 / 2.4.0 日常日志降噪 ＋ 验证链三处根治：缓存层 log/logWarn 拆分（双写绝迹、'
      '常开出口只剩 1 处、12 个告警点分流）、生命周期两行 / 预取命中四行 / 标签普查倒出 / '
@@ -262,6 +276,9 @@ SCRIPTS = [
 # ⚠️ 只有**真正解析 APK/dex** 的脚本才登记在这里。
 #   不接包的脚本（如源码层校验、真机日志校验）不要登记，否则会被误判成「缺参数」。
 NEEDS_APK = {
+    'verify_1040.py': (1040, 1039),   # <apk_1040> <apk_1039 上一版>
+    'verify_1039.py': (1039, 1038),   # <apk_1039> <apk_1038 上一版>
+    'verify_1038.py': (1038, 1037),   # <apk_1038> <apk_1037 上一版>
     'verify_1033.py': (1033, 1032),   # <apk_1033> <apk_1032 上一版>
     'verify_1032.py': (1032, 1031),   # <apk_1032> <apk_1031 上一版>
     'verify_1031.py': (1031, 1030),   # <apk_1031> <apk_1030 上一版>

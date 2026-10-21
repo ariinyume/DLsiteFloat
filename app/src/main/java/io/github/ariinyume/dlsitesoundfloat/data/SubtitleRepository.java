@@ -984,6 +984,13 @@ public class SubtitleRepository implements LineSource {
         // 【code 1014】本轨盘上是否已有可用缓存 —— 决定「云端优先」等多久（见下面的 grace 分级）。
         //   有本地垫背就不必为云端苦等长窗。纯内存索引查询，无磁盘 IO。
         final boolean diskFallbackReady = hasDiskCacheFor(newIdentity, newSelection);
+        // 【code 1040】预取池里是否已有本轨 JSON —— 同样决定 grace 分级。
+        //   原来只看 diskFallbackReady：预取池明明就绪，只要上一轨有 cues 仍要等满 15s
+        //   （真机 11:46:55.153 换轨 → 11:47:10.155 才 prefetch HIT，差 15.002s）。
+        //   hasCandidate 只查内存索引 + 文件存在性，不读正文，可放在换轨主路径。
+        final boolean prefetchFallbackReady =
+                io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.hasCandidate(
+                        PlaylistKey.identityDurationMs(newIdentity), freshWorkKey());
         long now = SystemClock.uptimeMillis();
         long token;
         boolean suspended;
@@ -1064,7 +1071,9 @@ public class SubtitleRepository implements LineSource {
                 //   （见 resolvePendingTrack 末尾），等一个标准窗口就够。
                 //   真机实证（2026-10-14 10:25:22，关代理后切轨）：手上握着上一轨的 148 条 cues
                 //   ⇒ 走 15000ms 长窗 ⇒ 盘上明明有本轨缓存却干等 15s，Ari 体感「本地字幕用不了」。
-                grace = (cueCount > 0 && !diskFallbackReady)
+                // 【code 1040】预取池已就绪时同样不必苦等：JSON 是本地现成的，云端 1s 内
+                //   没来就先用预取，晚到的云端 JSON 仍会覆盖（loadFromJson 自愈路径不变）。
+                grace = (cueCount > 0 && !diskFallbackReady && !prefetchFallbackReady)
                         ? NO_SUBTITLE_GRACE_MS_CACHED : NO_SUBTITLE_GRACE_MS;
             }
         }
@@ -1632,7 +1641,7 @@ public class SubtitleRepository implements LineSource {
     }
 
     /**
-     * 【code 1023 / P0-4 落地】离线兜底第二级：从「作品文件树预取池」取一份。
+     * 【code 1023 / P0-4 落地】【code 1038 收紧】离线兜底第二级：从「作品文件树预取池」取一份。
      *
      * <h3>── 为什么它必须排在 {@link #tryResumeFromDisk} 之后 ──</h3>
      * 磁盘缓存用的是**强身份键**（{@code tc×10^12 + durMs×10^3 + idx}），是最硬的证据；
@@ -1646,6 +1655,12 @@ public class SubtitleRepository implements LineSource {
      * （278.64 → 278640ms，7/7 全中）。跨轨误配还要求「同一部作品内两轨时长差 &lt; 250ms」，
      * 而同一作品里时长相同的那几条恰恰是**不同语言版本的同一条轨**（真机 RJ01353000：
      * 5471/14079/16859 各出现两次），取哪一份都是这条轨的字幕。
+     *
+     * <h3>── 【code 1038】新增约束 ──</h3>
+     * 预取池现在要求必须传入非空的 {@code workKeyHint}，且命中轨的 {@link Track#workKey}
+     * 必须与之相等；没有作品键证据时不再做「唯一候选」兜底。 bonus 轨道的子目录也纳入
+     * 作品键计算，避免主轨与特典轨的作品键对不上。同一作品若存在「等长但无字幕」的轨，
+     * 预取池会直接放弃命中，防止无字幕轨加载到别的轨的字幕。
      *
      * <p>取到后走 {@link #loadFromJson(String, String, boolean)} 的正常加载路径
      * （{@code fromDisk=false}）⇒ 它会自己 stage 落盘、自己刷 UI 观测者，
@@ -1914,16 +1929,28 @@ public class SubtitleRepository implements LineSource {
         //   语义与「云端 JSON 晚到」完全一致（正是它被设计成能自愈的那条路）。
         //   【code 1014】优先用**本次换轨的目标键**：全局观测值在列表重建 / 连续快切时可能
         //   已指向别的轨，拿它查盘会空手而归（这正是 Ari 10:25:22 那两次切轨的情形）。
-        if (noSubtitles && !spurious
-                && tryResumeFromDisk("no json in grace -> local fallback",
-                        pendingTrackIdentity != 0L ? pendingTrackIdentity
-                                : observedPlaylistIdentity,
-                        pendingTrackSelection != 0L ? pendingTrackSelection
-                                : observedPlaylistSelection)) {
-            XposedCompat.log("[DLsiteSoundFloat] [code 1012] cloud gave no subtitle within grace"
-                    + " -> resumed from LOCAL disk cache (cloud-first, local fallback)");
-            notifyObservers();
-            return;
+        if (noSubtitles && !spurious) {
+            long fallbackIdentity = pendingTrackIdentity != 0L ? pendingTrackIdentity
+                    : observedPlaylistIdentity;
+            long fallbackSelection = pendingTrackSelection != 0L ? pendingTrackSelection
+                    : observedPlaylistSelection;
+            if (tryResumeFromDisk("no json in grace -> local fallback",
+                    fallbackIdentity, fallbackSelection)) {
+                XposedCompat.log("[DLsiteSoundFloat] [code 1012] cloud gave no subtitle within grace"
+                        + " -> resumed from LOCAL disk cache (cloud-first, local fallback)");
+                notifyObservers();
+                return;
+            }
+            // 【code 1039】代理断开但 Wi-Fi 还在 ⇒ isOffline() 为 false，onTrackChanged 不会
+            //   提前读预取池；宿主的字幕 JSON 也永远不来。这里在裁决窗到点后再兜一层预取池，
+            //   否则「已预取的新作品」在关代理后永远判无字幕（真机 RJ01560108 即此）。
+            if (tryResumeFromPrefetch("no json in grace -> prefetch fallback",
+                    fallbackIdentity, fallbackSelection)) {
+                XposedCompat.log("[DLsiteSoundFloat] [code 1039] cloud gave no subtitle within grace"
+                        + " -> resumed from PREFETCH (cloud-first, local fallback)");
+                notifyObservers();
+                return;
+            }
         }
         if (spurious) {
             LogGate.debug("[DLsiteSoundFloat] track decision: SPURIOUS track change"

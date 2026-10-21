@@ -170,16 +170,6 @@ public class SettingsActivity extends AppCompatActivity {
     private static final long STATUS_TAP_WINDOW_MS = 3000L;
 
     /**
-     * 【code 1016】「宿主作用域曾被确认授权」的持久化键（存在 {@link ConfigStore#UI_PREFS_NAME} 里）。
-     *
-     * <p>为什么要持久化：Ari 需求「在插件管理中给本插件授权了宿主 APP 即视为模块已激活」——
-     * 但插件进程**读不到** LSPosed 的作用域勾选状态（那是管理器自己的私有数据），
-     * 唯一的证据是「宿主的 PONG 回来过」。把这件事落一个键，就能让「已授权」这个事实
-     * 跨设置页重开、跨进程重启一直保留，而不是每次进页面都要重新握手一次。
-     */
-    private static final String PREF_HOST_SCOPE_SEEN = "host_scope_seen";
-
-    /**
      * 悬浮窗面板顶部的预览不透明度（0–255）。
      *
      * §3.1.5 明确要求色板圆点显示「面板顶部实际不透明度叠加后的效果」：
@@ -444,17 +434,6 @@ public class SettingsActivity extends AppCompatActivity {
     private UiLang mLang;
     /** 探测结果；null = 还在探测中。 */
     private ScopeProbe.Result mProbe;
-    /**
-     * 【code 975】本次打开设置页以来，是否**曾经**探测到宿主 DLsiteSound。
-     *
-     * <p>用途见 {@link #renderStatusCard()} 里的 {@code hostAuthorized}：
-     * 宿主在后台被系统降级/冻结时，偶尔会来不及应答（或来不及被唤醒），
-     * 单次超时就翻成「模块未激活」是 Ari 报的那个「经常检测不到程序在运行」。
-     * 只要本会话内成功过一次，就认为「模块确实装在宿主里且作用域已勾选」这一**事实**成立，
-     * 后续偶发超时不再降级；重新打开设置页（新 Activity）会重置，所以用户真去 LSPosed
-     * 取消勾选后，重进本页仍会正确显示「未激活」。
-     */
-    private boolean mHostSeenOnce;
     /** 程序性回灌控件值时置位，避免「一刷新就变脏」。 */
     private boolean mSyncing;
     /** 回收 {statusbar_button_tint} 用：上次应用到状态栏开关行的 tint（避免每次 renderStatusCard 重复改）。 */
@@ -590,8 +569,6 @@ public class SettingsActivity extends AppCompatActivity {
     /** 【code 1015 / 2.3.2】状态卡连点解锁的状态（时间窗内累计，见 onStatusCardClicked）。 */
     private int mStatusTapCount = 0;
     private long mStatusTapLastMs = 0L;
-    /** 【code 1016】「宿主作用域曾确认授权」的持久化镜像（见 {@link #PREF_HOST_SCOPE_SEEN}）。 */
-    private boolean mHostScopeSeen = false;
 
     /** 节标题（在卡片外，参考稿口径）—— 语言切换时随文案重刷。 */
     private TextView mTitlePreview;
@@ -894,9 +871,6 @@ public class SettingsActivity extends AppCompatActivity {
         quantize(mSaved);
         mDraft = mSaved.copy();
         mLang = UiLang.fromConfigValue(mDraft.uiLanguage);
-
-        // 【code 1016】进页面先把「曾确认授权」的持久化镜像读出来（激活判定要用）。
-        mHostScopeSeen = readHostScopeSeen();
 
         bindViews();
         refreshCardTints();
@@ -1873,50 +1847,11 @@ public class SettingsActivity extends AppCompatActivity {
     // FR-01 状态卡
     // ==================================================================
 
-    /**
-     * 【code 1016】读出「宿主作用域曾确认授权」的持久化镜像。
-     *
-     * <p>任何异常一律按「没见过」处理 —— 这个位只影响状态卡的**显示口径**，
-     * 读失败最多退回旧行为（要重新握手一次），绝不该影响页面可用性。
-     */
-    private boolean readHostScopeSeen() {
-        try {
-            return getSharedPreferences(ConfigStore.UI_PREFS_NAME, MODE_PRIVATE)
-                    .getBoolean(PREF_HOST_SCOPE_SEEN, false);
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    /**
-     * 【code 1016】宿主真的答过 PONG ⇒ 授权这件事**已被证实**，落盘记住。
-     *
-     * <p>先置内存位再写盘（写盘失败也不影响本次判定）；已经记过就不再重复写。
-     */
-    private void markHostScopeSeen() {
-        mHostSeenOnce = true;
-        if (mHostScopeSeen) {
-            return;
-        }
-        mHostScopeSeen = true;
-        try {
-            getSharedPreferences(ConfigStore.UI_PREFS_NAME, MODE_PRIVATE)
-                    .edit().putBoolean(PREF_HOST_SCOPE_SEEN, true).apply();
-        } catch (Throwable t) {
-            // 落盘失败不影响本次会话的判定（内存位已置），下次进页面重新握手即可
-        }
-    }
-
     private void startProbe() {
         ScopeProbe.probe(this, ScopeProbe.DEFAULT_WINDOW_MS, result -> {
             mProbe = result;
             // 【code 1007】探测结果顺带决定缓存占用那行的「读不到」文案（没回执时才用它）。
             mCacheHostAlive = result.hostAuthorized;
-            if (result.hostAuthorized) {
-                // 【code 975】记下「本会话内确实见过宿主」——后续偶发超时不降级（见字段注释）。
-                // 【code 1016】并把这件事实**落盘**：授权是可持久的事实，不该每次进页面重学。
-                markHostScopeSeen();
-            }
             // 【code 995】诊断级 → 走 LogGate（探测每 3s 一轮，常开会刷屏）。
             LogGate.debug(TAG, "status probe -> " + result);
             if (isFinishing() || isDestroyed()) {
@@ -1960,15 +1895,11 @@ public class SettingsActivity extends AppCompatActivity {
      * 未激活 = {@code colorErrorContainer}。
      *
      * ─────────────────────────────────────────────────────────────────────
-     * v1.4 返工（§16.2 BUG-01 / 用例 1.2）：「已激活」的判据不再只看授权位。
-     * 旧的 Q-6 判别态用「SystemUI 有响应 + 宿主没响应」去猜「宿主没运行」，
-     * 猜不准 —— 宿主被划掉后进程往往还在，PING 照样收到 PONG，于是 1.2 一直判成已激活。
-     * 于是加了宿主存活位（{@code ScopeProbe.Result#hostAlive}）做**三分支**。
-     *
-     * 【code 1016 收敛为两分支】Ari 要求「在插件管理中给本插件授权了宿主 APP 即视为已激活」
-     *   ⇒ 判据只看**授权位**，且「授权过」这件事一经确认就**持久化**
-     *   （见 {@code PREF_HOST_SCOPE_SEEN}）—— 「已授权但当前没在跑」那个中间态
-     *   （原「DLsiteSound 未运行」分支）**整条删除**，方法体里只剩 {@code active} 一枝。
+     * 【code 1038】激活判定只认**当前这轮探测**的授权位。
+     * 旧实现把「本会话内曾经探测到」({@code mHostSeenOnce}) 与「历史上曾经授权」
+     * ({@code PREF_HOST_SCOPE_SEEN}) 混进判据，导致 LSPosed 未启用 / 宿主作用域未勾选时
+     * 状态卡仍显示「已激活」。这两份「记忆」现在全部移除：每次打开设置页都重新探测，
+     * 只有本轮 PING/PONG 握手成功才算授权。
      * ─────────────────────────────────────────────────────────────────────
      */
     private void renderStatusCard() {
@@ -1976,13 +1907,8 @@ public class SettingsActivity extends AppCompatActivity {
             return;
         }
         boolean probing = mProbe == null;
-        // 【code 975】`|| mHostSeenOnce`：宿主在后台被降级时偶发不应答，不应把状态卡打回
-        // 「模块未激活」（Ari 报的「经常检测不到程序在运行」）。本会话成功过一次即认账，
-        // 重开本页会重置 ⇒ 真取消勾选仍能正确显示未激活。详见字段注释。
-        // 【code 1016】再加上持久化的「曾确认授权」位：授权过就一直是授权状态，
-        //   不再要求「本次进页面这几秒内恰好又握到手」。
-        boolean hostAuthorized = !probing
-                && (mProbe.hostAuthorized || mHostSeenOnce || mHostScopeSeen);
+        // 【code 1038】只看当前探测结果：历史会话授权、本会话曾经授权都不作数。
+        boolean hostAuthorized = !probing && mProbe.hostAuthorized;
         /**
          * 宿主**当前真的在用**（播放页在前台 / 正在播放）。
          *
@@ -1995,12 +1921,8 @@ public class SettingsActivity extends AppCompatActivity {
         boolean hostAlive = !probing && mProbe.hostAlive;
         boolean sysUiActive = !probing && mProbe.systemUiAuthorized;
 
-        // ── 两分支（【code 1016】按 Ari 需求从三分支收成两分支）─────────────────
-        // 🔴 Ari 需求：「当检测到用户在插件管理中给本插件授权了宿主 APP 即视为模块已经激活」
-        //    ⇒ **只看授权位**，不再要求宿主此刻在跑。
-        //    原先的「分支二：已授权但不存活 ⇒ DLsiteSound 未运行」已删除 ——
-        //    用户勾了作用域就该看到「已激活」，宿主有没有开是另一件事
-        //    （配置照改照存，宿主启动后由 hook 侧的补推广播生效，这条不变）。
+        // ── 两分支（【code 1038】只看本轮探测结果）─────────────────────────────
+        // 激活判定只用当前授权位：LSPosed 未启用 / 宿主作用域未勾选 ⇒ 状态卡显示未激活。
         //  · 分支一 active         = hostAuthorized
         //  · 分支二（else）        = !hostAuthorized ⇒ 未激活 / 未授权引导
         boolean active = hostAuthorized;

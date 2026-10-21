@@ -35,6 +35,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -42,6 +43,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import io.github.ariinyume.dlsitesoundfloat.data.PlaylistKey;
 import io.github.ariinyume.dlsitesoundfloat.util.AppEnv;
 import io.github.ariinyume.dlsitesoundfloat.util.NetState;
 import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
@@ -179,11 +181,26 @@ public final class ZiptreePrefetch {
     /** 一条「音轨 → 字幕文件」的映射。 */
     static final class Track {
         final long durMs;
+        /** 相对于 {@code optimized/} 的字幕路径（可能含子目录，如 {@code 04_omake/xxx.json}）。 */
         final String jsonName;
+        /** 本轨的作品键（{@link PlaylistKey#workKeyOf} 口径，含子目录）。 */
+        final String workKey;
 
-        Track(long durMs, String jsonName) {
+        Track(long durMs, String jsonName, String workKey) {
             this.durMs = durMs;
             this.jsonName = jsonName;
+            this.workKey = workKey;
+        }
+    }
+
+    /** 一部作品中「等长但无字幕」的轨，用于防撞。 */
+    static final class NoSubtitleTrack {
+        final long durMs;
+        final String workKey;
+
+        NoSubtitleTrack(long durMs, String workKey) {
+            this.durMs = durMs;
+            this.workKey = workKey;
         }
     }
 
@@ -196,6 +213,14 @@ public final class ZiptreePrefetch {
         final String query;
         final File dir;
         final List<Track> tracks = new ArrayList<>();
+        /**
+         * 【code 1038】本作品中**明确没有字幕**的轨（按作品键分槽）。
+         *
+         * <p>用途：无字幕轨的时长若与另一条有字幕轨撞车，按作品键命中仍可能张冠李戴。
+         * 记下这些轨后，命中前检查「同一作品键下是否同时存在有字幕和无字幕的等长轨」，
+         * 有则拒绝，宁可空白也不放错台词。
+         */
+        final List<NoSubtitleTrack> noSubtitleTracks = new ArrayList<>();
 
         Pack(String workno, String baseUrl, String query, File dir) {
             this.workno = workno;
@@ -204,9 +229,14 @@ public final class ZiptreePrefetch {
             this.dir = dir;
         }
 
-        /** 命中时给数据层的作品键（与 {@code PlaylistKey.workKeyOf} 同口径，末段是 {@code optimized}）。 */
-        String workKey() {
-            return baseUrl + "optimized";
+        /** 指定作品键下有没有「等长但无字幕」的轨。 */
+        boolean hasNoSubtitle(String workKey, long durMs) {
+            for (NoSubtitleTrack n : noSubtitleTracks) {
+                if (workKey.equals(n.workKey) && Math.abs(n.durMs - durMs) <= DUR_TOLERANCE_MS) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
@@ -282,16 +312,6 @@ public final class ZiptreePrefetch {
                 return;
             }
 
-            List<Track> tracks = parseTracks(text);
-            if (tracks.isEmpty()) {
-                // 正常现象：这部作品本来就没有字幕（真机 RJ01654099 就只有 1 条音频、0 条 vtt）
-                XposedCompat.log(TAG + " " + workno + ": ziptree has no vtt entry (作品无字幕)");
-                // 对用户而言这是「已知事实」而不是故障 ⇒ 记 HIT，别让自检表报红（1023 口径）
-                AdapterHealth.hit(AdapterHealth.Item.PREFETCH,
-                        workno + ": no vtt in work (作品本来无字幕)");
-                return;
-            }
-
             File dir = new File(baseDir(), workno);
             if (!dir.exists() && !dir.mkdirs()) {
                 XposedCompat.log(TAG + " mkdirs failed: " + dir);
@@ -299,11 +319,27 @@ public final class ZiptreePrefetch {
                 return;
             }
             Pack pack = new Pack(workno, baseUrl, query, dir);
-            pack.tracks.addAll(tracks);
+            parseTracks(text, pack);
+            if (pack.tracks.isEmpty()) {
+                // 正常现象：这部作品本来就没有字幕（真机 RJ01654099 就只有 1 条音频、0 条 vtt）
+                //
+                // 【code 1039】仍然要把这个包留下来：它没有 T 行，但 N 行记着「哪些时长明确无字幕」。
+                // 离线取字幕时，这段负证据用来阻止「当前作品无字幕，却命中另一部作品等长轨」。
+                writeIndex(pack);
+                synchronized (LOCK) {
+                    PACKS.put(workno, pack);
+                }
+                XposedCompat.log(TAG + " " + workno + ": ziptree has no vtt entry (作品无字幕)"
+                        + " noSub=" + pack.noSubtitleTracks.size() + " (negative pack kept)");
+                // 对用户而言这是「已知事实」而不是故障 ⇒ 记 HIT，别让自检表报红（1023 口径）
+                AdapterHealth.hit(AdapterHealth.Item.PREFETCH,
+                        workno + ": no vtt in work (作品本来无字幕)");
+                return;
+            }
             int queued = 0;
             int already = 0;
             long budget = MAX_BYTES_PER_WORK;
-            for (Track t : tracks) {
+            for (Track t : pack.tracks) {
                 File f = new File(dir, t.jsonName);
                 if (f.exists() && f.length() > 0) {
                     already++;
@@ -318,12 +354,12 @@ public final class ZiptreePrefetch {
             synchronized (LOCK) {
                 PACKS.put(workno, pack);
             }
-            XposedCompat.log(TAG + " " + workno + ": tracks=" + tracks.size()
+            XposedCompat.log(TAG + " " + workno + ": tracks=" + pack.tracks.size()
                     + " already=" + already + " queued=" + queued
                     + (budget < MAX_BYTES_PER_WORK ? " budget_left=" + budget : "")
-                    + " -> " + pack.workKey());
+                    + " -> " + pack.baseUrl + "optimized");
             AdapterHealth.hit(AdapterHealth.Item.PREFETCH,
-                    workno + ": " + tracks.size() + " tracks"
+                    workno + ": " + pack.tracks.size() + " tracks"
                             + (queued > 0 ? " (+" + queued + " dl)" : " (all cached)"));
         } catch (Throwable e) {
             XposedCompat.log(TAG + " offer failed (ignored): " + e);
@@ -341,7 +377,7 @@ public final class ZiptreePrefetch {
     // ==================================================================
 
     /**
-     * 按**时长**取一份已预取的字幕 —— 【code 1024】带作品维强约束。
+     * 按**时长 + 作品键**取一份已预取的字幕。
      *
      * <h3>── 为什么必须加作品维（Ari 的要求：预防「多作品时长撞车」）──</h3>
      * 预取时拿不到宿主的 {@code trackCount}，本类只能用<b>毫秒级时长</b>当键。
@@ -350,18 +386,28 @@ public final class ZiptreePrefetch {
      * 挑中就别的作品就是「放着别人家的台词」。同一部作品内时长相同的那几条是同一轨的
      * 不同语言版本（取哪份都对），跨作品相同则完全没有这层保证。
      *
-     * <p>现在的判据（三步，越往下越弱）：
+     * <p>【code 1038】判据收紧为：
      * <ol>
-     *   <li><b>作品键认人</b>：给了 {@code workKeyHint} 且某部作品的键与它相等 ⇒ 只在该作品内取
-     *       （最强证据：这是宿主自己写在这份 JSON 的 URL 里的作品路径）；</li>
-     *   <li><b>唯一候选</b>：没给作品键、但撞上时长的作品**只有一部** ⇒ 取它（没有歧义）；</li>
-     *   <li><b>有歧义就放弃</b>：撞上时长的作品不止一部、而作品键又对不上 ⇒
-     *       <b>放弃命中</b>并落一行日志。按既有政策：宁可屏幕空白，也不放来路不明的台词。</li>
+     *   <li><b>作品键 + 时长双重认人</b>：只有某条轨的 {@link Track#workKey} 与
+     *       {@code workKeyHint} 相等、且时长在容差内，才算命中；</li>
+     *   <li><b>无字幕轨防撞</b>：同一作品里若存在「等长但无字幕」的轨，说明当前时长
+     *       不能唯一确定一条有字幕轨 ⇒ 放弃命中。</li>
      * </ol>
      *
+     * <p>【code 1039】没有作品键时允许一次**受限推断**（真机日志：新下载作品已预取，
+     * 但本进程还没在线加载过任何字幕 JSON ⇒ {@code freshWorkKey()} 为空 ⇒ 直接 REFUSE，
+     * 离线播放永远无字幕）。推断规则：
+     * <ul>
+     *   <li>所有预取包里，同一时长只对应**一个**作品键 ⇒ 采用它；</li>
+     *   <li>只要任一预取包里存在「等长但明确无字幕」的轨 ⇒ 放弃 —— 宁可空白，不放错台词；</li>
+     *   <li>推断出的作品键仍要过下面的严格匹配，不会跳过作品维。</li>
+     * </ul>
+     * 这比 1023 的「任意唯一候选」强一档：1023 在同一时长有多条轨时会随便挑一条；
+     * 这里要求**作品键唯一**，且全局无字幕负证据一票否决。
+     *
      * @param durMs       目标音轨时长（毫秒，来自身份键）
-     * @param workKeyHint 手上的当前作品键（{@link io.github.ariinyume.dlsitesoundfloat.data
-     *                    .PlaylistKey#workKeyOf} 口径；{@code null}/空 = 没有证据）
+     * @param workKeyHint 手上的当前作品键（{@link PlaylistKey#workKeyOf} 口径；
+     *                    {@code null}/空 = 没有正证据 ⇒ 走受限推断）
      * @return 命中返回正文；没有（或歧义放弃）返回 {@code null}
      */
     public static Hit take(long durMs, String workKeyHint) {
@@ -369,76 +415,124 @@ public final class ZiptreePrefetch {
             return null;
         }
         try {
-            ensureIndexLoaded();
-            List<Pack> snapshot;
-            synchronized (LOCK) {
-                snapshot = new ArrayList<>(PACKS.values());
-            }
-            // 逆序 = 最近 offer/命中的作品优先（accessOrder 的末尾是最新的）
-            List<Pack> matched = new ArrayList<>(2);
-            Pack hinted = null;
-            for (int i = snapshot.size() - 1; i >= 0; i--) {
-                Pack p = snapshot.get(i);
-                if (!hasDuration(p, durMs)) {
-                    continue;
-                }
-                matched.add(p);
-                if (hinted == null && workKeyHint != null && !workKeyHint.isEmpty()
-                        && workKeyHint.equals(p.workKey())) {
-                    hinted = p;
-                }
-            }
-            if (matched.isEmpty()) {
-                // 【code 1037】命中判定的三行都是**每次换轨一条**，且外层
-                //   SubtitleRepository 已常开落了结论（disk cache HIT / prefetch HIT /
-                //   track decision）⇒ 这里只算诊断级。
-                LogGate.debug(TAG, " MISS dur=" + durMs + "ms (packs=" + snapshot.size() + ")");
+            Match m = find(durMs, workKeyHint);
+            if (m == null) {
                 return null;
             }
-            Pack pick;
-            if (hinted != null) {
-                pick = hinted;
-            } else if (matched.size() == 1) {
-                pick = matched.get(0);
-            } else {
-                // 【code 1024】作品维强约束：多部作品同值、又没有作品键认人 ⇒ 放弃。
-                LogGate.debug(TAG, " AMBIGUOUS dur=" + durMs + "ms matches "
-                        + matched.size() + " works, no usable work key (hint="
-                        + (workKeyHint == null ? "null" : workKeyHint) + ") -> refuse hit");
+            File f = new File(m.pack.dir, m.track.jsonName);
+            if (!f.exists() || f.length() <= 0) {
+                LogGate.debug(TAG, " MISS dur=" + durMs + "ms work=" + shortKey(m.track.workKey)
+                        + " (file not downloaded yet: " + m.track.jsonName + ")");
                 return null;
             }
-            for (Track t : pick.tracks) {
-                if (Math.abs(t.durMs - durMs) > DUR_TOLERANCE_MS) {
-                    continue;
-                }
-                File f = new File(pick.dir, t.jsonName);
-                if (!f.exists() || f.length() <= 0) {
-                    continue;
-                }
-                String txt = readText(f);
-                if (txt == null || txt.length() == 0) {
-                    continue;
-                }
-                LogGate.debug(TAG, " HIT dur=" + durMs + "ms -> "
-                        + pick.workno + "/" + t.jsonName + " (" + f.length() + " B)"
-                        + " work=" + pick.workKey()
-                        + (hinted != null ? " [work-scoped]" : " [sole candidate]"));
-                return new Hit(txt, pick.workKey(), t.durMs, t.jsonName);
+            String txt = readText(f);
+            if (txt == null || txt.length() == 0) {
+                return null;
             }
-            LogGate.debug(TAG, " MISS dur=" + durMs + "ms in work " + pick.workno
-                    + " (file not downloaded yet)");
-            return null;
+            LogGate.debug(TAG, " HIT dur=" + durMs + "ms -> "
+                    + m.pack.workno + "/" + m.track.jsonName + " (" + f.length() + " B)"
+                    + " work=" + shortKey(m.track.workKey));
+            return new Hit(txt, m.track.workKey, m.track.durMs, m.track.jsonName);
         } catch (Throwable e) {
             XposedCompat.log(TAG + " take failed (ignored): " + e);
             return null;
         }
     }
 
-    /** 【code 1024】这部作品里有没有「时长对得上」的轨（只看索引，不碰磁盘）。 */
-    private static boolean hasDuration(Pack p, long durMs) {
-        for (Track t : p.tracks) {
-            if (Math.abs(t.durMs - durMs) <= DUR_TOLERANCE_MS) {
-                return true;
+    /**
+     * 【code 1040】只判「这一轨现在有没有可用的预取文件」，**不读正文**。
+     *
+     * <p>用途：换轨时决定「云端优先等多久」。原来只要手上有上一轨 cues 就无条件等
+     * {@code NO_SUBTITLE_GRACE_MS_CACHED=15000ms}；预取池明明已经有本轨 JSON 也要等满
+     * 15 秒才回退（真机日志：11:46:55.153 换轨 → 11:47:10.155 才 prefetch HIT，差 15.002s）。
+     * 本方法只做内存索引 + 文件存在性检查，供仓库把长窗降为标准窗（1s）。
+     */
+    public static boolean hasCandidate(long durMs, String workKeyHint) {
+        if (sDisabled || durMs <= 0L) {
+            return false;
+        }
+        try {
+            Match m = find(durMs, workKeyHint);
+            if (m == null) {
+                return false;
+            }
+            File f = new File(m.pack.dir, m.track.jsonName);
+            return f.exists() && f.length() > 0;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    private static final class Match {
+        final Pack pack;
+        final Track track;
+
+        Match(Pack pack, Track track) {
+            this.pack = pack;
+            this.track = track;
+        }
+    }
+
+    /** 纯匹配层：作品键/时长/负证据都过一遍，不碰文件 IO。 */
+    private static Match find(long durMs, String workKeyHint) {
+        ensureIndexLoaded();
+        List<Pack> snapshot;
+        synchronized (LOCK) {
+            snapshot = new ArrayList<>(PACKS.values());
+        }
+        // 【code 1039】全局负证据：任一预取包里存在「等长但明确无字幕」的轨 ⇒
+        //   当前时长无法唯一认人。**有作品键也要查**：freshWorkKey 可能是上一部作品的
+        //   陈旧值（切到无字幕作品时宿主不会发新 JSON），只查当前作品键会放过跨作品误配。
+        if (hasAnyNoSubtitle(snapshot, durMs)) {
+            LogGate.debug(TAG, " REFUSE dur=" + durMs + "ms (some prefetched work has"
+                    + " unsubtitled track with same duration)");
+            return null;
+        }
+        String hint = workKeyHint;
+        if (hint == null || hint.isEmpty()) {
+            // 【code 1039】没有作品键：只接受「同一时长在全池里只对应一个作品键」。
+            LinkedHashSet<String> keys = new LinkedHashSet<>();
+            for (Pack p : snapshot) {
+                for (Track t : p.tracks) {
+                    if (Math.abs(t.durMs - durMs) <= DUR_TOLERANCE_MS) {
+                        keys.add(t.workKey);
+                    }
+                }
+            }
+            if (keys.size() != 1) {
+                LogGate.debug(TAG, " REFUSE dur=" + durMs + "ms (ambiguous work key: "
+                        + keys.size() + " candidates)");
+                return null;
+            }
+            hint = keys.iterator().next();
+            LogGate.debug(TAG, " INFER dur=" + durMs + "ms work=" + shortKey(hint)
+                    + " (unique work key across " + snapshot.size() + " packs)");
+        }
+        // 逆序 = 最近 offer/命中的作品优先（accessOrder 的末尾是最新的）
+        for (int i = snapshot.size() - 1; i >= 0; i--) {
+            Pack p = snapshot.get(i);
+            for (Track t : p.tracks) {
+                if (!hint.equals(t.workKey)) {
+                    continue;
+                }
+                if (Math.abs(t.durMs - durMs) > DUR_TOLERANCE_MS) {
+                    continue;
+                }
+                return new Match(p, t);
+            }
+        }
+        LogGate.debug(TAG, " MISS dur=" + durMs + "ms work=" + shortKey(hint)
+                + " (packs=" + snapshot.size() + ")");
+        return null;
+    }
+
+    /** 【code 1039】全池负证据：任一作品的「等长但明确无字幕」轨。 */
+    private static boolean hasAnyNoSubtitle(List<Pack> packs, long durMs) {
+        for (Pack p : packs) {
+            for (NoSubtitleTrack n : p.noSubtitleTracks) {
+                if (Math.abs(n.durMs - durMs) <= DUR_TOLERANCE_MS) {
+                    return true;
+                }
             }
         }
         return false;
@@ -541,20 +635,28 @@ public final class ZiptreePrefetch {
     // ==================================================================
 
     /**
-     * 从 ziptree 里抽出 `[时长, 字幕文件名]`。
+     * 从 ziptree 里抽出 `[时长, 字幕相对路径, 作品键]`，并记录无字幕轨的时长。
      *
-     * <p>只认 {@code type == "audio"} 且 {@code audio.vtt} 非空的条目 ——
-     * 宿主是**一条音轨一份字幕**，没有 vtt 的轨（台本、无字幕轨）直接跳过。
+     * <p>只认 {@code type == "audio"} 的条目：
+     * <ul>
+     *   <li>有 {@code audio.vtt} 且能解析出字幕文件 ⇒ 生成一条 {@link Track}；</li>
+     *   <li>没有 vtt 的轨（台本、无字幕轨）⇒ 把时长记入 {@link Pack#noSubtitleDurations}
+     *       用于后续防撞。</li>
+     * </ul>
+     *
+     * <p>【code 1038】字幕路径不再直接用 {@code vtt.optimized.name}，而是按宿主自己的算法
+     * {@code optimized/ + vttPath.replaceFirst("vtt", "json")} 推导。bonus 轨道常放在子目录
+     * （如 {@code 04_omake/xxx.vtt}），{@code vtt.optimized.name} 在部分作品里只给文件名，
+     * 按它拼接会得到 {@code optimized/xxx.json} 从而 404。
      */
-    private static List<Track> parseTracks(String text) throws Exception {
-        List<Track> out = new ArrayList<>();
+    private static void parseTracks(String text, Pack pack) throws Exception {
         JSONObject root = new JSONObject(text);
         JSONObject pf = root.optJSONObject("playfile");
         if (pf == null) {
-            return out;
+            return;
         }
         Iterator<String> it = pf.keys();
-        while (it.hasNext() && out.size() < MAX_TRACKS_PER_WORK) {
+        while (it.hasNext() && pack.tracks.size() < MAX_TRACKS_PER_WORK) {
             String key = it.next();
             JSONObject entry = pf.optJSONObject(key);
             if (entry == null || !"audio".equals(entry.optString("type"))) {
@@ -564,29 +666,39 @@ public final class ZiptreePrefetch {
             if (audio == null) {
                 continue;
             }
-            String vttName = audio.optString("vtt", "");
-            if (vttName.length() == 0) {
-                continue;
-            }
-            JSONObject vttEntry = pf.optJSONObject(vttName);
-            if (vttEntry == null) {
-                continue;
-            }
-            JSONObject vtt = vttEntry.optJSONObject("vtt");
-            JSONObject optimized = vtt == null ? null : vtt.optJSONObject("optimized");
-            String jsonName = optimized == null ? "" : optimized.optString("name", "");
-            if (jsonName.length() == 0) {
-                continue;
-            }
             JSONObject audioOpt = audio.optJSONObject("optimized");
             double durSec = audioOpt == null ? 0.0 : audioOpt.optDouble("duration", 0.0);
             long durMs = Math.round(durSec * 1000.0);
             if (durMs <= 0L) {
                 continue;
             }
-            out.add(new Track(durMs, jsonName));
+            String vttPath = audio.optString("vtt", "");
+            if (vttPath.length() == 0) {
+                pack.noSubtitleTracks.add(new NoSubtitleTrack(durMs, workKeyOfAudio(pack.baseUrl, key)));
+                continue;
+            }
+            JSONObject vttEntry = pf.optJSONObject(vttPath);
+            if (vttEntry == null) {
+                pack.noSubtitleTracks.add(new NoSubtitleTrack(durMs, workKeyOfAudio(pack.baseUrl, key)));
+                continue;
+            }
+            JSONObject vtt = vttEntry.optJSONObject("vtt");
+            if (vtt == null) {
+                pack.noSubtitleTracks.add(new NoSubtitleTrack(durMs, workKeyOfAudio(pack.baseUrl, key)));
+                continue;
+            }
+            // 与宿主行为一致：String.replace 字符串时只替换第一处 "vtt" 为 "json"。
+            String jsonName = vttPath.replaceFirst("vtt", "json");
+            if (jsonName.length() == 0 || jsonName.equals(vttPath)) {
+                pack.noSubtitleTracks.add(new NoSubtitleTrack(durMs, workKeyOfAudio(pack.baseUrl, key)));
+                continue;
+            }
+            String workKey = PlaylistKey.workKeyOf(pack.baseUrl + "optimized/" + jsonName);
+            if (workKey == null) {
+                workKey = pack.baseUrl + "optimized";
+            }
+            pack.tracks.add(new Track(durMs, jsonName, workKey));
         }
-        return out;
     }
 
     // ==================================================================
@@ -599,6 +711,11 @@ public final class ZiptreePrefetch {
             public void run() {
                 File out = new File(pack.dir, t.jsonName);
                 if (out.exists() && out.length() > 0) {
+                    return;
+                }
+                File parent = out.getParentFile();
+                if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                    XposedCompat.log(TAG + " dl mkdirs failed " + parent);
                     return;
                 }
                 HttpURLConnection conn = null;
@@ -683,9 +800,13 @@ public final class ZiptreePrefetch {
      * <pre>
      *   Q&lt;TAB&gt;?Key-Pair-Id=…&amp;Policy=…&amp;Signature=…
      *   B&lt;TAB&gt;&lt;baseUrl 以 / 结尾&gt;
-     *   T&lt;TAB&gt;&lt;durMs&gt;&lt;TAB&gt;&lt;jsonName&gt;
+     *   N&lt;TAB&gt;&lt;durMs&gt;&lt;TAB&gt;&lt;workKey&gt;  ← 无字幕轨（code 1038 新增）
+     *   T&lt;TAB&gt;&lt;durMs&gt;&lt;TAB&gt;&lt;jsonName&gt;&lt;TAB&gt;&lt;workKey&gt;
      * </pre>
-     * 不用 JSON：这里只有三种行，文本更好排查，也不受宿主 JSON 实现差异影响。
+     * 不用 JSON：这里只有四种行，文本更好排查，也不受宿主 JSON 实现差异影响。
+     *
+     * <p>【code 1038】旧索引只有 3 列 T 行（无 workKey），读回时从 baseUrl + jsonName
+     * 重新推导 workKey；新索引写 4 列，保证 bonus 子目录场景下作品键正确。
      */
     private static void writeIndex(Pack pack) {
         File f = indexFile(pack.workno);
@@ -695,8 +816,13 @@ public final class ZiptreePrefetch {
         StringBuilder sb = new StringBuilder(256);
         sb.append("Q\t").append(pack.query).append('\n');
         sb.append("B\t").append(pack.baseUrl).append('\n');
+        for (NoSubtitleTrack n : pack.noSubtitleTracks) {
+            sb.append("N\t").append(n.durMs).append('\t').append(n.workKey).append('\n');
+        }
         for (Track t : pack.tracks) {
-            sb.append("T\t").append(t.durMs).append('\t').append(t.jsonName).append('\n');
+            sb.append("T\t").append(t.durMs).append('\t')
+                    .append(t.jsonName).append('\t')
+                    .append(t.workKey).append('\n');
         }
         writeFile(f, sb.toString().getBytes(StandardCharsets.UTF_8));
     }
@@ -730,7 +856,9 @@ public final class ZiptreePrefetch {
                         continue;
                     }
                     Pack p = readIndex(f);
-                    if (p != null && !p.tracks.isEmpty()) {
+                    // 【code 1039】无字幕作品也要读回：它没有 tracks，但 N 行是离线取字幕时的
+                    //   负证据（阻止「无字幕轨命中另一部作品的等长轨」）。
+                    if (p != null && (!p.tracks.isEmpty() || !p.noSubtitleTracks.isEmpty())) {
                         PACKS.put(p.workno, p);
                     }
                 }
@@ -752,6 +880,7 @@ public final class ZiptreePrefetch {
             String query = "";
             String baseUrl = "";
             List<Track> tracks = new ArrayList<>();
+            List<NoSubtitleTrack> noSubs = new ArrayList<>();
             for (String line : txt.split("\n")) {
                 if (line.length() < 3) {
                     continue;
@@ -761,10 +890,25 @@ public final class ZiptreePrefetch {
                     query = line.substring(2);
                 } else if (tag == 'B') {
                     baseUrl = line.substring(2);
+                } else if (tag == 'N') {
+                    String[] parts = line.split("\t");
+                    if (parts.length >= 3) {
+                        try {
+                            noSubs.add(new NoSubtitleTrack(Long.parseLong(parts[1]), parts[2]));
+                        } catch (NumberFormatException ignored) {
+                        }
+                    }
                 } else if (tag == 'T') {
                     String[] parts = line.split("\t");
                     if (parts.length >= 3) {
-                        tracks.add(new Track(Long.parseLong(parts[1]), parts[2]));
+                        long durMs = Long.parseLong(parts[1]);
+                        String jsonName = parts[2];
+                        String workKey = parts.length >= 4 ? parts[3]
+                                : PlaylistKey.workKeyOf(baseUrl + "optimized/" + jsonName);
+                        if (workKey == null) {
+                            workKey = baseUrl + "optimized";
+                        }
+                        tracks.add(new Track(durMs, jsonName, workKey));
                     }
                 }
             }
@@ -774,6 +918,7 @@ public final class ZiptreePrefetch {
             }
             Pack p = new Pack(workno, baseUrl, query, dir);
             p.tracks.addAll(tracks);
+            p.noSubtitleTracks.addAll(noSubs);
             return p;
         } catch (Throwable e) {
             return null;
@@ -823,6 +968,42 @@ public final class ZiptreePrefetch {
                 }
             }
         }
+    }
+
+    /** 作品键日志简写：取末两段，避免满屏 URL。 */
+    private static String shortKey(String workKey) {
+        if (workKey == null) {
+            return "(none)";
+        }
+        int slash = workKey.lastIndexOf('/');
+        if (slash < 0) {
+            return workKey;
+        }
+        int prev = workKey.lastIndexOf('/', slash - 1);
+        String tail = workKey.substring(slash + 1);
+        String parent = prev >= 0 ? workKey.substring(prev + 1, slash) : null;
+        return (parent == null || parent.isEmpty()) ? tail : parent + "/" + tail;
+    }
+
+    /**
+     * 由音频文件在 playfile 里的 key 推断「如果这条轨有字幕，它的作品键会是什么」。
+     *
+     * <p>宿主请求字幕的算法是 {@code optimized/ + vttPath.replaceFirst("vtt","json")}，
+     * 而 vtt 文件通常与音频文件在同一子目录。{@code audioKey} 形如 {@code 04_omake/track.wav}
+     * 或 {@code track.wav}，这里取它的目录部分拼到 {@code optimized/} 下，再算出作品键。
+     */
+    private static String workKeyOfAudio(String baseUrl, String audioKey) {
+        if (audioKey == null) {
+            audioKey = "";
+        }
+        String dir = "";
+        int slash = audioKey.lastIndexOf('/');
+        if (slash >= 0) {
+            dir = audioKey.substring(0, slash);
+        }
+        String dummy = baseUrl + "optimized" + (dir.isEmpty() ? "" : "/" + dir) + "/x.json";
+        String k = PlaylistKey.workKeyOf(dummy);
+        return k != null ? k : baseUrl + "optimized";
     }
 
     /** URL 路径的最后一段（去掉尾部 {@code /}）。 */
