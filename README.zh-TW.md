@@ -4,8 +4,8 @@
 
 > 一個 LSPosed / Xposed 模組，在 DLsiteSound（DLsite 音訊 App）的**播放頁**上掛一個與播放進度同步的**懸浮字幕窗**；同時支援將字幕鏡像到**系統狀態欄**（在 SystemUI 程序內注入）。
 
-- 目前版本：**2.4.0**（`DLsiteFloat-2.4.0-code1037-debug.apk`，套件名稱 `io.github.ariinyume.dlsitesoundfloat`）
-- 📦 下載 APK：[Releases · v2.4.0](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.0)
+- 目前版本：**2.4.2**（`DLsiteFloat-2.4.2-code1043-debug.apk`，套件名稱 `io.github.ariinyume.dlsitesoundfloat`）
+- 📦 下載 APK：[Releases · v2.4.2](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.2)
 - 📝 開發進度：[DLsiteFloat 外掛開發進度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh)
 - ⭐ Xposed 倉庫：[DLsiteFloat - DLsiteSound 懸浮窗/狀態欄字幕模組](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -17,19 +17,19 @@
 
 **一般懸浮窗預設樣式**：主字幕顏色 白色、陰影顏色 黑色、陰影強度 50%、陰影半徑 10%、活動行不透明度 100%、主字幕放大倍數 x1.0、非活動行模糊半徑 3.0px、非活動行縮放比例 90%、置中對齊、字幕間行距 0dp、長字幕內換行額外行距 0dp、懸浮窗顏色 黑色。
 
-<img width="1849" height="632" alt="image" src="https://github.com/user-attachments/assets/87581cce-27fb-496f-8c2a-0525d7990b73" />
+![image](https://github.com/user-attachments/assets/87581cce-27fb-496f-8c2a-0525d7990b73)
 
 ---
 
 **液態玻璃懸浮窗預設樣式**：所有液態玻璃相關設定項（環境背景亮度、通透度、明暗度、模糊強度）預設為 50%，其他字幕設定與一般懸浮窗設定一致。
 
-<img width="1849" height="618" alt="image" src="https://github.com/user-attachments/assets/ee410bb1-50c2-46fe-ade0-265b78effea4" />
+![image](https://github.com/user-attachments/assets/ee410bb1-50c2-46fe-ade0-265b78effea4)
 
 ---
 
 **狀態欄字幕樣式**
 
-<img width="464.5" height="178" alt="image" src="https://github.com/user-attachments/assets/acfe391e-d4f1-42fd-81f5-4605421df5a6" />
+![image](https://github.com/user-attachments/assets/acfe391e-d4f1-42fd-81f5-4605421df5a6)
 
 ---
 
@@ -168,7 +168,7 @@
   1. 你的裝置型號 / Android 版本 / ROM（尤其是否 ColorOS / 澎湃OS / 原生 / 類原生 等）
   2. 使用的 DLsiteSound 版本號
   3. 重現步驟 + LSPosed 日誌（`DLsiteSoundFloat` 過濾）+ 必要時 `dlsitefloat_net.log`+ 螢幕錄影 / 螢幕截圖（請給敏感資訊打碼或裁切）
-- **提交前請先確認**：裝的是不是最新 APK（看 LSPosed 日誌裡 `==== BUILD 2.4.0 / code 1037` 那一行）
+- **提交前請先確認**：裝的是不是最新 APK（看 LSPosed 日誌裡 `==== BUILD 2.4.2 / code 1043` 那一行）
 - **排查換軌 / 字幕擷取類問題時**：請在設定頁「其他」裡開啟**偵錯日誌**再重現一次（預設關閉，重現完可以關掉）。
 - **液態玻璃效果類問題**：請先試「模糊強度調回 50~60」「通透度不要拉滿」「依頁面明暗調環境背景亮度」；仍異常請附 LSPosed 日誌（`DLsiteSoundFloat` 過濾），並說明**機型 / ROM**（不同 ROM 的合成器模糊支援度不同）。
 
