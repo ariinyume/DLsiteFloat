@@ -29,6 +29,24 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 脚本 → (类别, 一句话说明它验什么)
 # ⚠️ 说明必须与脚本内部判据一致；改判据时同步改这里，否则索引表本身就会骗人。
 SCRIPTS = [
+    ('verify_1042.py', 'dex 字节码层',
+     'code 1042 / 2.4.1（只升 code）离线错拿别人音轨字幕：aapt2 versionCode>=1042 / '
+     'versionName=2.4.1、新横幅与【code 1042 履历串在包、ZiptreePrefetch.cacheGateAllows 进包、'
+     'PlaylistKey.stampForLoadedJson 进包、loadFromJson 四参重载、SubtitleCache INDEX_SCHEMA=5；'
+     '反向锚对照包无这几个方法（下界口径，后续轮次不假 FAIL）'),
+    ('verify_1042_src.py', '源码层',
+     'code 1042 源码侧：版本号下界、缓存时长闸门三处调用、印章时长锚定（作废而非重建）、'
+     'durMsHint 贯通两条兜底路径、INDEX_SCHEMA=5、单元测试向量、横幅九段与收尾句、'
+     '注册与 CHANGELOG（24 项）'),
+    ('verify_1041.py', 'dex 字节码层',
+     'code 1041 / 2.4.1（只升 code）按钮「不跟随播放页消失」：aapt2 versionCode=1041/'
+     'versionName=2.4.1、新横幅串与【code 1041 履历串在包、PageFollowPolicy.gate3Window '
+     '方法及签名 (FJJ)J、isPageHeld 新签名收第 13 参、门③ invoke-static gate3Window、'
+     'HOLD_SNAPSHOT_GONE_MS 常量层 = 500、长窗仍 2600；反向锚对照包无 gate3Window/无新常量（18 项）'),
+    ('verify_1041_src.py', '源码层',
+     'code 1041 按钮「不跟随播放页消失」源码侧：版本号四处、HOLD_SNAPSHOT_GONE_MS=500L 单点定义、'
+     'gate3Window 面积判据 <= 0f、门③ 真的改调它、hook 侧传参、单元测试与离线向量各 3 条、'
+     '旧「直接比 holdSnapshotMs」形态绝迹、protocol 既有红灯清零、注册与履历（26 项）'),
     ('verify_1040.py', 'dex 字节码层',
      'code 1040 / 2.4.1（只升 code）：aapt2 versionCode=1040/versionName=2.4.1、'
      '新横幅串与【code 1040 履历串、ZiptreePrefetch.hasCandidate 方法及签名、'

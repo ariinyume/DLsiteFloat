@@ -149,9 +149,17 @@ public final class SubtitleCache {
      * <p>【code 1024】**刻意维持在 4**：本轮给缓存补上「作品维强约束」（同一身份允许多部
      * 作品的条目并存，命中时用作品键认人），但**条目形态一个字段都没变** ——
      * 索引 JSON 还是那几个键，旧文件照旧能读、照旧能命中。加版本号等于宣布旧条目不可信，
-     * 会连带把用户攒下来的整部作品缓存清空一次；本轮没有任何一条理由值这个代价。
+     * <p>【code 1042】4 → 5：code 1041 有**写错槽位**的实证 —— 真机 2026-10-22 17:24:35，
+     * 207120ms 轨的 27 条字幕被「切回原轨」误认领成 513984ms 那一轨的，先
+     * {@code put tc=6 idx=1}、再{@code stamp duration 513984ms}，于是盘上多了一条
+     * **内容属于 A 轨、标签写着 B 轨**的条目。写入侧已在 1042 修掉（印章时长锚定）。
+     * <p>⚠️ 与 1012 / 1020 那两次不同：本轮**不整批丢弃**。错标有可判别的签名 ——
+     * 同一份内容被写到同一作品的多个轨槽，且 {@code maxEnd} 只与其中一个槽的时长吻合
+     * （见 {@link #purgeMislabelledLocked} / {@link #pickBestByLabelError}）。
+     * 迁移时只清这类条目，其余原样保留 ⇒ 用户攒下的缓存不会白清。
+     * 升版本号的唯一作用是「制造一次跑迁移的时机」。
      */
-    private static final int INDEX_SCHEMA = 4;
+    private static final int INDEX_SCHEMA = 5;
     /** 时间轴交叉校验的容差：字幕最大结束时间允许超出时长这么多秒。 */
     private static final double TIMELINE_TOLERANCE_SEC = 2.0;
 
@@ -889,16 +897,29 @@ public final class SubtitleCache {
         try {
             String text = readText(new FileInputStream(idx));
             JSONObject root = new JSONObject(text);
-            if (root.optInt("schema", 0) != INDEX_SCHEMA) {
-                // 【code 1017】旧索引不被认，盘上单轨文件也就**全部失去引用** ——
-                //   以前这里只 return，于是那些 .json 成了永久孤儿：占用字节数从 0
-                //   重算，而淘汰只按内存里的总数挑人 ⇒ 它们永远选不中，只有「同作品
-                //   同轨重新缓存」覆盖写同名文件才会回收，缓存目录只增不减。
-                //   现在作废即清扫（1012 把 INDEX_SCHEMA 1→2 那批遗留就是这个形状）。
-                log("index schema mismatch (found " + root.optInt("schema", 0)
-                        + ", want " + INDEX_SCHEMA + ") -> discard index + sweep orphans");
-                discardIndexAndSweepLocked();
-                return;
+            final int foundSchema = root.optInt("schema", 0);
+            boolean migrateFrom4 = false;
+            if (foundSchema != INDEX_SCHEMA) {
+                if (foundSchema == 4 && INDEX_SCHEMA == 5) {
+                    // 【code 1042】4 → 5 **不做整批丢弃**。
+                    //   本轮升版本号只是为了有个「跑一次迁移」的时机，而不是宣布全部条目不可信：
+                    //   1041 的错标有可判别的签名 —— **同一份内容被写到同一作品的多个轨槽**
+                    //   （真机 17:24:35 把 207120ms 轨的 27 条字幕写到 idx=1 并盖上 513984ms 的戳）。
+                    //   迁移只清理这类条目（判据见 purgeMislabelledLocked），其余原样保留，
+                    //   用户攒下的缓存不会白清。
+                    migrateFrom4 = true;
+                    log("index schema 4 -> 5: keeping entries, will purge only mislabelled ones");
+                } else {
+                    // 【code 1017】旧索引不被认，盘上单轨文件也就**全部失去引用** ——
+                    //   以前这里只 return，于是那些 .json 成了永久孤儿：占用字节数从 0
+                    //   重算，而淘汰只按内存里的总数挑人 ⇒ 它们永远选不中，只有「同作品
+                    //   同轨重新缓存」覆盖写同名文件才会回收，缓存目录只增不减。
+                    //   现在作废即清扫（1012 把 INDEX_SCHEMA 1→2 那批遗留就是这个形状）。
+                    log("index schema mismatch (found " + foundSchema
+                            + ", want " + INDEX_SCHEMA + ") -> discard index + sweep orphans");
+                    discardIndexAndSweepLocked();
+                    return;
+                }
             }
             JSONArray arr = root.optJSONArray("entries");
             if (arr == null) {
@@ -985,6 +1006,12 @@ public final class SubtitleCache {
                 }
             }
             log("index loaded: " + entries.size() + " entr(ies), " + totalBytes + " bytes");
+            if (migrateFrom4) {
+                int purged = purgeMislabelledLocked();
+                log("index 4->5 migration done: purged " + purged + " mislabelled entr(ies), "
+                        + entries.size() + " kept, " + totalBytes + " bytes");
+                persistIndexLocked();   // 把 schema 落成 5，下次不再走迁移
+            }
         } catch (Throwable t) {
             // 索引损坏 ⇒ 重建为空（PRD 口径：读取失败整体回退，不半套生效）
             log("index corrupted -> rebuild as empty: " + t);
@@ -995,6 +1022,81 @@ public final class SubtitleCache {
             byHash.clear();
             totalBytes = 0L;
         }
+    }
+
+    /**
+     * 【code 1042】同作品同内容的多条候选里，**哪一条的标签最贴内容**。
+     *
+     * <p>算式本体在 {@link PlaylistKey#pickBestLabelMatch} —— 放在那里是因为本类带
+     * {@code android.content.Context} 依赖、纯 JVM 单测加载不了，而这条判据值得进
+     * {@code GoldenVectorTest}（真机那两条条目的数字就是它的黄金向量）。
+     * 判据与真机取证见 {@link #purgeMislabelledLocked}。
+     */
+    static int pickBestByLabelError(double[] maxEnds, long[] durs) {
+        return PlaylistKey.pickBestLabelMatch(maxEnds, durs);
+    }
+
+    /**
+     * 【code 1042】索引 4 → 5 迁移：**只清理「同作品同内容被写到多个轨槽」的错标条目**。
+     *
+     * <p>只删「同一份内容（内容 hash 相同、同属一个作品）出现在 ≥2 个槽位」的情况，
+     * 且必须能算出「哪条标签更贴内容」；判不了就**一条不动**。
+     * 其余条目（包括正常缓存、以及无法判定的条目）原样保留 —— 这就是它比
+     * {@link #discardIndexAndSweepLocked()} 好的地方：不用为了几条脏数据清空整个缓存。
+     *
+     * <p>为什么合法场景不会被误删：写入侧本来就有 {@code byHash} 去重
+     * （{@code put} 里 "same content under work, removing stale entry"），
+     * 所以「同作品同 hash 两条并存」本身就是异常态 —— 要么是 1041 这条 bug 留下的，
+     * 要么是更早版本的历史遗留。即便真删错一条，也只是少一份缓存，下次换轨会重新取。
+     *
+     * @return 清理掉的条目数
+     */
+    private int purgeMislabelledLocked() {
+        Map<String, List<Entry>> groups = new HashMap<>();
+        for (Entry e : entries) {
+            if (e.workKey == null || e.hash == null) {
+                continue;
+            }
+            String k = e.workKey + "\u0000" + e.hash;
+            List<Entry> g = groups.get(k);
+            if (g == null) {
+                g = new ArrayList<>(2);
+                groups.put(k, g);
+            }
+            g.add(e);
+        }
+        int purged = 0;
+        for (List<Entry> g : groups.values()) {
+            if (g.size() < 2) {
+                continue;
+            }
+            double[] maxEnds = new double[g.size()];
+            long[] durs = new long[g.size()];
+            for (int i = 0; i < g.size(); i++) {
+                maxEnds[i] = g.get(i).maxEnd;
+                durs[i] = g.get(i).durMs;
+            }
+            int keep = pickBestByLabelError(maxEnds, durs);
+            if (keep < 0) {
+                log("purge skipped: same content under work but labels not judgeable"
+                        + " (" + g.size() + " copies) -> kept all");
+                continue;
+            }
+            Entry best = g.get(keep);
+            for (int i = 0; i < g.size(); i++) {
+                if (i == keep) {
+                    continue;
+                }
+                Entry e = g.get(i);
+                log("purge mislabelled: same content was also written to tc=" + e.tc
+                        + " idx=" + e.idx + " dur=" + e.durMs + "ms while it ends at "
+                        + Math.round(e.maxEnd) + "s -> keep tc=" + best.tc + " idx=" + best.idx
+                        + " dur=" + best.durMs + "ms");
+                removeEntryLocked(e, true);
+                purged++;
+            }
+        }
+        return purged;
     }
 
     /**

@@ -60,8 +60,13 @@ final class PageFollowPolicy {
      *   <li><b>门② 位移时间轴</b>：{@code lastPageMotionMs} 非零且距今不足
      *       {@code pageMotionHoldMs} → 刚动过，放行。</li>
      *   <li><b>门③ 快照兜底</b>：先于门④判断 —— 门④在「拖到极限」时必然失效，
-     *       门③正是为那一刻准备的：距 {@code heldOffsetMs} 不足 {@code holdSnapshotMs}
-     *       且 {@code |heldOffset| >= pageHoldPx} 且探测锚点仍挂着。</li>
+     *       门③正是为那一刻准备的：距 {@code heldOffsetMs} 不足有效期
+     *       且 {@code |heldOffset| >= pageHoldPx} 且探测锚点仍挂着。
+     *       <p><b>【code 1041】有效期分两档</b>（见 {@link #gate3Window}）：
+     *       锚点还有任何可见面积 → {@code holdSnapshotMs}（长窗，保护「手指按住极限位静止」）；
+     *       锚点<b>完全不可见</b>（{@code anchorAreaRatio <= 0}）→ {@code holdSnapshotGoneMs}
+     *       （短窗）。理由是「关闭动画同样把位移推到满屏且 ref 仍 attached」，
+     *       长窗会让按钮在列表页上多挂 2.6 秒。</li>
      *   <li><b>门④ 视觉位移</b>：{@code pageVisualOffset()} 返回哨兵 → 放行；
      *       {@code |held|} 不足 {@code pageHoldPx} → 放行。</li>
      *   <li><b>门⑤ 锚点面积</b>：拿不到屏幕尺寸 → <b>返回 true（宁可维持现状）</b>；
@@ -77,7 +82,8 @@ final class PageFollowPolicy {
      * @param screenW / screenH        屏幕尺寸，&lt;= 0 表示取不到
      * @param anchorAreaRatio          锚点面积占屏比例（门⑤）
      * @param pageMotionHoldMs         门② 阈值 {@code PAGE_MOTION_HOLD_MS}
-     * @param holdSnapshotMs           门③ 阈值 {@code HOLD_SNAPSHOT_MS}
+     * @param holdSnapshotMs           门③ 阈值 {@code HOLD_SNAPSHOT_MS}（锚点仍有可见面积时）
+     * @param holdSnapshotGoneMs       门③ 阈值 {@code HOLD_SNAPSHOT_GONE_MS}（锚点完全不可见时）
      * @param pageHoldPx               门③④ 阈值 {@code PAGE_HOLD_PX}
      * @param pageHoldMinArea          门⑤ 阈值 {@code PAGE_HOLD_MIN_AREA}
      * @return true = 页面正被拖住，调用方应压制 {@code hide}
@@ -88,6 +94,7 @@ final class PageFollowPolicy {
             int pageVisualOffset,
             int screenW, int screenH, float anchorAreaRatio,
             long pageMotionHoldMs, long holdSnapshotMs,
+            long holdSnapshotGoneMs,
             int pageHoldPx, float pageHoldMinArea) {
         // 门⓪：还没确认过播放页 → 一律放行。
         if (!playerConfirmedInSession) {
@@ -98,7 +105,8 @@ final class PageFollowPolicy {
             return true;
         }
         // 门③：快照兜底（**先于门④**，门④在拖到极限时必然失效）。
-        if (heldOffsetMs != 0L && now - heldOffsetMs < holdSnapshotMs
+        if (heldOffsetMs != 0L && now - heldOffsetMs < gate3Window(anchorAreaRatio,
+                holdSnapshotMs, holdSnapshotGoneMs)
                 && Math.abs(heldOffset) >= pageHoldPx
                 && holdProbeStillAttached) {
             return true;
@@ -115,6 +123,40 @@ final class PageFollowPolicy {
             return true;
         }
         return anchorAreaRatio >= pageHoldMinArea;
+    }
+
+    /**
+     * 门③ 快照的**有效窗**：锚点还有任何可见面积 → 长窗；完全不可见 → 短窗。
+     *
+     * <p>【code 1041】为什么要分档 —— 2026-10-22 真机日志（Ari 11:05:53~11:06:33，
+     * 2.4.1 / code 1040）四次关闭播放页，按钮**全部滞后 ≈2.7s 才消失**：
+     * <pre>
+     *   54.892 verdict=OTHER bottom=y=2661   → 57.668 hide（snap=2771px/2615ms）
+     *   00.209 verdict=OTHER bottom=y=2668   → 03.072 hide（snap=2771px/2654ms）
+     *   23.067 verdict=OTHER bottom=y=2372   → 25.914 hide（snap=2771px/2633ms）
+     *   30.121 全部证据 gone=true            → 32.789 hide（snap=2771px/2679ms）
+     * </pre>
+     * 四条 hide 的 {@code snap 距现在}都恰好顶在 {@code HOLD_SNAPSHOT_MS=2600} 上，
+     * 期间每次都先打一行 {@code hide suppressed: page held}。
+     *
+     * <p>机制：<b>关闭动画本身</b>（页面 translateY 0→2772）就在往
+     * {@code pageVisualOffset()} 写快照 —— 位移每帧变化 ≥ 死区 ⇒ 续期，动画末帧把
+     * {@code heldOffset=2771} 钉在「拖到极限」。之后页面静止、不再续期，但 2600ms
+     * 的窗要等满；而宿主把栈内播放页**停靠在屏外不 detach**（四次全是
+     * {@code attached=true}），所以「ref detach ⇒ 自然放行」这条退路根本不存在。
+     *
+     * <p>为什么不能直接全局下调 2600：那个值是为「手指按住页面停在极限位**静止**」
+     * 留的（注释称实测最长 2.1s 空窗）。这类真实拖动场景下锚点<b>仍有可见面积</b>
+     * （实测 30~45%，见 {@code PAGE_HOLD_MIN_AREA}），而关闭完成后是 <b>0%</b>
+     * （{@code anchorAreaRatio} 按占屏面积算）—— 两者可以分开，所以只在 0 时缩窗。
+     *
+     * @param anchorAreaRatio 锚点占屏面积比（&lt;= 0 = 完全不可见）
+     * @param holdSnapshotMs  长窗阈值（{@code HOLD_SNAPSHOT_MS}）
+     * @param holdSnapshotGoneMs 短窗阈值（{@code HOLD_SNAPSHOT_GONE_MS}）
+     */
+    static long gate3Window(float anchorAreaRatio, long holdSnapshotMs,
+            long holdSnapshotGoneMs) {
+        return anchorAreaRatio <= 0f ? holdSnapshotGoneMs : holdSnapshotMs;
     }
 
     /**

@@ -401,6 +401,16 @@ public class SubtitleRepository implements LineSource {
      */
     private static final long WORK_CHANGE_CLAIM_MS = 15000L;
 
+    /**
+     * 【code 1042】「这份 JSON 的时长」与「当前活跃列表身份里的时长」相差多少仍算同一轨（ms）。
+     *
+     * <p>两者同源：预取的时长来自作品文件树 {@code audio.optimized.duration}（秒两位小数），
+     * 宿主状态 Map 的 {@code duration} 也是同一个数字（真机 7/7 完全相等，见
+     * {@code tryResumeFromPrefetch} 的注释）。留 250ms 只吸收秒→毫秒的取整误差，
+     * 而同一作品内两轨的真实时长差远大于它。
+     */
+    private static final long STAMP_DUR_TOLERANCE_MS = 250L;
+
     // ---- 【code 1007 / 1012】字幕磁盘缓存（云端优先、本地兜底）----
     /**
      * 【code 1012】待落盘的**云端字幕原文**（及其权威轨标签的暂存位）。
@@ -647,7 +657,7 @@ public class SubtitleRepository implements LineSource {
      *                （字节流通道）⇒ 不更新历史基线，也不参与「换作品」判定。
      */
     public void loadFromJson(String json, String workKey) {
-        loadFromJson(json, workKey, false);
+        loadFromJson(json, workKey, false, 0L);
     }
 
     /**
@@ -660,6 +670,19 @@ public class SubtitleRepository implements LineSource {
      *                （字节流通道 / 磁盘缓存路径）⇒ 不更新历史基线，也不参与「换作品」判定。
      */
     public void loadFromJson(String json, String workKey, boolean fromDisk) {
+        loadFromJson(json, workKey, fromDisk, 0L);
+    }
+
+    /**
+     * 【code 1042】带「这份 JSON 属于哪一轨的时长」的入口 —— 供两条兜底路径锚定印章。
+     *
+     * <p>预取池与磁盘缓存都**按时长**取文件，所以它们说得准；云端 / 字节流路径拿不到，
+     * 仍走上一个重载（{@code durMsHint = 0} ⇒ 印章行为与旧版一致）。
+     * 判据与真机取证见 {@link #stampIdentityForLoadedJson}。
+     *
+     * @param durMsHint 这份 JSON 所属音轨的时长（毫秒）；{@code <= 0} = 不知道
+     */
+    public void loadFromJson(String json, String workKey, boolean fromDisk, long durMsHint) {
         try {
             JSONObject root = new JSONObject(json);
             JSONObject data = root.optJSONObject("data");
@@ -693,7 +716,7 @@ public class SubtitleRepository implements LineSource {
             if (!fromDisk) {
                 lastCacheableJson = json;      // 【code 1007】磁盘缓存要存的是原文
             }
-            loadFromJsonArrayInternal(webvtt, workKey, fromDisk);
+            loadFromJsonArrayInternal(webvtt, workKey, fromDisk, durMsHint);
             XposedCompat.log("[DLsiteSoundFloat] Loaded " + getCues().size() + " cues from JSON"
                     + (fromDisk ? " (local disk cache)"
                             : (workKey != null ? "" : " (no work key on this path)")));
@@ -708,13 +731,19 @@ public class SubtitleRepository implements LineSource {
 
     public void loadFromJsonArray(JSONArray webvtt, String workKey) {
         try {
-            loadFromJsonArrayInternal(webvtt, workKey, false);
+            loadFromJsonArrayInternal(webvtt, workKey, false, 0L);
         } catch (Throwable e) {
             XposedCompat.log("[DLsiteSoundFloat] loadFromJsonArray error: " + e.getMessage());
         }
     }
 
-    private void loadFromJsonArrayInternal(JSONArray webvtt, String workKey, boolean fromDisk)
+    /**
+     * @param durMsHint 【code 1042】这份 JSON **自己所属音轨**的时长（毫秒；0 = 不知道）。
+     *                  预取池与磁盘缓存两条兜底路径都按时长取文件 ⇒ 它们说得准；
+     *                  云端 / 字节流路径拿不到 ⇒ 传 0，行为与旧版一致。
+     */
+    private void loadFromJsonArrayInternal(JSONArray webvtt, String workKey, boolean fromDisk,
+                                           long durMsHint)
             throws Exception {
         List<SubtitleCue> newCues = new ArrayList<>();
         // 【1.21.15 问题 1】假阴性取证用的暂存（-1 = 本次没有）
@@ -749,7 +778,9 @@ public class SubtitleRepository implements LineSource {
             // 【980】给这份 cues 盖「主人」印章 = 当前活跃播放列表的身份。
             //   宿主对同一轨的响应有缓存（切走再切回不会重发 JSON），
             //   有了印章才能在切回时直接恢复渲染，见 tryResumeFromCache。
-            cuesOwnerIdentity = observedPlaylistIdentity;
+            // 【code 1042】印章的分量要**以这份 JSON 自己为准**（见 stampIdentityForLoadedJson）：
+            //   observedPlaylistIdentity 是宿主状态 Map 的活值，会跑在异步到达的 JSON 前面。
+            cuesOwnerIdentity = stampIdentityForLoadedJson(observedPlaylistIdentity, durMsHint);
             // 【code 1004】同一时刻再盖一枚**选择键**印章，并记下「盖印时选择是否已跑在身份前面」。
             //   宿主切音轨时 currentIndex 立刻翻，而带时长的身份键要等新音源装载完才更新
             //   （真机实测 18:40:58.391 翻序号 → 18:41:04.430 才有 duration），
@@ -1123,6 +1154,56 @@ public class SubtitleRepository implements LineSource {
                         + "ms unless json arrives (cues=" + cueCount + " kept)");
             }
         }
+    }
+
+    /**
+     * 【code 1042】给「刚加载的这份 cues」算印章 —— **时长分量以 JSON 自己的归属为准**。
+     *
+     * <h3>真机现场（Ari 2026-10-22，2.4.1 / code 1041）</h3>
+     * <pre>
+     *   17:24:33.348 换轨 tc=14 dur=772536 → tc=6 dur=207120 idx=0
+     *   17:24:34.357 prefetch HIT dur=207120ms → 32a71c16…json (4957 B)   ← 这份 JSON 属于 207120 那轨
+     *   17:24:34.358 Loaded 27 cues from JSON                             ← 印章在此刻盖下
+     *   17:24:34.859 statusMap 才报 currentIndex=1 trackCount=6 duration=513.984   ← 晚 500ms
+     *   17:24:35.361 track changed tc=6 dur=207120 → tc=6 dur=513984
+     *   17:24:35.361 [code 980] BACK to the playlist these cues belong to | cues=27 -> RESUME
+     *   17:24:35.366 put tc=6 idx=1 cues=27 bytes=4957                    ← 207120 的字幕写进 513984 的槽
+     *   17:24:35.719 stamp duration tc=6 idx=1 dur=513984ms               ← 还盖上了新轨的时长戳
+     * </pre>
+     * 结果：513984ms 那轨放的是 207120ms 那轨的台词（Ari 截图 17:24:50），而且**写进了缓存**，
+     * 此后每次回到这轨都命中这份错的内容。
+     *
+     * <h3>为什么旧写法会错</h3>
+     * 印章取的是 {@link #observedPlaylistIdentity} —— 宿主状态 Map 的**活值**。
+     * 而这份 JSON 是异步取回的（预取 / 磁盘 / 云端都一样），到达时宿主可能已经翻到了**下一轨**：
+     * 此时印章记下的身份「属于下一轨」，{@code tryResumeFromCache} 的
+     * {@code newIdentity == cuesOwnerIdentity} 就必然成立 ⇒ 「切回原轨」被误判 ⇒ 采纳错内容。
+     * 也就是说**判据本身没写错，是喂给它的印章脏了**。
+     *
+     * <h3>本方法的判据</h3>
+     * 预取池与磁盘缓存都**按时长**取文件 ⇒ 它们知道这份 JSON 属于哪一轨，{@code durMsHint}
+     * 就是那个时长。若它与「当前活跃列表身份里的时长」不一致，说明活值已经跑到别的轨上：
+     * <ul>
+     *   <li>相差 ≤ {@link #STAMP_DUR_TOLERANCE_MS} ⇒ 同一轨（宿主与预取的时长同源，
+     *       真机实测 7/7 完全相等）⇒ 沿用原身份；</li>
+     *   <li>相差超出容差 ⇒ <b>印章作废（返回 0）</b>，而不是「拿它重建一个身份」——
+     *       {@code trackCount} / {@code currentIndex} 两个分量同样来自那个已经跑偏的活值，
+     *       拼出来的身份只是「看着像」，认领时照样会把错的内容放上去。
+     *       作废后 {@code tryResumeFromCache} 的 {@code byIdentity} 恒假，交回
+     *       {@code bySelection / byRebuild / byWorkChange} 三条**有独立证据**的路径。</li>
+     * </ul>
+     * 取不到时长（{@code durMsHint <= 0}，云端 / 字节流路径）⇒ 原样返回，行为与本版之前一致。
+     */
+    private long stampIdentityForLoadedJson(long baseIdentity, long durMsHint) {
+        long stamped = PlaylistKey.stampForLoadedJson(baseIdentity, durMsHint,
+                STAMP_DUR_TOLERANCE_MS);
+        if (stamped == 0L && baseIdentity != 0L) {
+            XposedCompat.log("[DLsiteSoundFloat] [code 1042] stamp VOIDED: json belongs to "
+                    + durMsHint + "ms but the active playlist identity says "
+                    + PlaylistKey.identityDurationMs(baseIdentity)
+                    + "ms (host advanced past this json) -> cues will not claim a wrong track");
+        }
+        return stamped;
     }
 
     /**
@@ -1606,6 +1687,12 @@ public class SubtitleRepository implements LineSource {
             if (!cacheUsable()) {
                 return false;
             }
+            // 【code 1042】与 {@link #tryResumeFromDisk} 同一把尺子：歧义时长不算「有垫背」，
+            //   否则 grace 会按「有本地」缩窗、随后又因闸门拒绝而空白，属于自相矛盾。
+            if (!io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch
+                    .cacheGateAllows(PlaylistKey.identityDurationMs(identity))) {
+                return false;
+            }
             long sel = selection != 0L ? selection : observedPlaylistSelection;
             return SubtitleCache.get().has(identity, sel);
         } catch (Throwable t) {
@@ -1624,6 +1711,17 @@ public class SubtitleRepository implements LineSource {
         if (!cacheUsable()) {
             return false;
         }
+        // 【code 1042】时长歧义闸门 —— 与预取池**同一把尺子**。
+        //   真机 2026-10-22 17:22：预取池正确拒绝（等长无字幕轨），下一秒缓存却从
+        //   另一部作品的同长轨命中（RJ01643778 的 113999ms 被用在 RJ01513147 的 113999ms 轨上，
+        //   屏上放的是别人的台词）。根因是缓存只比身份键、离线时作品键为空 ⇒ 唯一候选直接放行。
+        long durMs = PlaylistKey.identityDurationMs(newIdentity);
+        if (!io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.cacheGateAllows(durMs)) {
+            XposedCompat.log("[DLsiteSoundFloat] [code 1042] disk cache SKIPPED: dur=" + durMs
+                    + "ms is not uniquely identifiable in the prefetch pool"
+                    + " -> blank rather than another work's lines");
+            return false;
+        }
         String text;
         try {
             text = SubtitleCache.get().lookup(newIdentity, newSelection, freshWorkKey());
@@ -1636,7 +1734,7 @@ public class SubtitleRepository implements LineSource {
         XposedCompat.log("[DLsiteSoundFloat] [code 1007] disk cache HIT on track change via " + where
                 + " | identity=" + newIdentity + " selection=" + newSelection
                 + " -> resume from LOCAL subtitle");
-        loadFromJson(text, null, true);
+        loadFromJson(text, null, true, durMs);
         return true;
     }
 
@@ -1688,7 +1786,7 @@ public class SubtitleRepository implements LineSource {
                 + " | identity=" + newIdentity + " selection=" + newSelection
                 + " | dur=" + durMs + "ms -> " + hit.name
                 + " (work=" + hit.workKey + ") -> resume from PREFETCH");
-        loadFromJson(hit.text, hit.workKey, false);
+        loadFromJson(hit.text, hit.workKey, false, durMs);
         return true;
     }
 
@@ -1736,7 +1834,10 @@ public class SubtitleRepository implements LineSource {
                     ? PlaylistKey.makeSelection(PlaylistKey.identityTrackCount(identity),
                             PlaylistKey.identityIndex(identity))
                     : observedPlaylistSelection;
-            avail = SubtitleCache.get().has(identity, sel);
+            // 【code 1042】歧义时长 ⇒ 读不到（闸门会拒），所以状态卡也不能说「有」（同上）。
+            avail = SubtitleCache.get().has(identity, sel)
+                    && io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch
+                            .cacheGateAllows(PlaylistKey.identityDurationMs(identity));
         } catch (Throwable t) {
             avail = false;
         }

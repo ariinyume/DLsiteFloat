@@ -538,6 +538,69 @@ public final class ZiptreePrefetch {
         return false;
     }
 
+    /**
+     * 【code 1042】**磁盘缓存的时长闸门**：这一轨的时长在预取池里能不能唯一认人。
+     *
+     * <h3>为什么缓存需要它</h3>
+     * 真机 2026-10-22 17:22:00（2.4.1 / code 1041）：切到 RJ01513147 的 113999ms 轨，
+     * 预取池**正确拒绝**（{@code some prefetched work has unsubtitled track with same
+     * duration}），下一秒却从磁盘缓存命中了 **RJ01643778** 的同长轨字幕 ——
+     * 屏幕上放的是另一部作品的台词（Ari 截图 17:22:21）。
+     *
+     * <p>根因是两条兜底路径的判据不一致：预取池有时长歧义负证据，
+     * 而 {@code SubtitleCache.lookup} 只比身份键；离线时 {@code freshWorkKey()} 为空，
+     * {@code pickLocked} 对「唯一候选」直接放行（那是 code 1020 为治「过期作品键造成假
+     * MISS」定的口径，本身没错）⇒ 缓存成了绕过歧义判定的后门。
+     *
+     * <h3>口径（与 {@link #find} 逐条对齐）</h3>
+     * <ul>
+     *   <li>池子没加载 / 一个包都没有 ⇒ <b>true</b>：没有任何证据，不能反过来封死缓存
+     *       （否则用户一台没预取过的设备上缓存功能整体失效）；</li>
+     *   <li>任一作品存在「等长但明确无字幕」轨 ⇒ <b>false</b>（最硬的一条：这个时长
+     *       确实跨作品重复，且至少有一条是没字幕的）；</li>
+     *   <li>该时长在池里出现在 ≥2 个不同作品 ⇒ <b>false</b>（无法认人）；</li>
+     *   <li>其余 ⇒ <b>true</b>。</li>
+     * </ul>
+     *
+     * @param durMs 目标轨时长（毫秒）；{@code <= 0} ⇒ true（无从判定，交回原逻辑）
+     */
+    public static boolean cacheGateAllows(long durMs) {
+        if (sDisabled || durMs <= 0L) {
+            return true;
+        }
+        try {
+            ensureIndexLoaded();
+            List<Pack> snapshot;
+            synchronized (LOCK) {
+                snapshot = new ArrayList<>(PACKS.values());
+            }
+            if (snapshot.isEmpty()) {
+                return true;
+            }
+            if (hasAnyNoSubtitle(snapshot, durMs)) {
+                LogGate.debug(TAG, " cache gate BLOCK dur=" + durMs + "ms (some prefetched work has"
+                        + " unsubtitled track with same duration)");
+                return false;
+            }
+            LinkedHashSet<String> keys = new LinkedHashSet<>();
+            for (Pack p : snapshot) {
+                for (Track t : p.tracks) {
+                    if (Math.abs(t.durMs - durMs) <= DUR_TOLERANCE_MS) {
+                        keys.add(t.workKey);
+                    }
+                }
+            }
+            if (keys.size() >= 2) {
+                LogGate.debug(TAG, " cache gate BLOCK dur=" + durMs + "ms (ambiguous work key: "
+                        + keys.size() + " candidates)");
+                return false;
+            }
+            return true;
+        } catch (Throwable e) {
+            return true;
+        }
+    }
+
     /** 【code 1024 / P1-8】已预取几部作品（设置页读数用）。 */
     public static int works() {
         try {

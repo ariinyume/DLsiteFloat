@@ -247,8 +247,12 @@ def main():
 
     # ================= E. 清毒 =================
     print('=== E. 清毒 ===')
-    check('INDEX_SCHEMA = 4（本轮值）',
-          'private static final int INDEX_SCHEMA = 4;' in cache, '【本轮新增】')
+    # 【code 1042 泛化】本轮是 1042 的「写错槽位」清毒，索引从 4 升到 5
+    #   ⇒ 判据由「钉死 4」改成「下界 4」（1020 那轮的语义是「不再是 3」）。
+    _m = re.search(r'INDEX_SCHEMA\s*=\s*(\d+)\s*;', cache)
+    check('INDEX_SCHEMA >= 4（1020 起清毒过，后续轮次可继续升）',
+          _m is not None and int(_m.group(1)) >= 4,
+          ('实际 %s' % _m.group(1)) if _m else '未找到')
     check('INDEX_SCHEMA 旧值 3 绝迹',
           'INDEX_SCHEMA = 3;' not in cache, '【本轮删除】')
 

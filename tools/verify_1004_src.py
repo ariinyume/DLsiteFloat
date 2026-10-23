@@ -251,7 +251,9 @@ def main():
 
     # 盖章顺序（加载 JSON 那一刻）：主人印章 → 选择键印章 → 「选择跑在身份前面」旗标
     load = strip_comments(method_body(repo, 'private void loadFromJsonArrayInternal('))
-    i_id = load.find('cuesOwnerIdentity = observedPlaylistIdentity')
+    # 【code 1042 改写】印章不再直接取活值身份，而是走时长锚定函数
+    #   （stampIdentityForLoadedJson），判据改为「赋值点仍在、且仍是最先写的那一个」。
+    i_id = load.find('cuesOwnerIdentity =')
     i_sel = load.find('cuesOwnerSelection = observedPlaylistSelection')
     i_ahead = load.find('cuesLoadedAheadOfIdentity = PlaylistKey.selectionAheadOfIdentity(')
     check('★ 盖章顺序：cuesOwnerIdentity → cuesOwnerSelection → cuesLoadedAheadOfIdentity',

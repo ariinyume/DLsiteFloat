@@ -167,6 +167,95 @@ public final class PlaylistKey {
     }
 
     /**
+     * 【code 1042】加载字幕 JSON 时的**印章计算** —— 时长分量以「这份 JSON 自己的归属」为准。
+     *
+     * <h3>要解决的问题</h3>
+     * 印章原本直接取「当前活跃播放列表身份」（{@code observedPlaylistIdentity}），
+     * 而那是宿主状态 Map 的**活值**。字幕 JSON 是**异步**到达的（预取 / 磁盘 / 云端都一样），
+     * 到达时宿主可能已经翻到下一轨 ⇒ 印章记的身份属于下一轨 ⇒
+     * {@code tryResumeFromCache} 的 {@code newIdentity == cuesOwnerIdentity} 必然成立
+     * ⇒ 「切回原轨」被误判 ⇒ 把上一轨的字幕当成这一轨的放出去，还会写进磁盘缓存。
+     *
+     * <p>真机 2026-10-22 17:24（Ari，code 1041）就是这个：207120ms 轨的 JSON 在
+     * 17:24:34.358 到达（宿主 17:24:34.859 才报 idx=1/513.984s），一分钟后
+     * 513984ms 那轨放的是 207120ms 那轨的台词。
+     *
+     * <h3>判据</h3>
+     * 预取池与磁盘缓存都**按时长**取文件 ⇒ 它们知道这份 JSON 属于哪一轨（{@code durMsHint}）。
+     * <ul>
+     *   <li>与身份里的时长相差 ≤ {@code toleranceMs} ⇒ 同一轨，原样返回；</li>
+     *   <li>相差超出容差 ⇒ <b>返回 0（印章作废）</b>。不拿它「重建一个身份」是因为
+     *       {@code trackCount} / {@code currentIndex} 同样来自那个已经跑偏的活值，
+     *       拼出来的身份只是「看着像」，认领时照样放错内容。</li>
+     *   <li>{@code durMsHint <= 0}（云端 / 字节流路径拿不到时长）或身份里还没有时长 ⇒
+     *       原样返回，行为与本版之前一致。</li>
+     * </ul>
+     *
+     * <p>纯函数（零状态、零 Android 依赖）⇒ 进 {@code GoldenVectorTest}。
+     *
+     * @param baseIdentity 当前活跃播放列表身份（0 = 未知）
+     * @param durMsHint    这份 JSON 所属音轨的时长（毫秒；{@code <= 0} = 不知道）
+     * @param toleranceMs  容差（{@code SubtitleRepository#STAMP_DUR_TOLERANCE_MS}）
+     * @return 可用的印章；{@code 0} = 印章作废（不允许走 {@code byIdentity} 认领）
+     */
+    public static long stampForLoadedJson(long baseIdentity, long durMsHint, long toleranceMs) {
+        if (baseIdentity == 0L || durMsHint <= 0L) {
+            return baseIdentity;
+        }
+        long durInStamp = identityDurationMs(baseIdentity);
+        if (durInStamp <= 0L) {
+            return baseIdentity;
+        }
+        if (Math.abs(durInStamp - durMsHint) <= toleranceMs) {
+            return baseIdentity;
+        }
+        return 0L;
+    }
+
+    /**
+     * 【code 1042】同作品、同内容的多条缓存候选里，**哪一条的标签最贴内容**。
+     *
+     * <h3>用途</h3>
+     * 索引 4 → 5 的迁移只清「同一份字幕被写到同一作品的多个轨槽」的错标条目，
+     * 而「留哪条」就由本方法判。每条缓存都记了这份字幕自己的**最大结束时间**
+     * （{@code maxEnd}，秒）与它被贴上的轨时长（{@code durMs}）—— 错标的那条两者对不上。
+     *
+     * <h3>真机黄金向量（Ari 2026-10-22 17:24:35，code 1041）</h3>
+     * <pre>
+     *   idx=1  dur=513984ms  maxEnd≈207s   → 误差 307s（错标，被 1041 的误认领写上去的）
+     *   idx=0  dur=207120ms  maxEnd≈207s   → 误差 ≈0    （正确，预取池按时长取的那条）
+     * </pre>
+     *
+     * <p>为什么放在这个类：本方法是**零状态纯函数**，而真正调用它的
+     * {@code SubtitleCache} 带 {@code android.content.Context} 依赖、纯 JVM 单测加载不了；
+     * 放这里才能进 {@code GoldenVectorTest}（与 {@link #stampForLoadedJson} 同理）。
+     *
+     * @param maxEnds 各候选的字幕最大结束时间（秒）；{@code <= 0} = 未知
+     * @param durs    各候选的轨时长（毫秒）
+     * @return 应当保留的下标；{@code -1} = 判不了（候选不足两条，或有未知项）——
+     *         调用方**一条都不许删**
+     */
+    public static int pickBestLabelMatch(double[] maxEnds, long[] durs) {
+        if (maxEnds == null || durs == null || maxEnds.length != durs.length
+                || maxEnds.length < 2) {
+            return -1;
+        }
+        int best = -1;
+        double bestErr = Double.MAX_VALUE;
+        for (int i = 0; i < maxEnds.length; i++) {
+            if (maxEnds[i] <= 0d) {
+                return -1;          // 缺 maxEnd 就无从比较 ⇒ 保守不判
+            }
+            double err = Math.abs(maxEnds[i] * 1000.0 - durs[i]);
+            if (err < bestErr) {
+                bestErr = err;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    /**
      * 【code 1007】把 {@code (trackCount, durationSec, currentIndex)} 打包成**身份键** ——
      * 与 {@code PlayerSourceHook#makeIdentity} **同一算式**的公开版本。
      *

@@ -4926,3 +4926,88 @@ code 1038 升 1039，label 保持 1020.2。
 
 **口径**：继续只升 code ⇒ versionName / tag 保持 2.4.1，code 1039 升 1040，label 保持 1020.2。
 索引 schema 仍为 4 ⇒ 升级后缓存不清零；无清单 / 组件变更 ⇒ 可直接覆盖安装。
+### 2.4.1（code 1040 → 1041）：按钮不跟随播放页消失 —— 关页后多挂 2.7 秒
+
+真机日志（Ari 2026-10-22 11:05:53~11:06:33，附录屏）：四次关闭播放页，按钮
+**全部滞后 ≈2.7s 才消失**：
+
+| 页面滑出屏 | 按钮 hide | 滞后 | hide 行的快照 |
+|---|---|---|---|
+| 11:05:54.892 | 11:05:57.668 | 2.78s | `snap=2771px/2615ms` |
+| 11:06:00.209 | 11:06:03.072 | 2.86s | `snap=2771px/2654ms` |
+| 11:06:23.067 | 11:06:25.914 | 2.85s | `snap=2771px/2633ms` |
+| 11:06:30.121 | 11:06:32.789 | 2.67s | `snap=2771px/2679ms` |
+
+根因：**关闭动画自己也写快照**。页面 translateY 0→2772 每帧变化 ≥ 死区 ⇒
+`pageVisualOffset()` 持续续期，动画末帧把 `sHeldOffset` 钉在 2771（= 拖到极限位，
+位移本身分不出「拖动中」还是「已滑走」）。页面静止后不再续期，但
+`HOLD_SNAPSHOT_MS=2600` 要等满，期间每次心跳都命中门③ 打
+`hide suppressed: page held`。而门③ 原本指望的「真离开时 RN 会 detach」**
+不成立** —— 宿主把栈内播放页停靠在屏外不 detach，四次日志全是 `attached=true`。
+
+修法：门③ 快照有效窗**分档**（纯函数 `PageFollowPolicy.gate3Window`）——
+锚点占屏面积 = 0（页面真的看不见了）→ 新增 `HOLD_SNAPSHOT_GONE_MS=500ms`；
+仍有可见面积（真实拖动实测 30~45%）→ 长窗 2600ms 原样不动，
+「手指按住页面停在极限位静止」的保护不受影响。
+回归：`GoldenVectorTest` 新增 3 例（0%/短窗过期、0%/短窗内、38%/长窗），
+`tools/geom/verify_page_follow_policy.py` 同步新增同样 3 条向量。
+
+**口径**：继续只升 code ⇒ versionName / tag 保持 2.4.1，code 1040 升 1041，label 1022.1。
+索引 schema 仍为 4 ⇒ 升级后缓存不清零；无清单 / 组件变更 ⇒ 可直接覆盖安装。
+### 2.4.1（code 1041 → 1042）：离线读到「别人音轨」的字幕 —— 缓存与印章各有一个口子
+
+真机日志（Ari 2026-10-22 17:22 / 17:24，两张截图）：
+
+**口子一 —— 磁盘缓存绕过时长歧义**
+`17:22:00.577` 切到 RJ01513147 的 113999ms 轨，预取池**正确拒绝**
+（`some prefetched work has unsubtitled track with same duration`），
+`17:22:01.582` 磁盘缓存却 `HIT (identity) work=RJ01643778` —— **另一部作品**的同长轨字幕。
+根因：离线时 `freshWorkKey()` 为空，`SubtitleCache.pickLocked` 对「唯一候选」直接放行
+（1020 为治「过期作品键造成假 MISS」定的口径，本身没错）⇒ 缓存成了绕过歧义判定的后门。
+修法：新增 `ZiptreePrefetch.cacheGateAllows(durMs)`，与预取池共用同一把尺子 ——
+「等长无字幕轨」或「该时长跨 ≥2 部作品」⇒ 缓存也不命中；池子为空时一律放行。
+`hasDiskCacheFor` / `refreshLocalCacheAvailability` 同步，避免「说有垫背却读不到」。
+
+**口子二 —— 印章的时长取自会漂移的活值**
+```
+17:24:34.358 Loaded 27 cues（这份 JSON 属于 207120ms 那轨）
+17:24:34.859 statusMap 才报 idx=1 / duration=513.984   ← 晚 500ms
+17:24:35.361 [code 980] BACK to the playlist these cues belong to | cues=27 -> RESUME
+17:24:35.366 put tc=6 idx=1 cues=27 bytes=4957        ← 207120 的字幕写进 513984 的槽
+17:24:35.719 stamp duration tc=6 idx=1 dur=513984ms    ← 还盖上了新轨的时长戳
+```
+根因：印章取 `observedPlaylistIdentity`（宿主状态 Map 的**活值**），而 JSON 是异步到达的，
+到达时宿主可能已翻到下一轨 ⇒ 印章记成下一轨 ⇒ `newIdentity == cuesOwnerIdentity` 必然成立。
+修法：`PlaylistKey.stampForLoadedJson(base, durMsHint, tol)` —— 时长对不上就**作废印章**（返回 0），
+不走 `byIdentity`，交回选择键 / 重建窗口 / 换作品三条有独立证据的路径。
+`loadFromJson` 新增带 `durMsHint` 的重载，预取与磁盘两条兜底路径各自传入自己取的时长。
+
+**索引 4 → 5（定向清理，不清空）**：1041 写坏的那条「内容属于甲轨、标签写着乙轨」的条目，
+可判别的签名是「字幕自己的最大结束时间只与其中一个槽的时长吻合」——
+真机上那份 207120ms 轨的字幕（maxEnd≈207s）被同时写在 idx=0（dur=207120ms，吻合）与
+idx=1（dur=513984ms，差 307s）两个槽。迁移时按 `PlaylistKey.pickBestLabelMatch`
+只删标签明显对不上的副本，判不了（缺 `maxEnd` / 只剩一条）就一条不动，
+其余缓存与占用原样保留。升版本号只是为了制造一次跑迁移的时机。
+
+**口径**：继续只升 code ⇒ versionName / tag 保持 2.4.1，code 1041 升 1042，label 1022.1 升 1022.2。
+无清单 / 组件变更 ⇒ 可直接覆盖安装；升级只清理被错标的那几条，其余缓存不受影响。
+### 2.4.2（code 1042 → 1043）：索引迁移改成定向清理 —— 不再为了几条脏数据清空缓存
+
+1042 把 `INDEX_SCHEMA` 4→5 当成整批丢弃，代价是用户攒下的字幕缓存整个清空一次。
+复查后确认错标**有可判别的签名**：
+
+每条缓存都记着这份字幕自己的 `maxEnd`（秒），而 `durMs` 是它被贴上的轨时长。
+1041 那条错标是「`maxEnd≈207s` 的内容被贴到 `dur=513984ms` 的槽」，而同一份内容
+在正确槽里 `dur=207120ms` 完全吻合 —— 一比就分得出谁对。
+
+修法：4→5 走 `purgeMislabelledLocked()` 而不是 `discardIndexAndSweepLocked()`：
+- 按「同作品 + 同内容 hash」分组；
+- 组内 ≥2 条时用 `PlaylistKey.pickBestLabelMatch` 保留标签最贴内容的一条、删其余；
+- 缺 `maxEnd` 或只剩一条 ⇒ **一条不动**；
+- 其余条目（含正常缓存、以及判不了的）原样保留，缓存占用不变；索引仍落到 5，迁移只跑一次。
+
+判据抽成零状态纯函数进 `GoldenVectorTest`（真机那两条数字就是黄金向量，
+另覆盖「有一条缺 maxEnd ⇒ 判不了」「只剩一条 ⇒ 无需判定」）。
+
+**口径**：按 Ari 指令升语义版本号 ⇒ versionName / tag 2.4.1 升 **2.4.2**，code 1042 升 1043，label 1022.2 升 1022.3。
+无清单 / 组件变更 ⇒ 可直接覆盖安装；本次升级**不再清空缓存**。

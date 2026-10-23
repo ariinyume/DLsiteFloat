@@ -1046,8 +1046,36 @@ public class ActivityButtonHook {
      * 判据③永久成立。现已改成「位移真的变了才续期」，所以这条上限才真正生效。
      * 值同时从 1500 提到 2600：窗口以前从「最后一次**变动**」起算，而实测
      * 「页面已到位、但还没回弹」的空窗最长 2.1s（见上），1500 会在老场景里提前放行。
+     *
+     * ⚠️ 【code 1041】本值是**长窗**，只在锚点仍有可见面积时用；
+     * 锚点已完全不可见（占屏面积 = 0，即页面真的停靠在屏外）时改用
+     * {@link #HOLD_SNAPSHOT_GONE_MS} —— 否则关闭动画自己写下的快照会把 hide 压满 2.6s。
      */
     private static final long HOLD_SNAPSHOT_MS = 2600L;
+
+    /**
+     * 【code 1041】门③ 快照的**短窗**：锚点已完全不可见（占屏面积 = 0）时改用这个值（ms）。
+     *
+     * <p>真机取证（2026-10-22 11:05:53~11:06:33，2.4.1 / code 1040）：四次关闭播放页，
+     * 按钮**全部滞后 ≈2.7s 才消失**，四条 hide 行的 {@code snap 距现在}分别
+     * 2615 / 2654 / 2633 / 2679ms —— 全部顶在 {@link #HOLD_SNAPSHOT_MS} 上，
+     * 期间每次都先打一行 {@code hide suppressed: page held}。
+     *
+     * <p>根因：**关闭动画自己也写快照**。页面 translateY 0→2772 每帧变化 ≥ 死区 ⇒
+     * {@code pageVisualOffset()} 持续续期，动画末帧把 {@code sHeldOffset} 钉在 2771；
+     * 而宿主把栈内播放页停靠在屏外**不 detach**（四次 {@code attached=true}），
+     * 【{@code holdProbeStillAttached()} 那条「真离开会 detach」的退路不成立】，
+     * 于是只能硬等 2600ms。
+     *
+     * <p>为什么只对「面积 = 0」缩窗、不动 2600 本身：2600 是给「手指按住页面停在
+     * 极限位**静止**」留的（实测空窗最长 2.1s）；那种场景下锚点仍有 **30~45%**
+     * 可见面积（见 {@link #PAGE_HOLD_MIN_AREA}），而关闭完成后是 **0%**。
+     * 判据见 {@code PageFollowPolicy.gate3Window}。
+     *
+     * <p>取值 500ms：覆盖「关闭动画末帧 → 下一趟心跳确认」的最坏相位（心跳 55ms、
+     * 静止后最长 320ms），再留一倍余量；比 2600 少挂 2.1 秒。
+     */
+    private static final long HOLD_SNAPSHOT_GONE_MS = 500L;
 
     /**
      * 切回前台时，允许多信任「上次结论」的窗口（v43，ms）。
@@ -1968,7 +1996,7 @@ public class ActivityButtonHook {
                 sHeldOffsetMs, sHeldOffset, holdProbeStillAttached(),
                 pageVisualOffset(),
                 sLastScreenW, sLastScreenH, anchorAreaRatio(sLastScreenW, sLastScreenH),
-                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS,
+                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, HOLD_SNAPSHOT_GONE_MS,
                 PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
     }
 

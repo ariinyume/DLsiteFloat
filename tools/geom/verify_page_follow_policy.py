@@ -5,13 +5,21 @@
 
 用途
 ----
-`PageFollowPolicy.isPageHeld` 的五道门涉及 5 个阈值常量的组合
-(PAGE_MOTION_HOLD_MS=200 / HOLD_SNAPSHOT_MS=2600 / PAGE_HOLD_PX=24 /
- PAGE_HOLD_MIN_AREA=0.12 /哨兵 NO_BASELINE)，
+`PageFollowPolicy.isPageHeld` 的五道门涉及 6 个阈值常量的组合
+(PAGE_MOTION_HOLD_MS=200 / HOLD_SNAPSHOT_MS=2600 / HOLD_SNAPSHOT_GONE_MS=500 /
+ PAGE_HOLD_PX=24 / PAGE_HOLD_MIN_AREA=0.12 /哨兵 NO_BASELINE)，
 此前**只能真机试**。v36 复盘里「门③读错字段、从来没有生效过」正是这类
 组合判据的典型事故 —— 门①②恰好都能通过，于是门③专门要防的场景原样发生。
 
 本脚本用**真机实测值**当测试向量，离线验证抽出的判据层行为正确。
+
+【code 1041】门③ 有效窗分档
+----------------------------
+2026-10-22 11:05:53~11:06:33（2.4.1 / code 1040）四次关闭播放页，按钮**全部滞后
+≈2.7s 才消失**，四条 hide 行的 `snap 距现在` 分别是 2615 / 2654 / 2633 / 2679ms，
+全部顶在 HOLD_SNAPSHOT_MS 上 —— 关闭动画自己把位移推到 2772 并写进快照，
+而宿主停靠屏外**不 detach**，只能硬等 2600ms。
+现在：锚点占屏面积 = 0（真的看不见了）→ 短窗 500ms；仍有面积（真拖动 30~45%）→ 长窗不变。
 
 向量来源
 --------
@@ -42,6 +50,8 @@ import sys
 # ══════════════════════════════════════════════════════════════
 PAGE_MOTION_HOLD_MS   = 200
 HOLD_SNAPSHOT_MS      = 2600
+# 【code 1041】锚点完全不可见（占屏面积 = 0）时的门③ 短窗
+HOLD_SNAPSHOT_GONE_MS = 500
 PAGE_HOLD_PX          = 24
 PAGE_HOLD_MIN_AREA    = 0.12
 FOLLOW_STILL_FRAMES   = 90
@@ -59,10 +69,16 @@ CLAMP = 'clamp'
 # 被测对象：严格照抄 PageFollowPolicy.java 的算法
 # （保持与源码同形，便于逐行 diff；等价性由 dex 层兜底）
 # ══════════════════════════════════════════════════════════════
+def gate3_window(anchor_area_ratio, snapshot_ms, snapshot_gone_ms):
+    """【code 1041】门③ 有效窗分档：锚点完全不可见 → 短窗。"""
+    return snapshot_gone_ms if anchor_area_ratio <= 0 else snapshot_ms
+
+
 def is_page_held(player_confirmed, last_motion_ms, now,
                  held_offset_ms, held_offset, hold_probe_attached,
                  page_visual_offset, screen_w, screen_h, anchor_area_ratio,
-                 motion_hold_ms, snapshot_ms, hold_px, hold_min_area):
+                 motion_hold_ms, snapshot_ms, hold_px, hold_min_area,
+                 snapshot_gone_ms=HOLD_SNAPSHOT_GONE_MS):
     # 门⓪ 会话闸
     if not player_confirmed:
         return False
@@ -70,7 +86,9 @@ def is_page_held(player_confirmed, last_motion_ms, now,
     if last_motion_ms != 0 and now - last_motion_ms < motion_hold_ms:
         return True
     # 门③ 快照兜底（先于门④）
-    if (held_offset_ms != 0 and now - held_offset_ms < snapshot_ms
+    if (held_offset_ms != 0
+            and now - held_offset_ms < gate3_window(
+                anchor_area_ratio, snapshot_ms, snapshot_gone_ms)
             and abs(held_offset) >= hold_px and hold_probe_attached):
         return True
     # 门④ 视觉位移
@@ -209,7 +227,21 @@ def test_is_page_held_gates():
         ('门③ 快照超龄（now-snapMs=2600 不 < 2600）→ 不靠门③',
          dict(player_confirmed=True, last_motion_ms=0, now=2601,
               held_offset_ms=1, held_offset=2772, hold_probe_attached=True,
-              page_visual_offset=0), False),
+              page_visual_offset=0, anchor_area_ratio=0.4), False),
+        # ── 【code 1041】门③ 有效窗分档：三条一起锁住「只在面积=0 时缩窗」──
+        ('【1041】锚点 0%（页面停靠屏外）+ 快照 2615ms 前 → 短窗已过期 ⇒ 不抑制'
+         '（旧版此处被 2600 撑住，真机多挂 2.6s）',
+         dict(player_confirmed=True, last_motion_ms=0, now=10000,
+              held_offset_ms=7385, held_offset=2771, hold_probe_attached=True,
+              page_visual_offset=2772, anchor_area_ratio=0.0), False),
+        ('【1041】锚点 0% + 快照 241ms 前 → 短窗内 ⇒ 仍抑制（关页动画末帧不抢跳）',
+         dict(player_confirmed=True, last_motion_ms=0, now=10000,
+              held_offset_ms=9759, held_offset=2771, hold_probe_attached=True,
+              page_visual_offset=2772, anchor_area_ratio=0.0), True),
+        ('【1041】锚点 38%（真拖动实测 30~45%）+ 同一条 2615ms 快照 → 长窗不变 ⇒ 仍抑制',
+         dict(player_confirmed=True, last_motion_ms=0, now=10000,
+              held_offset_ms=7385, held_offset=2771, hold_probe_attached=True,
+              page_visual_offset=2772, anchor_area_ratio=0.38), True),
         ('门③ 位移不足 24px（23 < 24）→ 不靠门③',
          dict(player_confirmed=True, last_motion_ms=0, now=250,
               held_offset_ms=1, held_offset=23, hold_probe_attached=True,
@@ -247,7 +279,8 @@ def test_is_page_held_gates():
                 screen_h=SCREEN_H, anchor_area_ratio=0.0,
                 motion_hold_ms=PAGE_MOTION_HOLD_MS,
                 snapshot_ms=HOLD_SNAPSHOT_MS, hold_px=PAGE_HOLD_PX,
-                hold_min_area=PAGE_HOLD_MIN_AREA)
+                hold_min_area=PAGE_HOLD_MIN_AREA,
+                snapshot_gone_ms=HOLD_SNAPSHOT_GONE_MS)
     fails = []
     for desc, over, want in cases:
         kw = dict(base)
@@ -258,7 +291,7 @@ def test_is_page_held_gates():
                            kw['screen_w'], kw['screen_h'],
                            kw['anchor_area_ratio'], kw['motion_hold_ms'],
                            kw['snapshot_ms'], kw['hold_px'],
-                           kw['hold_min_area'])
+                           kw['hold_min_area'], kw['snapshot_gone_ms'])
         if got != want:
             fails.append((desc, want, got))
     print('  isPageHeld 门序/边界 %d 条' % len(cases))

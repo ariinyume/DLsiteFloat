@@ -55,11 +55,18 @@ public final class TestAccessBridge {
             int pageVisualOffset,
             int screenW, int screenH, float anchorAreaRatio,
             long pageMotionHoldMs, long holdSnapshotMs,
+            long holdSnapshotGoneMs,
             int pageHoldPx, float pageHoldMinArea) {
         return PageFollowPolicy.isPageHeld(playerConfirmedInSession, lastPageMotionMs, now,
                 heldOffsetMs, heldOffset, holdProbeStillAttached, pageVisualOffset,
                 screenW, screenH, anchorAreaRatio, pageMotionHoldMs, holdSnapshotMs,
-                pageHoldPx, pageHoldMinArea);
+                holdSnapshotGoneMs, pageHoldPx, pageHoldMinArea);
+    }
+
+    /** 【code 1041】门③ 有效窗分档（纯函数）。 */
+    public static long gate3Window(float anchorAreaRatio, long holdSnapshotMs,
+            long holdSnapshotGoneMs) {
+        return PageFollowPolicy.gate3Window(anchorAreaRatio, holdSnapshotMs, holdSnapshotGoneMs);
     }
 
     public static boolean reportsStill(boolean following, int followStill, int followStillFrames) {

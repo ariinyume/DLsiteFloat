@@ -224,9 +224,12 @@ def main():
     check('④ 新入口把 workKey 传进内部实现（不是收了参数不用）',
           re.search(r'loadFromJsonArrayInternal\(webvtt, workKey(?:, [^)]+)?\);',
                     norm(repoc)) is not None)
+    # 【code 1042 再放宽】兜底路径要把「这份 JSON 自己的时长」传进印章锚定
+    #   ⇒ 内部实现新增第四参 durMsHint（判据只要求 workKey 仍是第二参，后两参可有可无）。
     check('④ 内部实现的签名带第二参 workKey',
-          re.search(r'private void loadFromJsonArrayInternal\(JSONArray webvtt, '
-                    r'String workKey(?:, boolean \w+)?\)', repoc) is not None)
+          re.search(r'private void loadFromJsonArrayInternal\(JSONArray webvtt,\s*'
+                    r'String workKey(?:,\s*boolean \w+)?(?:,\s*long \w+)?\s*\)',
+                    repoc, re.S) is not None)
     stamp = norm(repoc)
     check('④ 盖章条件：只有拿到非空 workKey 才动这三个字段（拿不到 URL 的路径不冲历史基线）',
           'if (workKey != null && !workKey.isEmpty()) {' in stamp)

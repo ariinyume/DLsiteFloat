@@ -41,7 +41,7 @@ plugins {
 //                    只是仓库内可读别名 ⇒ 改它**不必重新出包**。
 //                 ⚠️ 2026-10-14 回溯：1013~1017 都构建于 10-14，label 已由 `1008.30`
 //                    回填为 `1014.1`~`1014.5`；10-13 及更早的条目**保留旧值**（历史记录）。
-def appVersionTag = '2.4.1'
+def appVersionTag = '2.4.2'
 // ⚠️ 写成 int 字面量 925（不要写 0925 —— Groovy 可能按八进制/前导零解析）：
 //    versionCode 的**数值**是 925，管理器里显示 925，可读语义看 appVersionCodeLabel。
 // ── 版本履历（code 994 / label 1008.15）──
@@ -620,9 +620,45 @@ def appVersionTag = '2.4.1'
 //      仓库把它纳入 grace 分级：预取就绪 ⇒ 走标准窗 1000ms，不再等 15s；
 //   ④ 云端优先不变：1s 内云端 JSON 到了仍以云端为准；晚到的云端 JSON 照旧覆盖。
 //   ⚠️ 继续只升 code：versionName / tag 2.4.1、versionCode 1040、label 1020.2。
-def appVersionCode = 1040
-def appVersionCodeLabel = '1020.2'
-def appVersionName = '2.4.1'
+// 【code 1041 / 2.4.1】按钮"不跟随播放页消失"—— 关闭播放页后多挂 ≈2.7s：
+//   ① 真机日志（2026-10-22 11:05:53~11:06:33，1040）：四次关页 hide 分别滞后
+//      2.78 / 2.86 / 2.85 / 2.67s，四条 hide 行的 `snap 距现在` = 2615/2654/2633/2679ms，
+//      全部顶在 HOLD_SNAPSHOT_MS=2600 上，期间每次都先打 `hide suppressed: page held`；
+//   ② 根因：关闭动画（translateY 0→2772）自己就在写快照（位移每帧变化即续期），
+//      而宿主把栈内播放页停靠屏外**不 detach**（四次 attached=true）⇒
+//      "ref detach 就放行"那条退路不存在，只能硬等 2600ms；
+//   ③ 修法：门③ 有效窗分档 —— 锚点占屏面积 = 0（真的看不见了）时改用
+//      HOLD_SNAPSHOT_GONE_MS=500ms；仍有面积（真拖动实测 30~45%）长窗 2600 不变。
+//      判据是纯函数 PageFollowPolicy.gate3Window，纳入 GoldenVectorTest /
+//      verify_page_follow_policy.py 双向回归。
+//   ⚠️ 继续只升 code：versionName / tag 2.4.1、versionCode 1041、label 1022.1。
+// 【code 1042 / 2.4.1】离线读到「别人音轨」的字幕 —— 两条兜底路径各有一个口子：
+//   ① 真机（2026-10-22 17:22:21 截图）切到 RJ01513147 的 113999ms 轨，预取池**正确拒绝**
+//      （`some prefetched work has unsubtitled track with same duration`），下一秒磁盘缓存
+//      却命中了 **RJ01643778** 的同长轨字幕 —— 离线时 freshWorkKey() 为空，SubtitleCache.pickLocked
+//      对「唯一候选」直接放行（1020 为治假 MISS 定的口径），缓存成了绕过歧义判定的后门。
+//      修法：新增 ZiptreePrefetch.cacheGateAllows(durMs) 与预取池共用同一把尺子
+//      （等长无字幕轨 / 该时长跨作品重复 ⇒ 缓存也不命中，宁可空白）；has/availability 同步。
+//   ② 真机（17:24:50 截图）tc=6 dur=207120 的 JSON 在 17:24:34.358 到达并盖印章，而宿主
+//      17:24:34.859 才报 idx=1/513.984s ⇒ 印章被记成「下一轨」⇒ 17:24:35.361 `[code 980]
+//      BACK to the playlist` 误认领，把 207120 的 27 条字幕写到 idx=1 并盖上 513984 的时长戳
+//      （污染缓存）。修法：印章时长以「这份 JSON 自己的归属」为准 ——
+//      PlaylistKey.stampForLoadedJson：对不上就**作废印章**（返回 0），不走 byIdentity。
+//   ⚠️ 继续只升 code：versionName / tag 2.4.1、versionCode 1042、label 1022.2。
+// 【code 1043 / 2.4.1】索引迁移改成「定向清理」—— 用户反馈不想为了几条脏数据把缓存全清：
+//   ① 1042 把 INDEX_SCHEMA 4→5 当成整批丢弃（discardIndexAndSweepLocked），代价是用户
+//      攒下的字幕缓存整个清空一次；
+//   ② 复查发现错标**有可判别的签名**：每条缓存都记着这份字幕自己的 maxEnd（秒），
+//      而 durMs 是它被贴上的轨时长 —— 1041 那条错标是「maxEnd≈207s 被贴到 dur=513984ms」，
+//      而同一份内容在正确槽里 dur=207120ms 完全吻合 ⇒ 两者一比就分得出谁对；
+//   ③ 修法：4→5 不再整批丢弃，改走 purgeMislabelledLocked() —— 按「同作品 + 同内容 hash」
+//      分组，组内 ≥2 条时用 PlaylistKey.pickBestLabelMatch 保留标签最贴内容的一条、删其余；
+//      缺 maxEnd 或只剩一条 ⇒ 一条不动；其余条目（含正常缓存）原样保留。
+//   ④ 判据抽成零状态纯函数进 GoldenVectorTest（真机那两条数字就是黄金向量）。
+//   ⚠️ 本轮升语义版本号：versionName / tag 2.4.1 升 2.4.2、versionCode 1043、label 1022.3。
+def appVersionCode = 1043
+def appVersionCodeLabel = '1022.3'
+def appVersionName = '2.4.2'
 
 android {
     namespace 'io.github.ariinyume.dlsitesoundfloat'

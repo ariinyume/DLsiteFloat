@@ -66,6 +66,8 @@ public class GoldenVectorTest {
     // PageFollowPolicy
     private static final long PAGE_MOTION_HOLD_MS = 200L;
     private static final long HOLD_SNAPSHOT_MS = 2600L;
+    /** 【code 1041】锚点完全不可见时的门③ 短窗。 */
+    private static final long HOLD_SNAPSHOT_GONE_MS = 500L;
     private static final int PAGE_HOLD_PX = 24;
     private static final float PAGE_HOLD_MIN_AREA = 0.12f;
     private static final int FOLLOW_STILL_FRAMES = 90;
@@ -166,7 +168,8 @@ public class GoldenVectorTest {
                 2772,                    // 门④ 视觉位移
                 SCREEN_W, SCREEN_H,
                 0.30f,                   // 门⑤ 锚点面积
-                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
+                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, HOLD_SNAPSHOT_GONE_MS,
+                PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
         assertTrue("真机抑制现场必须放行（否则按钮会在切后台时乱跳）", held);
     }
 
@@ -180,7 +183,8 @@ public class GoldenVectorTest {
         boolean held = TestAccessBridge.isPageHeld(
                 false, 0L, 10000L, 300L, 2772, true, 2772,
                 SCREEN_W, SCREEN_H, 0.30f,
-                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
+                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, HOLD_SNAPSHOT_GONE_MS,
+                PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
         assertFalse("没确认过播放页就不该判「页面被拖住」", held);
     }
 
@@ -198,8 +202,62 @@ public class GoldenVectorTest {
                 0L, 0, false,      // 快照无效
                 NO_BASELINE,        // 视觉位移无基线
                 SCREEN_W, SCREEN_H, 0.01f,   // 面积也很小（本该判false）
-                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
+                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, HOLD_SNAPSHOT_GONE_MS,
+                PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
         assertTrue("刚动过时必须抑制（哪怕其他证据都说「没在拖」）", held);
+    }
+
+    /**
+     * 【code 1041】门③ 分档：锚点**完全不可见**（占屏面积 = 0，页面已停靠屏外）时，
+     * 快照窗从 {@code HOLD_SNAPSHOT_MS} 缩到 {@code HOLD_SNAPSHOT_GONE_MS}。
+     *
+     * <p>真机现场（2026-10-22，四条 hide 行的原始量）：
+     * {@code snap=2771px / 距快照 2615~2679ms / attached=true / 锚点 area=0%}。
+     * 旧实现下门③ 撑满 2600ms ⇒ 按钮在列表页上多挂 ≈2.7s。
+     */
+    @Test
+    public void gate3_goneAnchor_usesShortWindow() {
+        // ① 2615ms：短窗（500）已过期 ⇒ 必须放行到门④/⑤，最终不抑制。
+        boolean heldLongAgo = TestAccessBridge.isPageHeld(
+                true,
+                0L, 10000L,
+                7385L, 2771, true,   // 门③：快照 2615ms 前，位移满屏，ref 仍 attached
+                2772,                  // 门④ 穿过
+                SCREEN_W, SCREEN_H,
+                0f,                    // 锚点 0% ⇒ 页面已完全离开屏幕
+                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, HOLD_SNAPSHOT_GONE_MS,
+                PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
+        assertFalse("页面已停靠屏外、快照超过短窗 ⇒ 不该再压住 hide", heldLongAgo);
+
+        // ② 241ms：短窗内 ⇒ 仍按原逻辑抑制（关闭动画刚结束的相位，不能抢跳）。
+        boolean heldJustNow = TestAccessBridge.isPageHeld(
+                true,
+                0L, 10000L,
+                9759L, 2771, true,
+                2772,
+                SCREEN_W, SCREEN_H,
+                0f,
+                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, HOLD_SNAPSHOT_GONE_MS,
+                PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
+        assertTrue("快照仍在短窗内 ⇒ 维持抑制（避免关页动画末帧抢跳）", heldJustNow);
+    }
+
+    /**
+     * 【code 1041】同上，但锚点**仍有可见面积**（真实拖动中实测 30~45%）——
+     * 长窗必须保持不变，否则「手指按住页面停在极限位静止」会被误判成离开。
+     */
+    @Test
+    public void gate3_visibleAnchor_keepsLongWindow() {
+        boolean held = TestAccessBridge.isPageHeld(
+                true,
+                0L, 10000L,
+                7385L, 2771, true,   // 同样是 2615ms 前的快照
+                2772,
+                SCREEN_W, SCREEN_H,
+                0.38f,                 // 拖动中实测 30~45%
+                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, HOLD_SNAPSHOT_GONE_MS,
+                PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
+        assertTrue("锚点还看得见 ⇒ 这是真拖动，长窗必须继续生效", held);
     }
 
     /**
@@ -218,7 +276,8 @@ public class GoldenVectorTest {
                 2772,                  // 门④ 穿过
                 SCREEN_W, SCREEN_H,
                 0.05f,                 // 门⑤ 面积 5% < 12% ⇒ 不抑制
-                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
+                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, HOLD_SNAPSHOT_GONE_MS,
+                PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
         assertFalse("锚点几乎不可见时不该判「被拖住」", held);
     }
 
@@ -239,7 +298,8 @@ public class GoldenVectorTest {
                 2772,                  // 门④：视觉位移 2772（>= 24，穿过）
                 0, 0,                 // 门⑤：屏幕尺寸取不到 ⇒ 保守放行
                 0.01f,
-                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
+                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, HOLD_SNAPSHOT_GONE_MS,
+                PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
         assertTrue("拿不到屏幕尺寸时保守放行（维持现状，不误隐藏）", held);
     }
 
@@ -258,7 +318,8 @@ public class GoldenVectorTest {
                 NO_BASELINE,         // 门④ 无基线 ⇒ 终止
                 SCREEN_W, SCREEN_H,
                 0.90f,                // 面积很大，但轮不到它
-                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
+                PAGE_MOTION_HOLD_MS, HOLD_SNAPSHOT_MS, HOLD_SNAPSHOT_GONE_MS,
+                PAGE_HOLD_PX, PAGE_HOLD_MIN_AREA);
         assertFalse("无位移基线时不得判「被拖住」", held);
     }
 
@@ -510,7 +571,10 @@ public class GoldenVectorTest {
     @Test
     public void protocol_selfCheckPasses() {
         assertNull("协议自检不通过: " + Protocol.selfCheck(), Protocol.selfCheck());
-        assertEquals(1, Protocol.PROTOCOL_VERSION);
+        // 【code 1041】这里原本钉着 1，但 code 1019（字幕离线缓存 + 换作品归属修复）
+        //   把 PROTOCOL_VERSION 升到了 2 而没同步本断言 ⇒ 此后每轮 `testDebugUnitTest`
+        //   都是 1 FAIL（红灯不算数，真回归就会被盖住）。本轮按协议实际值清零。
+        assertEquals(2, Protocol.PROTOCOL_VERSION);
     }
 
     /**
@@ -692,6 +756,72 @@ public class GoldenVectorTest {
         assertEquals(0L, PlaylistKey.makeSelection(7, -1));
         assertEquals(-1, PlaylistKey.selectionTrackCount(0L));
         assertEquals(-1, PlaylistKey.selectionIndex(0L));
+    }
+
+    /**
+     * 【code 1042】加载印章的时长锚定：印章的时长分量必须以「这份 JSON 自己的归属」为准。
+     *
+     * <p>真机 2026-10-22 17:24（Ari，code 1041）：
+     * <pre>
+     *   17:24:33.348 换轨 → tc=6 dur=207120 idx=0
+     *   17:24:34.358 Loaded 27 cues（这份 JSON 属于 207120 那轨，宿主还没报新轨）
+     *   17:24:34.859 statusMap 才报 idx=1 / duration=513.984
+     *   17:24:35.361 [code 980] BACK to the playlist these cues belong to -> RESUME  ← 误认
+     *   17:24:35.366 put tc=6 idx=1 cues=27   ← 207120 的字幕被写进 513984 的槽
+     * </pre>
+     * 修法：时长对不上 ⇒ 印章作废（返回 0），不让 {@code byIdentity} 认领。
+     */
+    @Test
+    public void stampForLoadedJson_anchorsOnJsonOwnDuration() {
+        long active = PlaylistKey.makeIdentity(6, 513.984, 1);   // 活值：已跑到下一轨
+        long own = 207120L;                                      // 这份 JSON 真正的时长
+        assertEquals("时长对不上 ⇒ 印章必须作废（否则会认领成下一轨）",
+                0L, PlaylistKey.stampForLoadedJson(active, own, 250L));
+
+        long same = PlaylistKey.makeIdentity(6, 207.120, 0);
+        assertEquals("时长一致 ⇒ 沿用原身份（切回原轨的正常路径）",
+                same, PlaylistKey.stampForLoadedJson(same, own, 250L));
+
+        assertEquals("差 200ms 在容差内 ⇒ 视为同一轨",
+                same, PlaylistKey.stampForLoadedJson(same, own + 200L, 250L));
+        assertEquals("差 300ms 超容差 ⇒ 作废",
+                0L, PlaylistKey.stampForLoadedJson(same, own + 300L, 250L));
+
+        assertEquals("拿不到时长（云端/字节流路径）⇒ 原样返回，行为与旧版一致",
+                active, PlaylistKey.stampForLoadedJson(active, 0L, 250L));
+        assertEquals("身份未知 ⇒ 原样返回 0",
+                0L, PlaylistKey.stampForLoadedJson(0L, own, 250L));
+    }
+
+    /**
+     * 【code 1042】同作品同内容的多条缓存候选里挑「标签最贴内容」的那条 ——
+     * 索引 4→5 迁移靠它**只清错标的几条**，而不是把整个缓存清空。
+     *
+     * <p>向量取自真机 2026-10-22 17:24:35（code 1041 的误认领）：
+     * 207120ms 轨的 27 条字幕被写到 idx=1 并盖上 513984ms 的时长戳，
+     * 而这份字幕自己的最大结束时间约 207s。
+     */
+    @Test
+    public void pickBestLabelMatch_keepsTheMatchingSlot() {
+        double[] maxEnds = {207d, 207d};
+        long[] durs = {513984L, 207120L};
+        assertEquals("必须保留时长与内容吻合的那条（下标 1）",
+                1, PlaylistKey.pickBestLabelMatch(maxEnds, durs));
+
+        assertEquals("反过来也能认出（下标 0 才是对的）",
+                0, PlaylistKey.pickBestLabelMatch(new double[]{207d, 207d},
+                        new long[]{207120L, 513984L}));
+
+        assertEquals("有一条 maxEnd 未知 ⇒ 判不了，一条都不许删",
+                -1, PlaylistKey.pickBestLabelMatch(new double[]{207d, 0d},
+                        new long[]{207120L, 513984L}));
+
+        assertEquals("只有一条候选 ⇒ 无需判定",
+                -1, PlaylistKey.pickBestLabelMatch(new double[]{207d}, new long[]{207120L}));
+
+        assertEquals("长度不一致 ⇒ 判不了",
+                -1, PlaylistKey.pickBestLabelMatch(new double[]{207d, 207d},
+                        new long[]{207120L}));
     }
 
     @Test

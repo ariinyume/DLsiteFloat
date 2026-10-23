@@ -37,3 +37,6 @@ tools/_*.py
 __pycache__/
 
 # 注意：gradle.properties 是构建必需（android.useAndroidX 等），不要忽略，需纳入版本库
+
+# 各轮发版的一次性工作目录（notes / 远端克隆 / bot 轮询快照）
+_rel*/
