@@ -4,8 +4,8 @@
 
 > 一個 LSPosed / Xposed 模組，在 DLsiteSound（DLsite 音訊 App）的**播放頁**上掛一個與播放進度同步的**懸浮字幕窗**；同時支援將字幕鏡像到**系統狀態欄**（在 SystemUI 程序內注入）。
 
-- 目前版本：**2.4.2**（`DLsiteFloat-2.4.2-code1043-debug.apk`，套件名稱 `io.github.ariinyume.dlsitesoundfloat`）
-- 📦 下載 APK：[Releases · v2.4.2](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.2)
+- 目前版本：**2.4.3**（`DLsiteFloat-2.4.2-code1047-debug.apk`，套件名稱 `io.github.ariinyume.dlsitesoundfloat`）
+- 📦 下載 APK：[Releases · v2.4.3](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.3)
 - 📝 開發進度：[DLsiteFloat 外掛開發進度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh)
 - ⭐ Xposed 倉庫：[DLsiteFloat - DLsiteSound 懸浮窗/狀態欄字幕模組](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -134,7 +134,7 @@
 
 ## 測試環境
 
-- 軟體版本：DLsiteSound 2.22.0
+- 軟體版本：DLsiteSound 2.22.1
 
 - 裝置 1 ： 一加 15 ColorOS 17.0.0.105 KernelSU 3.3.1 (32680-5) · 核心版本 6.12 · LSPosed 2.2.1 (7912)
 - 裝置 2 ： 一加 12 ColorOS 16.0.10.501 SukiSU 4.2.1 (40994-5) · 核心版本 6.1 · LSPosed 2.2.1 (7912)
@@ -168,7 +168,7 @@
   1. 你的裝置型號 / Android 版本 / ROM（尤其是否 ColorOS / 澎湃OS / 原生 / 類原生 等）
   2. 使用的 DLsiteSound 版本號
   3. 重現步驟 + LSPosed 日誌（`DLsiteSoundFloat` 過濾）+ 必要時 `dlsitefloat_net.log`+ 螢幕錄影 / 螢幕截圖（請給敏感資訊打碼或裁切）
-- **提交前請先確認**：裝的是不是最新 APK（看 LSPosed 日誌裡 `==== BUILD 2.4.2 / code 1043` 那一行）
+- **提交前請先確認**：裝的是不是最新 APK
 - **排查換軌 / 字幕擷取類問題時**：請在設定頁「其他」裡開啟**偵錯日誌**再重現一次（預設關閉，重現完可以關掉）。
 - **液態玻璃效果類問題**：請先試「模糊強度調回 50~60」「通透度不要拉滿」「依頁面明暗調環境背景亮度」；仍異常請附 LSPosed 日誌（`DLsiteSoundFloat` 過濾），並說明**機型 / ROM**（不同 ROM 的合成器模糊支援度不同）。
 
