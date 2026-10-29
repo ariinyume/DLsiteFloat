@@ -8,10 +8,15 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // 2.0.0 迁移：本机离线构建用 —— io.github.libxposed:api:102.0.0 的本地副本
-        // （Maven Central 上该坐标的全部制品已下载到 toolchain/maven-local）。
-        // 放在**最前**：避免 gradle 先去 mavenCentral 探网（离线时不必要地报网络错）。
-        maven { url 'file:///F:/WorkBuddyCache/DLSiteSound_Plus/toolchain/maven-local' }
+        // 可选：本地离线 Maven 副本（io.github.libxposed:api:102.0.0 等）。
+        // 仓库里**不写任何绝对路径** —— 只在本地确实存在时才加入，或用环境变量
+        // DLSITEFLOAT_MAVEN_LOCAL 指到别处。放在最前，避免离线时先去 mavenCentral 探网。
+        def _offlineMaven = System.getenv('DLSITEFLOAT_MAVEN_LOCAL')
+                ? new File(System.getenv('DLSITEFLOAT_MAVEN_LOCAL'))
+                : new File(rootDir, 'toolchain/maven-local')
+        if (_offlineMaven.isDirectory()) {
+            maven { url _offlineMaven.toURI() }
+        }
         google()
         // mavenCentral 提供 io.github.libxposed:api:102.0.0（2.0.0 起的唯一依赖）。
         mavenCentral()

@@ -447,6 +447,19 @@ public enum Strings {
     ALIGN_RIGHT("右对齐", "靠右", "Right"),
     LINE_SPACING("字幕间行距", "字幕間行距", "Line spacing"),
     WRAP_SPACING("长字幕内换行额外行距", "長字幕內換行額外行距", "Wrap extra spacing"),
+    /**
+     * 【code 1044 / 2.4.3】「字幕字体跟随系统设定」开关（默认关）。
+     *
+     * <p>「系统字体」= 手机系统设置里那套字体；默认的「关」= 用宿主 App 的字体
+     * （装了全局改字体模块时就是它换的那套）。只作用于悬浮窗字幕，
+     * 播放页三枚胶囊按钮恒随宿主字体。
+     */
+    FONT_FOLLOW_SYSTEM("字幕字体跟随系统设定", "字幕字型跟隨系統設定",
+            "Subtitle font follows system"),
+    /** 该行的副标题：一句话说清「开 / 关」各是什么字体。 */
+    SUP_FONT_FOLLOW_SYSTEM("开 ＝ 用手机系统字体；关 ＝ 用宿主 App 的字体",
+            "開 ＝ 用手機系統字型；關 ＝ 用宿主 App 的字型",
+            "On = phone system font; off = host app font"),
     /** 【code 1026】排版面自己的「恢复默认」（含悬浮窗颜色这一项，它归这一面管）。 */
     RESET_TYPO("恢复字幕排版默认设置", "恢復字幕排版預設設定", "Reset typography defaults"),
     /** v1.4 §3.1.5：新增「悬浮窗颜色」行的标签（摆在换行额外行距下方）。 */

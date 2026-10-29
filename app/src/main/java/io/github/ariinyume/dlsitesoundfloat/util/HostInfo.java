@@ -51,8 +51,21 @@ public final class HostInfo {
 
     private static final String TAG = "[DLsiteSoundFloat:Host]";
 
-    /** 本模块**已验证**的宿主版本（来自 2.22.0 实包离线体检，见 `_review_2220/`）。 */
-    public static final String VERIFIED_VERSION = "2.22.0";
+    /**
+     * 本模块**已验证**的宿主版本（最新一版）。
+     *
+     * 【code 1045】2.22.0 → **2.22.1**：宿主把播放页的播放进度条整体上移，
+     * 播放页胶囊的落位由此改为「进度条下方」（见
+     * {@code CapsuleGeometry#capsuleBottomBelowSlider}），并按本值分版本走位。
+     * 2.22.0 仍在 {@link #VERIFIED_SET} 里（走原来的「进度条上方」落位），两者都算已验证。
+     */
+    public static final String VERIFIED_VERSION = "2.22.1";
+
+    /**
+     * 已验证白名单（精确匹配）。宿主每发一版都要重新做一次离线体检才可入列 ——
+     * 白名单的意义是「这一版的宿主结构我们真的看过」，不是「尽量显得兼容」。
+     */
+    private static final String[] VERIFIED_SET = {"2.22.0", VERIFIED_VERSION};
 
     private static final String PREFS = "dlsitefloat_host";
     private static final String K_LAST_CODE = "last_version_code";
@@ -92,7 +105,7 @@ public final class HostInfo {
             String lastName = sp.getString(K_LAST_NAME, "");
             // lastCode == -1 ⇒ 首次运行（或宿主清过数据），不算「刚更新」
             sJustUpdated = lastCode > 0 && lastCode != sVersionCode;
-            sVerified = VERIFIED_VERSION.equals(sVersionName);
+            sVerified = inVerifiedSet(sVersionName);
             if (lastCode != sVersionCode) {
                 sp.edit().putInt(K_LAST_CODE, sVersionCode)
                         .putString(K_LAST_NAME, sVersionName).apply();
@@ -127,6 +140,83 @@ public final class HostInfo {
     /** 本次启动前宿主是否刚被更新（用于给一次性的提示）。 */
     public static boolean justUpdated() {
         return sJustUpdated;
+    }
+
+    /**
+     * 【code 1045】宿主版本是否 **≥** 指定的三段版本号（如 {@code 2, 22, 1}）。
+     *
+     * ── 为什么必须是「≥」而不是「等于」──
+     * 播放页的**布局排布**会随宿主发版变化（2.22.1 把播放进度条整体上移就是一例，
+     * 胶囊落位因此要从「进度条上方」改到「进度条下方」）。凡是依赖具体布局的口径，
+     * 宿主再往后的 2.22.2 / 2.23.0 **大概率沿用新排布**，用精确等于会在那之后
+     * 静默退回旧口径 —— 正是「宿主一升级就坏、且坏得没声音」的典型形态。
+     *
+     * ⚠️ 读不到版本号（SystemUI 进程 / 包信息失败 / 版本串不规范）时**一律返回 false**
+     *    ⇒ 走旧落位。与 {@link #verified()} 那套「宁可保守」的取舍保持一致。
+     *
+     * @return true = 宿主版本不低于指定版本
+     */
+    public static boolean hostAtLeast(int a, int b, int c) {
+        return versionAtLeast(sVersionName, a, b, c);
+    }
+
+    /**
+     * 纯函数版：把「某个版本串是否 ≥ 指定三段版本号」单独暴露出来（可单测）。
+     *
+     * <p>宿主版本串来自 {@code PackageInfo.versionName}，在 JVM 单测里造不出来
+     * （{@link #init} 要 Android 的 {@code Context}），所以判定本身必须是独立的纯函数。
+     */
+    public static boolean versionAtLeast(String name, int a, int b, int c) {
+        int[] v = parseVersion(name);
+        if (v == null) {
+            return false;
+        }
+        int[] want = {a, b, c};
+        for (int i = 0; i < 3; i++) {
+            if (v[i] != want[i]) {
+                return v[i] > want[i];
+            }
+        }
+        return true; // 三段全等
+    }
+
+    /** 版本号是否在已验证白名单内。 */
+    private static boolean inVerifiedSet(String name) {
+        if (name == null || name.length() == 0) {
+            return false;
+        }
+        for (String v : VERIFIED_SET) {
+            if (v.equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 把 {@code 2.22.1} 解析成三段整数；缺段补 0，含非数字段返回 null。
+     *
+     * ⚠️ 宿主偶尔会带后缀（{@code 2.22.1-rc1}）—— 那种串按 null 处理（走保守口径），
+     *    不要为了「认出来」去做模糊匹配：认错的代价比认不出大得多。
+     */
+    private static int[] parseVersion(String name) {
+        if (name == null || name.length() == 0) {
+            return null;
+        }
+        String[] parts = name.split("\\.");
+        int[] out = new int[3];
+        for (int i = 0; i < 3; i++) {
+            if (i >= parts.length) {
+                out[i] = 0;
+                continue;
+            }
+            try {
+                out[i] = Integer.parseInt(parts[i]);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return out;
     }
 
     /** 日志/诊断用的一行摘要。 */
@@ -169,7 +259,7 @@ public final class HostInfo {
         try {
             PackageInfo pi = ctx.getPackageManager().getPackageInfo(hostPkg, 0);
             String name = pi.versionName == null ? "" : pi.versionName;
-            return new Info(name, pi.versionCode, VERIFIED_VERSION.equals(name));
+            return new Info(name, pi.versionCode, inVerifiedSet(name));
         } catch (Throwable e) {
             // 宿主未安装 / 包可见性未声明 / ROM 限制：一律降级成「未知」，绝不抛给 UI
             XposedCompat.log(TAG + " readInCurrentProcess failed (" + hostPkg + "): " + e);

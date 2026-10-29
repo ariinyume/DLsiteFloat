@@ -105,6 +105,25 @@ public final class ConfigBus {
     /** 【code 1024 / P1-5】上屏行比对：一句都没对上过几次。 */
     public static final String EXTRA_LINE_MISMATCHED = Protocol.EXTRA_LINE_MISMATCHED;
 
+    /** 【code 1046】设置页 → DLsiteSound 进程：请报「悬浮窗真正用的字体」。 */
+    public static final String ACTION_HOST_FONT_REQ = Protocol.ACTION_HOST_FONT_REQ;
+    /** 【code 1046】DLsiteSound 进程 → 设置页：字体描述应答。 */
+    public static final String ACTION_HOST_FONT_INFO = Protocol.ACTION_HOST_FONT_INFO;
+    /** 【code 1046】DLsiteSound 进程 → 设置页：字体文件分片。 */
+    public static final String ACTION_HOST_FONT_CHUNK = Protocol.ACTION_HOST_FONT_CHUNK;
+    /** 【code 1046】字体描述串（file:/family:/user:/空）。 */
+    public static final String EXTRA_FONT_DESC = Protocol.EXTRA_FONT_DESC;
+    /** 【code 1046】字体落地建议文件名。 */
+    public static final String EXTRA_FONT_NAME = Protocol.EXTRA_FONT_NAME;
+    /** 【code 1046】本次传输的请求号。 */
+    public static final String EXTRA_FONT_RID = Protocol.EXTRA_FONT_RID;
+    /** 【code 1046】分片序号。 */
+    public static final String EXTRA_FONT_SEQ = Protocol.EXTRA_FONT_SEQ;
+    /** 【code 1046】分片总数（0 = 否定应答）。 */
+    public static final String EXTRA_FONT_N = Protocol.EXTRA_FONT_N;
+    /** 【code 1046】分片字节。 */
+    public static final String EXTRA_FONT_DATA = Protocol.EXTRA_FONT_DATA;
+
     /** PONG 携带的模块构建号（与 {@code BuildConfig.VERSION_CODE} 同源，用于版本一致性告警）。 */
     public static final String EXTRA_BUILD = Protocol.EXTRA_BUILD;
     /** PONG 携带的进程标识（"host" / "systemui"）。 */
@@ -194,6 +213,9 @@ public final class ConfigBus {
             f.addAction(ACTION_SUBTITLE_CACHE_STATS_REQ);
             // 【code 1030】预取字幕的清理同样只能由宿主执行（目录也在宿主私有空间里）。
             f.addAction(ACTION_SUBTITLE_PREFETCH_CLEAR);
+            // 【code 1046】「悬浮窗真正用的字体」只有宿主进程读得到（MoriMod 的字体缓存
+            //   落在宿主 filesDir，设置页受 SELinux 限制读不到）⇒ 描述与字节都由宿主递出。
+            f.addAction(ACTION_HOST_FONT_REQ);
         }
         BroadcastReceiver r = new BroadcastReceiver() {
             @Override
@@ -221,6 +243,10 @@ public final class ConfigBus {
                     }
                     if (ACTION_SUBTITLE_PREFETCH_CLEAR.equals(action)) {
                         handlePrefetchClear(c, tag);
+                        return;
+                    }
+                    if (ACTION_HOST_FONT_REQ.equals(action)) {
+                        answerHostFont(c, tag, i);
                         return;
                     }
                     if (ACTION_CONFIG_CHANGED.equals(action)) {
@@ -536,6 +562,71 @@ public final class ConfigBus {
     }
 
     /**
+     * 【code 1046】宿主进程侧：把「悬浮窗字幕**真正**在用的字体」报给设置页。
+     *
+     * <p>预览窗在模块进程里，画不出宿主进程里被全局字体模块换掉的字体 —— 这是
+     * 「预览的字体 ≠ 悬浮窗真正的字体」的根因。这里分两步递：
+     * <ol>
+     *   <li>先回一条 {@link #ACTION_HOST_FONT_INFO}（描述 + 建议文件名），设置页据此
+     *       决定要不要继续等字节（{@code file:*} 直接同路径读，{@code family:*} 本地
+     *       {@code Typeface.create}，都不需要字节）；</li>
+     *   <li>{@code user:*} 才继续分片回 {@link #ACTION_HOST_FONT_CHUNK}。</li>
+     * </ol>
+     *
+     * <p>⚠️ 读文件在 Binder 线程上做，最大 32MB —— 必须切成 200KB 一片分多条广播发，
+     * 否则直接超 Binder 单事务上限。任何一步失败都只回「空描述」，让设置页回落原行为。
+     */
+    private static void answerHostFont(Context ctx, String tag, Intent in) {
+        if (ctx == null || !"host".equals(tag)) {
+            return;
+        }
+        try {
+            String desc = io.github.ariinyume.dlsitesoundfloat.util.HostFont.describe(ctx);
+            Intent info = new Intent(ACTION_HOST_FONT_INFO);
+            info.putExtra(EXTRA_FONT_DESC, desc == null ? "" : desc);
+            info.putExtra(EXTRA_FONT_NAME,
+                    io.github.ariinyume.dlsitesoundfloat.util.HostFont.baseNameOf(desc));
+            long rid = in == null ? 0L : in.getLongExtra(EXTRA_FONT_RID, 0L);
+            info.putExtra(EXTRA_FONT_RID, rid);
+            ctx.sendBroadcast(info);
+            logDebug("[host] host font described: '" + desc + "'");
+
+            String rel = io.github.ariinyume.dlsitesoundfloat.util.HostFont.userRelOf(desc);
+            if (rel == null) {
+                return; // file:/family:/空 —— 设置页不需要字节
+            }
+            byte[] all = io.github.ariinyume.dlsitesoundfloat.util.HostFont
+                    .readUserFont(ctx, rel);
+            if (all == null) {
+                Intent miss = new Intent(ACTION_HOST_FONT_CHUNK);
+                miss.putExtra(EXTRA_FONT_RID, rid);
+                miss.putExtra(EXTRA_FONT_SEQ, 0);
+                miss.putExtra(EXTRA_FONT_N, 0); // 0 = 否定应答
+                ctx.sendBroadcast(miss);
+                return;
+            }
+            int n = (all.length + io.github.ariinyume.dlsitesoundfloat.util.HostFont.CHUNK - 1)
+                    / io.github.ariinyume.dlsitesoundfloat.util.HostFont.CHUNK;
+            for (int seq = 0; seq < n; seq++) {
+                int from = seq * io.github.ariinyume.dlsitesoundfloat.util.HostFont.CHUNK;
+                int len = Math.min(io.github.ariinyume.dlsitesoundfloat.util.HostFont.CHUNK,
+                        all.length - from);
+                byte[] part = new byte[len];
+                System.arraycopy(all, from, part, 0, len);
+                Intent out = new Intent(ACTION_HOST_FONT_CHUNK);
+                out.putExtra(EXTRA_FONT_RID, rid);
+                out.putExtra(EXTRA_FONT_SEQ, seq);
+                out.putExtra(EXTRA_FONT_N, n);
+                out.putExtra(EXTRA_FONT_DATA, part);
+                ctx.sendBroadcast(out);
+            }
+            logDebug("[host] host font sent: " + rel + " bytes=" + all.length + " chunks=" + n);
+        } catch (Throwable t) {
+            logWarn("answerHostFont failed: " + t);
+        }
+    }
+
+    /**
      * 配置变更后把「状态栏字幕**功能**」的持久化值同步进宿主进程并推给 SystemUI。     *
      * 【2.3.0 §2.1.1.4】这里是两级开关最容易串味的地方，口径写死在这里：
      *   · 配置键 {@code statusbar_subtitle_enabled} 是 **L1 功能级总闸**（持久）；
@@ -603,6 +694,29 @@ public final class ConfigBus {
         } catch (Throwable t) {
             logWarn("sendRestartSystemUi failed: " + t);
         }
+    }
+
+    /**
+     * 【code 1046】设置页 → 宿主：请报「悬浮窗字幕真正在用的字体」。
+     *
+     * <p>显式 setPackage（与 {@link #sendConfigChanged} 同因：后台进程收不到隐式广播）。
+     * {@code rid} 让设置页能丢掉上一轮残片 —— 用户在字体页快速来回切时，旧传输的
+     * 分片可能还在路上。
+     */
+    public static long sendHostFontReq(Context ctx) {
+        if (ctx == null) {
+            return 0L;
+        }
+        long rid = System.currentTimeMillis();
+        try {
+            Intent i = new Intent(ACTION_HOST_FONT_REQ);
+            i.setPackage(HOST_PKG);
+            i.putExtra(EXTRA_FONT_RID, rid);
+            ctx.sendBroadcast(i);
+        } catch (Throwable t) {
+            logWarn("sendHostFontReq failed: " + t);
+        }
+        return rid;
     }
 
     /** 状态卡探测：问 DLsiteSound 进程「你在不在」。 */

@@ -87,6 +87,19 @@ public final class TestAccessBridge {
         return CapsuleGeometry.clampBottom(wantBottom, screenH, btnH, edgePadPx);
     }
 
+    /**
+     * 【code 1045】「进度条下方」落位（纯函数，宿主 2.22.1 起）。
+     *
+     * @return bottomMargin（px）；{@code -1} = 输入不可用（内核返回 null）
+     */
+    public static int belowBottom(int screenH, int sliderCy, int sliderH, int timeLabelBottom,
+            int gapPx, int capsuleHPx, int fallbackSeekHalfPx, int edgePadPx) {
+        CapsuleGeometry.BottomResult r = CapsuleGeometry.capsuleBottomBelowSlider(
+                screenH, sliderCy, sliderH, timeLabelBottom, gapPx, capsuleHPx,
+                fallbackSeekHalfPx, edgePadPx);
+        return r == null ? -1 : r.bottomMargin;
+    }
+
     // ── AnchorDeadPolicy ───────────────────────────────────────────────
 
     public static boolean confirmWindow(

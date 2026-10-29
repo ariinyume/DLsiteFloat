@@ -100,6 +100,18 @@ public final class SubtitleStyle {
         }
     }
 
+    /**
+     * 【code 1046】某个 typeface 是不是「粗体档」。
+     *
+     * <p>预览侧（设置页进程）要用宿主递来的**同一份字体文件**派生粗细，
+     * 但 {@code TF_BOLD} 是私有的 —— 这里开一个判定口，避免把常量暴露出去。
+     * medium 档也算「粗」：MoriMod F4 只解析一份基准字体（没有 medium 变体），
+     * 与 {@link #createMedium} 自己的降级口径一致。
+     */
+    public static boolean isBoldVariant(Typeface t) {
+        return t == TF_BOLD || t == TF_MEDIUM;
+    }
+
     // ==================================================================
     // 换算结果
     // ==================================================================
@@ -196,6 +208,21 @@ public final class SubtitleStyle {
      */
     public final int liquidGlassBackdropLum;
 
+    /**
+     * 【code 1044 / 2.4.3】字幕字体是否跟随系统设定（{@code subtitle_font_follow_system}）。
+     *
+     * <p>true ⇒ {@link #activeTypeface} / {@link #inactiveTypeface} 恒为 {@code null}，
+     * 渲染侧据此把 paint 的 typeface 清成「未指定」（= 平台默认字体），
+     * 粗细改由 {@link #activeFakeBold} / {@link #inactiveFakeBold} 表达。
+     */
+    public final boolean fontFollowSystem;
+
+    /** 跟随系统时「活动行是否合成加粗」。 */
+    public final boolean activeFakeBold;
+
+    /** 跟随系统时「非活动行是否合成加粗」。 */
+    public final boolean inactiveFakeBold;
+
     private SubtitleStyle(SubtitleConfig c, DisplayMetrics dm) {
         float density = (dm == null || dm.density <= 0f) ? 1f : dm.density;
         SubtitleConfig cfg = c == null ? SubtitleConfig.defaults() : c;
@@ -219,21 +246,43 @@ public final class SubtitleStyle {
         this.inactiveAlpha = INACTIVE_ALPHA;
 
         // ── 字体 ──────────────────────────────────────────────────────
-        // 「跟随系统」= legacy 行为：活动行加粗、其余常规（PRD §FR-06 默认档）
-        // 显式选了档位则**活动行与非活动行一起**用该字重（PRD §FR-06 验收标准：
-        // 「选择粗体 + 左对齐 → 活动行以粗体左对齐渲染，非活动行同步」）
-        if (SubtitleConfig.WEIGHT_REGULAR.equals(cfg.fontWeight)) {
-            this.activeTypeface = TF_NORMAL;
-            this.inactiveTypeface = TF_NORMAL;
-        } else if (SubtitleConfig.WEIGHT_MEDIUM.equals(cfg.fontWeight)) {
-            this.activeTypeface = TF_MEDIUM;
-            this.inactiveTypeface = TF_MEDIUM;
-        } else if (SubtitleConfig.WEIGHT_BOLD.equals(cfg.fontWeight)) {
-            this.activeTypeface = TF_BOLD;
-            this.inactiveTypeface = TF_BOLD;
+        // 【code 1044】两条路二选一（{@code subtitleFontFollowSystem}，默认关 = 跟随宿主）：
+        //   · 关 → 用 TF_*（Typeface.create 得来的「宿主字体栈」，宿主改字体时它跟着变）；
+        //   · 开 → **不指定任何 typeface**（null = 平台默认字体 = 手机系统字体）。
+        //     ⚠️ null 是**语义**而不是省略：渲染侧见到 fontFollowSystem 会走
+        //     {@code SystemFont.clearTypeface()}，既绕开宿主改字体模块接管过的
+        //     {@code Paint#setTypeface}，也不会再被它换回宿主字体。
+        this.fontFollowSystem = cfg.subtitleFontFollowSystem;
+        if (this.fontFollowSystem) {
+            this.activeTypeface = null;
+            this.inactiveTypeface = null;
+            // 系统默认字体没有可选的粗体变体 ⇒ 用合成加粗顶替粗细层级。口径与下面
+            // 「跟随宿主」分支的 if/else 完全等价：system（默认）= 活动行粗、非活动行常规；
+            // 显式选档则两行一起变（medium / bold 都按「粗」处理，合成加粗只有两档）。
+            boolean explicit = !SubtitleConfig.WEIGHT_SYSTEM.equals(cfg.fontWeight);
+            boolean explicitBold = explicit
+                    && !SubtitleConfig.WEIGHT_REGULAR.equals(cfg.fontWeight);
+            this.activeFakeBold = explicit ? explicitBold : true;
+            this.inactiveFakeBold = explicitBold;
         } else {
-            this.activeTypeface = TF_BOLD;
-            this.inactiveTypeface = TF_NORMAL;
+            // 「跟随宿主」= legacy 行为：活动行加粗、其余常规（PRD §FR-06 默认档）
+            // 显式选了档位则**活动行与非活动行一起**用该字重（PRD §FR-06 验收标准：
+            // 「选择粗体 + 左对齐 → 活动行以粗体左对齐渲染，非活动行同步」）
+            if (SubtitleConfig.WEIGHT_REGULAR.equals(cfg.fontWeight)) {
+                this.activeTypeface = TF_NORMAL;
+                this.inactiveTypeface = TF_NORMAL;
+            } else if (SubtitleConfig.WEIGHT_MEDIUM.equals(cfg.fontWeight)) {
+                this.activeTypeface = TF_MEDIUM;
+                this.inactiveTypeface = TF_MEDIUM;
+            } else if (SubtitleConfig.WEIGHT_BOLD.equals(cfg.fontWeight)) {
+                this.activeTypeface = TF_BOLD;
+                this.inactiveTypeface = TF_BOLD;
+            } else {
+                this.activeTypeface = TF_BOLD;
+                this.inactiveTypeface = TF_NORMAL;
+            }
+            this.activeFakeBold = false;
+            this.inactiveFakeBold = false;
         }
 
         // ── 对齐 ──────────────────────────────────────────────────────
@@ -320,6 +369,9 @@ public final class SubtitleStyle {
                 && liquidGlassPanelLum == o.liquidGlassPanelLum
                 && liquidGlassTransparency == o.liquidGlassTransparency
                 && liquidGlassBackdropLum == o.liquidGlassBackdropLum
+                && fontFollowSystem == o.fontFollowSystem
+                && activeFakeBold == o.activeFakeBold
+                && inactiveFakeBold == o.inactiveFakeBold
                 && activeTypeface == o.activeTypeface
                 && inactiveTypeface == o.inactiveTypeface;
     }
@@ -346,6 +398,9 @@ public final class SubtitleStyle {
     }
 
     private static String tfName(Typeface t) {
+        if (t == null) {
+            return "system";      // 【code 1044】未指定 typeface = 平台默认字体
+        }
         if (t == TF_BOLD) {
             return "bold";
         }

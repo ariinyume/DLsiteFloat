@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 【code 1044 / 2.4.3】ic_ui_font：「字幕字体跟随系统设定」那一行的图标 —— 一个大写 A。
+     规格与 1032 那批一致：24x24 视口、2dp 描边 + 圆头圆角、颜色交给 ImageView.setColorFilter。
+     ⚠️ pathData 只用了 M/L/H，命令元数与坐标包围盒都能被 tools/verify_pathdata.py 静态判定。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M5,19L12,5L19,19M8,14.5H16" />
+</vector>

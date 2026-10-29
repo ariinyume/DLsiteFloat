@@ -1,3 +1,6 @@
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from sdkpath import build_tools as _build_tools
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -27,7 +30,7 @@ import subprocess
 import sys
 import zipfile
 
-BT = r'F:\WorkBuddyCache\DLSiteSound_Plus\toolchain\android-sdk\build-tools\36.0.0'
+BT = _build_tools('36.0.0')
 AAPT2 = os.path.join(BT, 'aapt2.exe')
 DEXDUMP = os.path.join(BT, 'dexdump.exe')
 

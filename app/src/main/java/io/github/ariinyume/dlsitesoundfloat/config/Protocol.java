@@ -119,6 +119,54 @@ public final class Protocol {
     /** DLsiteSound 进程 → 设置页：字幕缓存占用应答（{@link #EXTRA_CACHE_COUNT}/{@link #EXTRA_CACHE_BYTES}）。 */
     public static final String ACTION_SUBTITLE_CACHE_STATS = ACTION_PREFIX + "SUBTITLE_CACHE_STATS";
 
+    // ── 【code 1046】宿主字体描述（设置页 ↔ DLsiteSound 进程）─────────────
+    //
+    // 为什么要有这条：预览窗跑在**模块自己的进程**里，悬浮窗跑在**宿主进程**里。
+    // 宿主里若装了「全局改字体」类模块（MoriMod F4 就是），悬浮窗那行字幕的字体
+    // 是它 hook {@code Paint#setTypeface} 换出来的 —— 而预览进程没有这个钩子，
+    // 只能画出 ROM 默认字体 ⇒「预览的字体 ≠ 悬浮窗真正的字体」。
+    //
+    // 解法：宿主进程把它**真正解析出来的那份字体**读出来，用广播递给设置页。
+    // 字体文件只有宿主 uid 读得到（ MoriMod 缓存在宿主 filesDir 下），所以
+    // 「描述」走一条广播，「字节」分片走 N 条广播（Binder 单事务 ~1MB 上限）。
+
+    /** 【code 1046】设置页 → DLsiteSound 进程：请把「悬浮窗真正用的字体」报上来。 */
+    public static final String ACTION_HOST_FONT_REQ = ACTION_PREFIX + "HOST_FONT_REQ";
+
+    /**
+     * 【code 1046】DLsiteSound 进程 → 设置页：字体**描述**应答（不带字节）。
+     *
+     * <p>{@link #EXTRA_FONT_DESC} 形如：
+     * <ul>
+     *   <li>{@code file:/system/fonts/xxx.ttf} —— 系统字体文件，设置页直接读；</li>
+     *   <li>{@code family:sans-serif} —— 系统字体族，设置页 {@code Typeface.create}；</li>
+     *   <li>{@code user:fonts/xxx.ttf} —— 用户导入的字体，字节随后分片送到；</li>
+     *   <li>空串 —— 宿主侧没有全局字体替换（或拿不到），预览维持现状。</li>
+     * </ul>
+     */
+    public static final String ACTION_HOST_FONT_INFO = ACTION_PREFIX + "HOST_FONT_INFO";
+
+    /** 【code 1046】DLsiteSound 进程 → 设置页：字体文件**分片**（{@code user:*} 时才有）。 */
+    public static final String ACTION_HOST_FONT_CHUNK = ACTION_PREFIX + "HOST_FONT_CHUNK";
+
+    /** 【code 1046】字体描述串（见 {@link #ACTION_HOST_FONT_INFO}）。 */
+    public static final String EXTRA_FONT_DESC = "font_desc";
+
+    /** 【code 1046】字体文件的建议文件名（设置页落地用，含扩展名）。 */
+    public static final String EXTRA_FONT_NAME = "font_name";
+
+    /** 【code 1046】本次传输的请求号（设置页用它丢弃上一轮残片）。 */
+    public static final String EXTRA_FONT_RID = "font_rid";
+
+    /** 【code 1046】分片序号（0 起）。 */
+    public static final String EXTRA_FONT_SEQ = "font_seq";
+
+    /** 【code 1046】分片总数（0 = 否定应答，别等了）。 */
+    public static final String EXTRA_FONT_N = "font_n";
+
+    /** 【code 1046】分片字节。 */
+    public static final String EXTRA_FONT_DATA = "font_data";
+
     // ── EXTRA key ───────────────────────────────────────────────────────
 
     /** PONG 携带的模块构建号（与 {@code BuildConfig.VERSION_CODE} 同源）。 */
@@ -220,6 +268,7 @@ public final class Protocol {
                 ACTION_SCOPE_PING, ACTION_SCOPE_PONG,
                 ACTION_SUBTITLE_CACHE_CLEAR, ACTION_SUBTITLE_CACHE_STATS_REQ,
                 ACTION_SUBTITLE_CACHE_STATS, ACTION_SUBTITLE_PREFETCH_CLEAR,
+                ACTION_HOST_FONT_REQ, ACTION_HOST_FONT_INFO, ACTION_HOST_FONT_CHUNK,
         };
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (String a : actions) {
@@ -239,6 +288,8 @@ public final class Protocol {
                 EXTRA_CACHE_HITS, EXTRA_CACHE_MISSES,
                 EXTRA_PREFETCH_WORKS, EXTRA_PREFETCH_TRACKS,
                 EXTRA_LINE_MATCHED, EXTRA_LINE_MISMATCHED, EXTRA_LINE_SAMPLES,
+                EXTRA_FONT_DESC, EXTRA_FONT_NAME, EXTRA_FONT_RID,
+                EXTRA_FONT_SEQ, EXTRA_FONT_N, EXTRA_FONT_DATA,
         };
         seen.clear();
         for (String e : extras) {

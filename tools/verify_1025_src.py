@@ -389,8 +389,8 @@ def main():
     # 【code 1032】有意改写 13 -> 15：本轮把旧 Material 实心 ic_palette 换成统一描边
     #   的 ic_ui_palette（+1），并给「隐藏桌面图标」那一行补了 ic_ui_launcher（+1）。
     #   两枚都进 ic_ui_* 成套目录，所以本判据的枚数随之上调；判据意图（成套 + sync 已删）不变。
-    check('I3c 行图标 15 枚（1026 起 13；1032 起 palette 换代 + launcher 新增）',
-          len(icons) == 15 and 'ic_ui_sync.xml' not in icons, '实际 %d' % len(icons))
+    check('I3c 行图标 16 枚（1026 起 13；1032 起 palette 换代 + launcher 新增；1044 起 +ic_ui_font）',
+          len(icons) == 16 and 'ic_ui_sync.xml' not in icons, '实际 %d' % len(icons))
     bad_v = []
     for n in icons:
         txt = read(os.path.join(icon_dir, n))

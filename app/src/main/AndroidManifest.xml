@@ -19,6 +19,15 @@
     -->
     <queries>
         <package android:name="jp.co.eisys.dlsitesound" />
+        <!--
+          【code 1045】MoriMod（同宿主的另一枚模块，包名 io.github.ariinyume.morimod）。
+
+          本模块要在宿主进程里判断「用户装没装 MoriMod」，装了就取它采样出来的强调色
+          当播放页字幕开关按钮的底色。读别的包的 PackageInfo 在 Android 11+ 同样需要
+          这条声明（与上面宿主那条**完全同一套**包可见性规则，见 code 1023 的真因）。
+          ⚠️ 只声明这一条，不要用 QUERY_ALL_PACKAGES。
+        -->
+        <package android:name="io.github.ariinyume.morimod" />
     </queries>
 
     <!--

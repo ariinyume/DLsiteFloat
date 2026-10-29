@@ -99,6 +99,7 @@ import io.github.ariinyume.dlsitesoundfloat.util.ScopeProbe;
 import io.github.ariinyume.dlsitesoundfloat.util.Utils;
 import io.github.ariinyume.dlsitesoundfloat.view.LiquidGlassDrawable;
 import io.github.ariinyume.dlsitesoundfloat.view.SubtitleStyle;
+import io.github.ariinyume.dlsitesoundfloat.view.SystemFont;
 
 /**
  * 【M1 / v1.4】可视化设置页（PRD §5.1 方案 A）。
@@ -589,6 +590,8 @@ public class SettingsActivity extends AppCompatActivity {
     private SliderRow mRowWrapSpacing;
     private SwitchRow mRowBlurEnabled;
     private SwitchRow mRowInactiveScaleEnabled;
+    /** 【code 1044】排版面里的「字幕字体跟随系统设定」开关行。 */
+    private SwitchRow mRowFontFollowSystem;
     private SwitchRow mRowStatusbar;
     /** 【2.2.7 / code 979】「其他」卡片里的「调试日志」开关行。 */
     private SwitchRow mRowDebugLog;
@@ -606,6 +609,8 @@ public class SettingsActivity extends AppCompatActivity {
     private TextView mCacheUsage;
     /** 【code 1007】宿主 → 设置页的缓存统计接收器（onCreate 注册、onDestroy 注销）。 */
     private BroadcastReceiver mCacheStatsReceiver;
+    /** 【code 1046】宿主 → 设置页的「悬浮窗真正用的字体」接收器（同上成对）。 */
+    private BroadcastReceiver mHostFontReceiver;
     /** 【code 1007】点过「清除已缓存字幕」、等宿主回执：收到统计后弹一次「已清除」。 */
     private boolean mPendingClearToast;
     /** 【code 1030】点过「清除预取字幕」、等宿主回执：同上，但提示文案不同。 */
@@ -895,6 +900,10 @@ public class SettingsActivity extends AppCompatActivity {
         // 【code 1007】先挂上「宿主 → 设置页」的缓存统计接收器，再让 onResume 去问占用
         //   （顺序不能倒：广播回得快，接收器没挂上就丢了这一拍）。
         registerCacheStatsReceiver();
+        // 【code 1046】先挂接收器再问（顺序不能倒）。字体描述本身放在 onResume 里要 ——
+        //   用户可能中途切去 MoriMod 改了字体，回到设置页时预览得跟上。
+        registerHostFontReceiver();
+        PreviewHostFont.setListener(this::updatePreview);
     }
 
     @Override
@@ -907,6 +916,14 @@ public class SettingsActivity extends AppCompatActivity {
             }
             mCacheStatsReceiver = null;
         }
+        if (mHostFontReceiver != null) {
+            try {
+                unregisterReceiver(mHostFontReceiver);
+            } catch (Throwable ignored) {
+            }
+            mHostFontReceiver = null;
+        }
+        PreviewHostFont.setListener(null);
         super.onDestroy();
     }
 
@@ -1885,6 +1902,10 @@ public class SettingsActivity extends AppCompatActivity {
         //   缓存变了；宿主的缓存操作本来就是在「用户切到设置页、宿主在后台」时做的，
         //   所以这条请求是**显式广播**（setPackage），不受后台隐式广播限制。
         ConfigBus.sendCacheStatsRequest(this);
+        // 【code 1046】每次回到本页都重新要一次「悬浮窗真正用的字体」：
+        //   用户可能刚在 MoriMod 里换字体 / 开关了全局字体替换，预览必须跟上，
+        //   否则「预览的字体 ≠ 悬浮窗真正用的字体」会原样复发。
+        PreviewHostFont.refresh(this);
     }
 
     /**
@@ -2508,6 +2529,15 @@ public class SettingsActivity extends AppCompatActivity {
                     mDraft.wrapExtraSpacingDp = v / 2f;
                     markDirty();
                 });
+
+        // 【code 1044 / 2.4.3】「字幕字体跟随系统设定」（默认关）——
+        //   关 = 悬浮窗字幕跟随**宿主 App** 的字体（装了全局改字体模块时就是它换的那套）；
+        //   开 = 用**手机系统字体**（不受宿主改字体影响）。
+        //   ⚠️ 只管悬浮窗字幕；播放页三枚胶囊按钮（状态栏 / 悬浮窗 / 无字幕）恒随宿主字体。
+        mRowFontFollowSystem = addSwitchRow(parent, Strings.FONT_FOLLOW_SYSTEM, v -> {
+            mDraft.subtitleFontFollowSystem = v;
+            markDirty();
+        });
 
         // 【code 1026】「跟随宿主字幕样式」已整体移除 —— 上一版它就在这个位置。
         //   删除原因见 CHANGELOG 1026：宿主真正上屏的那一份样式并没有稳定可读的语义，
@@ -3245,6 +3275,63 @@ public class SettingsActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * 【code 1046】注册「宿主 → 设置页」的**宿主字体**接收器（幂等；onCreate 调一次）。
+     *
+     * <p>预览窗画不出宿主进程里被全局字体模块换掉的字体，宿主把字体描述与字节递过来，
+     * 这里收下并喂给 {@link PreviewHostFont}，拼齐后刷新预览。
+     * 与缓存统计接收器同口径：跨 UID 只能用 {@code RECEIVER_EXPORTED}。
+     */
+    private void registerHostFontReceiver() {
+        if (mHostFontReceiver != null) {
+            return;
+        }
+        IntentFilter f = new IntentFilter();
+        f.addAction(ConfigBus.ACTION_HOST_FONT_INFO);
+        f.addAction(ConfigBus.ACTION_HOST_FONT_CHUNK);
+        BroadcastReceiver r = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context c, Intent i) {
+                if (i == null || i.getAction() == null) {
+                    return;
+                }
+                try {
+                    String a = i.getAction();
+                    if (ConfigBus.ACTION_HOST_FONT_INFO.equals(a)) {
+                        boolean wantChunks = PreviewHostFont.onInfo(c,
+                                i.getStringExtra(ConfigBus.EXTRA_FONT_DESC),
+                                i.getStringExtra(ConfigBus.EXTRA_FONT_NAME));
+                        if (!wantChunks) {
+                            updatePreview();
+                        }
+                        return;
+                    }
+                    long rid = i.getLongExtra(ConfigBus.EXTRA_FONT_RID, 0L);
+                    int n = i.getIntExtra(ConfigBus.EXTRA_FONT_N, 0);
+                    boolean done = PreviewHostFont.onChunk(c, rid,
+                            i.getIntExtra(ConfigBus.EXTRA_FONT_SEQ, 0),
+                            n,
+                            i.getByteArrayExtra(ConfigBus.EXTRA_FONT_DATA));
+                    if (done) {
+                        updatePreview();
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "host font receive failed: " + t);
+                }
+            }
+        };
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(r, f, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(r, f);
+            }
+            mHostFontReceiver = r;
+        } catch (Throwable t) {
+            Log.w(TAG, "register host font receiver failed: " + t);
+        }
+    }
+
     /** 收到宿主回执后刷新占用读数（并兑现「清除成功」提示）。 */
     private void applyCacheStats(int count, long bytes,
                                  int hits, int misses,
@@ -3702,11 +3789,36 @@ public class SettingsActivity extends AppCompatActivity {
                                   int color, float alpha, boolean active) {
         tv.setGravity(st.gravity);
         tv.setPadding(dp(st.linePadH), dp(st.linePadV), dp(st.linePadH), dp(st.linePadV));
+        // 【code 1044】与真窗同序：跟随系统时先清 typeface（会连带清掉字号/颜色/阴影），
+        //   本进程没有宿主改字体的钩子，所以「未指定」就是手机系统字体。
+        if (st.fontFollowSystem) {
+            SystemFont.clearTypeface(tv.getPaint());
+        }
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp);
         tv.setTextColor(color);
         tv.setAlpha(alpha);
         tv.setShadowLayer(st.shadowRadiusPx, 0f, st.shadowDyPx, st.shadowColor);
-        tv.setTypeface(active ? st.activeTypeface : st.inactiveTypeface);
+        if (st.fontFollowSystem) {
+            SystemFont.applyBold(tv.getPaint(), active ? st.activeFakeBold : st.inactiveFakeBold);
+        } else {
+            // 【code 1046】预览优先用**宿主进程真正解析出来的那份字体**。
+            //
+            //   「跟随宿主」档的 TF_BOLD / TF_NORMAL 是 Typeface.create 的产物，在模块进程里
+            //   解析成 ROM 默认字体；而悬浮窗跑在宿主进程里，同样的调用会被全局字体模块
+            //   （MoriMod F4）hook 掉、换成用户导入的字体 ⇒ 预览与实际对不上。
+            //   宿主已把那份字体递过来（见 ConfigBus#answerHostFont），这里用它才是真相。
+            //   派生粗细仍走 Typeface.create(Typeface, style) —— 在本进程没有钩子，结果就是
+            //   同一份字体文件的真实粗体/常规变体。
+            Typeface host = PreviewHostFont.get();
+            if (host != null) {
+                int style = SubtitleStyle.isBoldVariant(
+                        active ? st.activeTypeface : st.inactiveTypeface)
+                        ? Typeface.BOLD : Typeface.NORMAL;
+                tv.setTypeface(Typeface.create(host, style));
+            } else {
+                tv.setTypeface(active ? st.activeTypeface : st.inactiveTypeface);
+            }
+        }
         if (active && st.wrapExtraSpacingPx != 0f) {
             tv.setLineSpacing(st.wrapExtraSpacingPx, 1f);
         }
@@ -4324,6 +4436,8 @@ public class SettingsActivity extends AppCompatActivity {
                 mRowInactiveScalePct.root.setVisibility(mDraft.inactiveScaleEnabled ? View.VISIBLE : View.GONE);
             }
             setSegmented(mRowAlign, alignIndex(mDraft.textAlign));
+            // 【code 1044】字幕字体是否跟随系统
+            setSwitch(mRowFontFollowSystem, mDraft.subtitleFontFollowSystem);
             setSlider(mRowLineSpacing, Math.round(mDraft.lineSpacingDp * 2));
             setSlider(mRowWrapSpacing, Math.round(mDraft.wrapExtraSpacingDp * 2));
             // 状态栏字幕功能：真值来自草稿，但 SystemUI 未授权时会被 applyStatusbarSwitchEnabled
@@ -4473,6 +4587,8 @@ public class SettingsActivity extends AppCompatActivity {
         // 否则小字写的是什么、按下去变的却是另一套（文案与行为必须一致）
         // 【code 1026】「跟随宿主字幕样式」已移除，恢复默认不再需要关它。
         mDraft.floatWindowColor = SubtitleConfig.FLOAT_WINDOW_COLOR_DEF;
+        // 【code 1044】字体跟随系统的默认值是「关」（= 跟随宿主），恢复默认必须把它关回去
+        mDraft.subtitleFontFollowSystem = false;
     }
 
     private String alignLabel(String v) {
@@ -4617,7 +4733,8 @@ public class SettingsActivity extends AppCompatActivity {
                 || !eq(mDraft.textAlign, mSaved.textAlign)
                 || Math.abs(mDraft.lineSpacingDp - mSaved.lineSpacingDp) > 0.0001f
                 || Math.abs(mDraft.wrapExtraSpacingDp - mSaved.wrapExtraSpacingDp) > 0.0001f
-                || mDraft.floatWindowColor != mSaved.floatWindowColor) {
+                || mDraft.floatWindowColor != mSaved.floatWindowColor
+                || mDraft.subtitleFontFollowSystem != mSaved.subtitleFontFollowSystem) {
             n++;
         }
         // ④ 液态玻璃卡
@@ -4948,6 +5065,10 @@ public class SettingsActivity extends AppCompatActivity {
         if (label == Strings.LINE_SPACING) {
             return R.drawable.ic_ui_line_spacing;
         }
+        // 【code 1044】「字幕字体跟随系统设定」—— 一个大写 A
+        if (label == Strings.FONT_FOLLOW_SYSTEM) {
+            return R.drawable.ic_ui_font;
+        }
         if (label == Strings.WRAP_SPACING) {
             return R.drawable.ic_ui_wrap;
         }
@@ -5009,6 +5130,10 @@ public class SettingsActivity extends AppCompatActivity {
         }
         if (label == Strings.LINE_SPACING) {
             return Strings.SUP_LINE_SPACING;
+        }
+        // 【code 1044】这一行的语义必须解释清楚：「系统字体」与「宿主字体」不是一回事
+        if (label == Strings.FONT_FOLLOW_SYSTEM) {
+            return Strings.SUP_FONT_FOLLOW_SYSTEM;
         }
         if (label == Strings.WRAP_SPACING) {
             return Strings.SUP_WRAP_SPACING;

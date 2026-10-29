@@ -44,7 +44,9 @@ import android.widget.TextView;
 import io.github.ariinyume.dlsitesoundfloat.BuildConfig;
 import io.github.ariinyume.dlsitesoundfloat.config.RemoteConfig;
 import io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository;
+import io.github.ariinyume.dlsitesoundfloat.util.HostInfo;
 import io.github.ariinyume.dlsitesoundfloat.util.I18n;
+import io.github.ariinyume.dlsitesoundfloat.util.MoriAccent;
 import io.github.ariinyume.dlsitesoundfloat.view.LiquidGlassDrawable;
 import io.github.ariinyume.dlsitesoundfloat.util.StatusBarSubtitleBridge;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
@@ -425,6 +427,10 @@ public class ActivityButtonHook {
     private static final int CAPSULE_GAP_DP = 10;
     /** 【code 955】胶囊内文字左右各留的安全边（合计 dp）：保证文字**完全**落在胶囊里。 */
     private static final int CAPSULE_TEXT_SIDE_PAD_DP = 8;
+    /** 【code 1047】胶囊白字的暗影半径（px）—— 半透明底色上保白字可读，见 createCapsule。 */
+    private static final float CAPSULE_TEXT_SHADOW_PX = 2f;
+    /** 【code 1047】胶囊白字的暗影颜色（50% 黑）。 */
+    private static final int CAPSULE_TEXT_SHADOW_COLOR = 0x80000000;
     /**
      * 【code 923 几何 2】胶囊圆角（dp）—— **固定 15dp**。
      *
@@ -533,6 +539,27 @@ public class ActivityButtonHook {
     private static final int CAPSULE_ABOVE_SLIDER_TOP_DP = 25;
     /** 【code 932 bug4】按钮底边距滑条中心的最小净距（dp）。20dp=60px，避开滑条本体。 */
     private static final int SLIDER_MIN_CLEAR_DP = 20;
+
+    /**
+     * 【code 1045】宿主 **2.22.1** 起：胶囊**顶边**落在「进度条下方的时间行
+     * （{@code 04:03} / {@code -02:23}）底边」再往下这么多 dp 处。
+     *
+     * ── 背景（Ari 2026-10-28 真机截图）──
+     * 宿主 2.22.1 把播放进度条整体上移，原先「简介行 ↔ 滑条顶边」那条可用带被压没，
+     * 需求把按钮改到**进度条下方**、播放控制行上方那块空档（截图红框位）。
+     *
+     * ── 标定 ──
+     * 截图（1272×2772 / density 2.9688，截图系 0.3687 缩放）量得：
+     * 滑条中心 y≈1687、时间行中心 y≈1780（文本高约 40px ⇒ 底边 ≈1800）、
+     * 红框上沿 y≈1885。取 24dp（≈71px）：胶囊上沿 = 1800 + 71 = 1871、
+     * 下沿 = 1871 + 95（32dp 高）= 1966 ⇒ 落在红框（1885~2012）内，
+     * 且离下方传输控件行（中心 ≈2150）还有 180px 余量，不会互相压。
+     *
+     * ⚠️ 与 {@link #CAPSULE_ABOVE_SLIDER_TOP_DP} 是**互斥的两条分支**：
+     *    2.22.1 及以后走「下方 + 本值」，更早的宿主仍走「上方 − 25dp」（见
+     *    {@link #capsuleBottomForSlider} 里的版本分岔）。两者绝不能同时生效。
+     */
+    private static final int CAPSULE_BELOW_TIME_LABEL_DP = 24;
 
     /**
      * 【code 923 几何 4】识别「一行淡色小字简介」时，允许它在主滑条上方多远（dp）。
@@ -1373,6 +1400,14 @@ public class ActivityButtonHook {
      * {@code -1} = 未知。同上：只在扫到时才写。
      */
     private static int sLastDescBottomY = -1;
+    /**
+     * 【code 1045】最近一次扫描到的「与滑条配对的时间行（04:03 / -02:23）底边」屏幕 y（px）；
+     * {@code -1} = 未知。宿主 2.22.1 起它是「进度条下方」落位的基准线。
+     *
+     * 与 {@link #sLastSliderCy} 同一套更新契约：只在扫到滑条且坐标稳定时才写，
+     * 扫不到就保持上次值（**没有位置比位置跳一下糟糕得多**，见 1.21.10）。
+     */
+    private static int sLastTimeLabelBottom = -1;
     /** 【code 924】几何 4 诊断：上次打过的候选数 / 命中底边（变了才打）。 */
     private static int sLastDescCand = Integer.MIN_VALUE;
     private static int sLastDescBottomLogged = Integer.MIN_VALUE;
@@ -1395,6 +1430,8 @@ public class ActivityButtonHook {
     private static int sPlacedGeoSliderCy = Integer.MIN_VALUE;
     private static int sPlacedGeoDescBottom = Integer.MIN_VALUE;
     private static int sPlacedGeoSliderRight = Integer.MIN_VALUE;
+    /** 【code 1045】建位时的「时间行底边」快照 —— 它是新落位的基准线，必须进快照比对。 */
+    private static int sPlacedGeoTimeLabelBottom = Integer.MIN_VALUE;
     /** 【code 927】capsuleBottomForSlider 调用计数（诊断：区分「没调用」与「调了没变」）。 */
     private static int sCbCallCount = 0;
     /** 【code 927 问题 3】按钮是否由兜底位创建（几何未就绪时的临时落位，必须补纠正）。 */
@@ -2891,10 +2928,12 @@ public class ActivityButtonHook {
                         sPlacedGeoSliderCy = sLastSliderCy;
                         sPlacedGeoDescBottom = sLastDescBottomY;
                         sPlacedGeoSliderRight = sLastSliderRightPx;
+                        sPlacedGeoTimeLabelBottom = sLastTimeLabelBottom;
                     } else {
                         sPlacedGeoSliderCy = Integer.MIN_VALUE;
                         sPlacedGeoDescBottom = Integer.MIN_VALUE;
                         sPlacedGeoSliderRight = Integer.MIN_VALUE;
+                        sPlacedGeoTimeLabelBottom = Integer.MIN_VALUE;
                         LogGate.debug(TAG, " [几何5] button created at FALLBACK bottom="
                                 + btnWantBottom + "px (geometry not ready yet, sLastSliderCy="
                                 + sLastSliderCy + ") -> will re-place");
@@ -3188,6 +3227,12 @@ public class ActivityButtonHook {
             if (scan.hasMainSlider && scan.mainSliderY > 0 && scan.mainSliderStable) {
                 sLastSliderCy = scan.mainSliderY;
                 sLastSliderH = scan.mainSliderH;
+                // 【code 1045】时间行底边（宿主 2.22.1 起「进度条下方」落位的基准线）。
+                //   与滑条中心**同一个稳定门**下才采信 —— 两个基准线必须同源，
+                //   否则会出现「滑条是上一帧、时间行是这一帧」的混合态。
+                if (scan.timeLabelBottom > 0) {
+                    sLastTimeLabelBottom = scan.timeLabelBottom;
+                }
             }
             // 【code 923 几何 3】滑条右缘 x（= 左缘 x + 宽度）—— 按钮右缘要跟它对齐。
             if (scan.hasMainSlider && scan.mainSliderW > 0 && scan.mainSliderX >= 0) {
@@ -3715,19 +3760,34 @@ public class ActivityButtonHook {
         // 【code 924】几何 3 的可观测性：code 923 落地后**无法从日志判断走到哪一支**
         //   （实测真机截图里按钮仍贴着滑条，但日志里 descBottom 一个字都没有）
         //   -> 这里把三要素全打出来，并**计数**（一次日志查不出「偶发 vs 恒常」）。
-        CapsuleGeometry.BottomResult r = CapsuleGeometry.capsuleBottomForSlider(
-                screenH,
-                sLastSliderCy,
-                sLastSliderH,
-                sLastDescBottomY,
-                sDescBottomStable,
-                dip2px(ctx, CAPSULE_ABOVE_SLIDER_DP),
-                dip2px(ctx, CAPSULE_H_DP),
-                dip2px(ctx, CAPSULE_ABOVE_SLIDER_TOP_DP),
-                dip2px(ctx, SLIDER_MIN_CLEAR_DP),
-                dip2px(ctx, DESC_HYSTERESIS_DP),
-                dip2px(ctx, 9),
-                dip2px(ctx, 8));
+        // 【code 1045】宿主 2.22.1 把播放进度条整体上移 ⇒ 胶囊改落**进度条下方**
+        //   （基准线 = 进度条下方时间行的底边，见 CapsuleGeometry#capsuleBottomBelowSlider）。
+        //   更早的宿主（2.22.0 及以前）布局没变，继续走原来的「滑条顶边 − 25dp」。
+        //   ⚠️ 分岔判据是「≥」而不是「等于」—— 理由见 HostInfo#hostAtLeast。
+        final boolean below = HostInfo.hostAtLeast(2, 22, 1);
+        CapsuleGeometry.BottomResult r = below
+                ? CapsuleGeometry.capsuleBottomBelowSlider(
+                        screenH,
+                        sLastSliderCy,
+                        sLastSliderH,
+                        sLastTimeLabelBottom,
+                        dip2px(ctx, CAPSULE_BELOW_TIME_LABEL_DP),
+                        dip2px(ctx, CAPSULE_H_DP),
+                        dip2px(ctx, 9),
+                        dip2px(ctx, 8))
+                : CapsuleGeometry.capsuleBottomForSlider(
+                        screenH,
+                        sLastSliderCy,
+                        sLastSliderH,
+                        sLastDescBottomY,
+                        sDescBottomStable,
+                        dip2px(ctx, CAPSULE_ABOVE_SLIDER_DP),
+                        dip2px(ctx, CAPSULE_H_DP),
+                        dip2px(ctx, CAPSULE_ABOVE_SLIDER_TOP_DP),
+                        dip2px(ctx, SLIDER_MIN_CLEAR_DP),
+                        dip2px(ctx, DESC_HYSTERESIS_DP),
+                        dip2px(ctx, 9),
+                        dip2px(ctx, 8));
         if (r == null) {
             return -1;
         }
@@ -3752,9 +3812,12 @@ public class ActivityButtonHook {
                     + " descStable=" + r.descStable
                     + " sliderCy=" + sLastSliderCy
                     + " sliderTop=" + r.sliderTop
+                    + " timeLabelBottom=" + sLastTimeLabelBottom
                     + " capsuleH=" + r.capsuleHPx
                     + " centerY=" + r.centerY
-                    + " branch=" + (r.usedMid ? "SLIDER_TOP-25dp" : "LEGACY(gap)")
+                    + " branch=" + (r.below
+                            ? "BELOW_TIME_LABEL+24dp"
+                            : (r.usedMid ? "SLIDER_TOP-25dp" : "LEGACY(gap)"))
                     + " density=" + sLockedDensity
                     + (r.clamped ? " CLAMPED" : "")
                     + " bottomMargin=" + r.bottomMargin
@@ -3804,7 +3867,10 @@ public class ActivityButtonHook {
         if (!force
                 && Math.abs(sLastSliderCy - sPlacedGeoSliderCy) <= GEO_SNAPSHOT_DEADZONE_PX
                 && Math.abs(sLastDescBottomY - sPlacedGeoDescBottom) <= GEO_SNAPSHOT_DEADZONE_PX
-                && Math.abs(sLastSliderRightPx - sPlacedGeoSliderRight) <= GEO_SNAPSHOT_DEADZONE_PX) {
+                && Math.abs(sLastSliderRightPx - sPlacedGeoSliderRight) <= GEO_SNAPSHOT_DEADZONE_PX
+                // 【code 1045】新落位的基准线变了也要重算（否则时间行一换行，按钮就赖着不动）。
+                && Math.abs(sLastTimeLabelBottom - sPlacedGeoTimeLabelBottom)
+                        <= GEO_SNAPSHOT_DEADZONE_PX) {
             return;   // 几何没变（含 settle 期小抖动）：不折腾（避免每帧 setLayoutParams 造成布局回环）
         }
         try {
@@ -3833,6 +3899,7 @@ public class ActivityButtonHook {
             sPlacedGeoSliderCy = sLastSliderCy;
             sPlacedGeoDescBottom = sLastDescBottomY;
             sPlacedGeoSliderRight = sLastSliderRightPx;
+            sPlacedGeoTimeLabelBottom = sLastTimeLabelBottom;
             if (force || oldG != (Gravity.BOTTOM | Gravity.END) || oldRight != wantRight
                     || Math.abs(oldBottom - bySlider) > CAPSULE_FOLLOW_DEADZONE_PX) {
                 lp.gravity = Gravity.BOTTOM | Gravity.END;
@@ -3911,6 +3978,7 @@ public class ActivityButtonHook {
         sPlacedGeoSliderCy = sLastSliderCy;
         sPlacedGeoDescBottom = sLastDescBottomY;
         sPlacedGeoSliderRight = sLastSliderRightPx;
+        sPlacedGeoTimeLabelBottom = sLastTimeLabelBottom;
         if (wroteLp) {
             LogGate.debug(TAG, " [几何7] capsule placed by showButton -> bottom="
                     + wantBottom + "px right=" + wantRight + "px");
@@ -4103,6 +4171,12 @@ public class ActivityButtonHook {
         tv.setIncludeFontPadding(false);  // 去掉字体自带上下留白 → 垂直居中更准、更省高度
         tv.setTextColor(0xFFFFFFFF);
         tv.setGravity(Gravity.CENTER);
+        // 【code 1047】白字描一层极淡的暗影 —— **因**上面把底色改成 40% 半透明而起：
+        //   底色一透，封面就能透上来；实测在深色封面（亮度 0.10）上合成亮度 0.298、
+        //   白字对比 ≈ 7.9:1，但在**亮色封面**（亮度 0.50）上会到 0.538、只剩 ≈ 3.5:1。
+        //   这层影只压文字轮廓、不改按钮观感，把最坏情况重新拉回 4.5:1 以上。
+        //   （宿主自己的播放控件是纯图标没有文字，所以它不需要这层 —— 我们不能照抄。）
+        tv.setShadowLayer(CAPSULE_TEXT_SHADOW_PX, 0f, 0f, CAPSULE_TEXT_SHADOW_COLOR);
         // 【code 922 问题 4】需求「按钮内文字强制使用粗体显示」——
         // NORMAL -> BOLD。用 DEFAULT_BOLD 而不是 (null, BOLD)：前者不依赖当前 typeface
         // 的样式位，且**不会被任何后续 setTypeface(null, ...) 覆盖掉粗体位**
@@ -4209,18 +4283,42 @@ public class ActivityButtonHook {
         // 【2.2.9】液态玻璃开启 → 胶囊换绘制后端（自渲染多层玻璃，见 LiquidGlassDrawable）。
         //   半径仍按「全圆角 = h/2」给（与下面 GradientDrawable 的 CAPSULE_RADIUS_DP 等价，
         //   32dp 高时 h/2 = 16dp = CAPSULE_RADIUS_DP）。颜色由 Drawable 内的开/关态调色决定。
+        // 【code 1046 真机根修】强调色必须**同时**接进这条分支：code 1045 只接了下面的
+        //   GradientDrawable，而真机配置 liquidGlass=true ⇒ 胶囊永远走这里 ⇒ 强调色从未上屏。
         if (RemoteConfig.liquidGlass()) {
-            return LiquidGlassDrawable.capsule(CAPSULE_RADIUS_DP * d, d, on);
+            return LiquidGlassDrawable.capsule(CAPSULE_RADIUS_DP * d, d, on,
+                    MoriAccent.accentOr(sActivity, 0));
         }
 
         GradientDrawable drawable = new GradientDrawable();
         drawable.setShape(GradientDrawable.RECTANGLE);
-        drawable.setColor(on ? CAPSULE_BG_ON : CAPSULE_BG_OFF);
+        drawable.setColor(capsuleColor(on));
         // 【code 923 几何 2】圆角改为**固定 15dp**。
         // 旧写法 999f 靠「超出部分自动钳到 h/2」实现全圆角 —— 圆角会**跟着高度变**
         // （35dp 高 → 17.5dp；改到 30dp 高就悄悄变 15dp）。现在规格明确是 15dp，写死。
         drawable.setCornerRadius(CAPSULE_RADIUS_DP * d);
         return drawable;
+    }
+
+    /**
+     * 【code 1045】胶囊底色 —— 装了 MoriMod 就用它采样出来的强调色；取不到回落原配色。
+     *
+     * ── 两态都用强调色，靠**亮度**区分开/关 ──
+     * 需求要的是「按钮跟 MoriMod 染出来的界面同一个色」，而开/关是**同一枚开关的两种状态**，
+     * 换色系会让人误读成两种不同含义的按钮（这正是 v57 把「状态栏用绿、悬浮窗用紫」废掉、
+     * 两态统一成紫色一族的理由）。所以：开态 = 强调色原色，关态 = 同一强调色压暗一档。
+     *
+     * ── 取不到强调色的三种情况，一律回落原配色（绝不硬顶）──
+     *   ① 没装 MoriMod；② 装了但没激活 / 没勾作用域（拿不到它的 ClassLoader）；
+     *   ③ 装了、也激活了，但它的强调色功能关着或壁纸还没采样（它的 {@code on()} 为假）。
+     * 强调色会随用户换壁纸而变，故本值**不缓存进静态字段**（取色侧自己按 2s 节流）。
+     */
+    private static int capsuleColor(boolean on) {
+        // 【code 1047】明亮度 / 通透度统一交给 MoriAccent#capsuleBody：
+        //   RGB 仍是 MoriMod 强调色（开态原色、关态压暗一档），alpha 固定 40% ——
+        //   与宿主播放控件实测值一致（逆向 + 真机像素反解，见 MoriAccent 类头），
+        //   也与液态玻璃那条路径（LiquidGlassDrawable 四档底色 alpha）同一口径。
+        return MoriAccent.capsuleBody(sActivity, on, CAPSULE_BG_ON, CAPSULE_BG_OFF);
     }
 
     /**
@@ -4288,9 +4386,12 @@ public class ActivityButtonHook {
         final float alpha = noSub ? 0.6f : 1.0f;
         // 【2.2.9】液态玻璃开关也进签名：开关一变，下一次通知就会重建两种胶囊的底
         //   （否则「切开关后按钮还是旧底」要等到下一次文字/底色变化才纠正）。
+        // 【code 1045】强调色也进签名：用户换壁纸后 MoriMod 会重采，强调色变了必须重画，
+        //   否则「底色停在旧强调色」要一直等下次文字/开关变化才纠正。
         final String sig = floatText + '\u0000' + floatOn + '\u0000'
                 + statusText + '\u0000' + statusOn + '\u0000' + statusVisible
-                + '\u0000' + alpha + '\u0000' + RemoteConfig.liquidGlass();
+                + '\u0000' + alpha + '\u0000' + RemoteConfig.liquidGlass()
+                + '\u0000' + MoriAccent.accentOr(sActivity, 0);
         if (sig.equals(sLastBtnSig)) {
             sBtnNoSubPending = false;
             sBtnNoSubGen++;                    // 状态已经一致 -> 作废排队中的延时切换

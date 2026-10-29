@@ -213,6 +213,21 @@ public final class SubtitleConfig {
      */
     public static final String K_EXPERIMENTAL_ENABLED = "experimental_enabled";
 
+    /**
+     * 【code 1044 / 2.4.3】「字幕字体跟随系统设定」开关（默认**关**）。
+     *
+     * <p>口径：只管**悬浮窗里的字幕文字**用哪套字体 ——
+     * <ul>
+     *   <li>开 = 用**手机系统字体**（设置页里那套系统字体，含中文回退链）；</li>
+     *   <li>关（默认）= 跟随**宿主 App** 当前用的字体（装了全局改字体模块时就是那套）。</li>
+     * </ul>
+     * ⚠️ **播放页那三个胶囊按钮**（状态栏 / 悬浮窗 / 无字幕）**不受本键影响**，
+     *    恒随宿主字体 —— 它们是宿主 UI 的一部分，跟着宿主变才是对的。
+     *
+     * <p>⚠️ 键名冻结（PRD §FR-09 规则 4）：本键为新增键，旧配置读不到时回落默认值（关），天然兼容。
+     */
+    public static final String K_SUBTITLE_FONT_FOLLOW_SYSTEM = "subtitle_font_follow_system";
+
     // ==================================================================
     // 枚举取值（PRD §十「范围/枚举」列）
     // ==================================================================
@@ -397,6 +412,12 @@ public final class SubtitleConfig {
      */
     public boolean experimentalEnabled = false;
 
+    /**
+     * 【code 1044 / 2.4.3】「字幕字体跟随系统设定」（默认**关**）。
+     * 语义见 {@link #K_SUBTITLE_FONT_FOLLOW_SYSTEM}；渲染侧换算见 {@code SubtitleStyle}。
+     */
+    public boolean subtitleFontFollowSystem = false;
+
     public SubtitleConfig() {
     }
 
@@ -440,6 +461,7 @@ public final class SubtitleConfig {
         c.debugLog = debugLog;
         c.subtitleCacheEnabled = subtitleCacheEnabled;
         c.experimentalEnabled = experimentalEnabled;
+        c.subtitleFontFollowSystem = subtitleFontFollowSystem;
         return c;
     }
 
@@ -474,6 +496,7 @@ public final class SubtitleConfig {
                 && debugLog == o.debugLog
                 && subtitleCacheEnabled == o.subtitleCacheEnabled
                 && experimentalEnabled == o.experimentalEnabled
+                && subtitleFontFollowSystem == o.subtitleFontFollowSystem
                 && eq(uiLanguage, o.uiLanguage);
     }
 
@@ -583,6 +606,7 @@ public final class SubtitleConfig {
             o.put(K_DEBUG_LOG, debugLog);
             o.put(K_SUBTITLE_CACHE_ENABLED, subtitleCacheEnabled);
             o.put(K_EXPERIMENTAL_ENABLED, experimentalEnabled);
+            o.put(K_SUBTITLE_FONT_FOLLOW_SYSTEM, subtitleFontFollowSystem);
         } catch (Throwable ignored) {
             // JSONObject.put 只在传 null 键时抛，本方法不传 null
         }
@@ -631,6 +655,8 @@ public final class SubtitleConfig {
         c.debugLog = o.optBoolean(K_DEBUG_LOG, c.debugLog);
         c.subtitleCacheEnabled = o.optBoolean(K_SUBTITLE_CACHE_ENABLED, c.subtitleCacheEnabled);
         c.experimentalEnabled = o.optBoolean(K_EXPERIMENTAL_ENABLED, c.experimentalEnabled);
+        c.subtitleFontFollowSystem = o.optBoolean(K_SUBTITLE_FONT_FOLLOW_SYSTEM,
+                c.subtitleFontFollowSystem);
         c.clamp();
         return c;
     }
@@ -670,6 +696,7 @@ public final class SubtitleConfig {
         e.putBoolean(K_DEBUG_LOG, debugLog);
         e.putBoolean(K_SUBTITLE_CACHE_ENABLED, subtitleCacheEnabled);
         e.putBoolean(K_EXPERIMENTAL_ENABLED, experimentalEnabled);
+        e.putBoolean(K_SUBTITLE_FONT_FOLLOW_SYSTEM, subtitleFontFollowSystem);
     }
 
     /** 从 SharedPreferences 读；未写过的键（{@code contains == false}）保留默认值。 */
@@ -709,6 +736,8 @@ public final class SubtitleConfig {
         c.debugLog = p.getBoolean(K_DEBUG_LOG, c.debugLog);
         c.subtitleCacheEnabled = p.getBoolean(K_SUBTITLE_CACHE_ENABLED, c.subtitleCacheEnabled);
         c.experimentalEnabled = p.getBoolean(K_EXPERIMENTAL_ENABLED, c.experimentalEnabled);
+        c.subtitleFontFollowSystem = p.getBoolean(K_SUBTITLE_FONT_FOLLOW_SYSTEM,
+                c.subtitleFontFollowSystem);
         c.clamp();
         return c;
     }
@@ -775,6 +804,10 @@ public final class SubtitleConfig {
                 + " bdLum=" + liquidGlassBackdropLum
                 + " debugLog=" + debugLog
                 + " subtitleCache=" + subtitleCacheEnabled
+                // 【code 1044】新字段插在 experimental **之前**：历史验证脚本把
+                //   `+ " experimental=" + experimentalEnabled;` 当作「配置键七处同步」的锚，
+                //   它带行尾分号 ⇒ 任何追加都只能接在这行前面，否则那条锚会静默失效。
+                + " fontFollowSystem=" + subtitleFontFollowSystem
                 + " experimental=" + experimentalEnabled;
     }
 

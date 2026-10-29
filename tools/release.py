@@ -15,7 +15,7 @@ DLsiteFloat 双仓发版脚本（源仓库 + LSPosed 上架仓库）
 
   # 真发（会force 重打 tag，必须显式 --yes）
   python tools/release.py --code 1003 --version 2.3.0 \
-      --apk "F:/Downloads/DLsiteFloat-2.3.0-code1003-debug.apk" \
+      --apk out/DLsiteFloat-<version>-code<code>-debug.apk \
       --notes _rel234/notes-2.3.0.md --yes
 
 铁律（务必保持）

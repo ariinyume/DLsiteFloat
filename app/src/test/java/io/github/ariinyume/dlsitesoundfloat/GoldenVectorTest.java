@@ -27,6 +27,7 @@ import static org.junit.Assert.assertTrue;
 import io.github.ariinyume.dlsitesoundfloat.config.Protocol;
 import io.github.ariinyume.dlsitesoundfloat.data.PlaylistKey;
 import io.github.ariinyume.dlsitesoundfloat.hook.TestAccessBridge;
+import io.github.ariinyume.dlsitesoundfloat.util.HostInfo;
 
 import org.junit.Test;
 
@@ -144,6 +145,98 @@ public class GoldenVectorTest {
         assertEquals(SCREEN_W - btnH - edgePadPx,
                 TestAccessBridge.clampRight(SCREEN_W + 999, SCREEN_W, btnH, edgePadPx));
         assertEquals(300, TestAccessBridge.clampRight(300, SCREEN_W, btnH, edgePadPx));
+    }
+
+    /**
+     * 【code 1045】「进度条下方」落位的**黄金向量**（Ari 2026-10-28 真机截图，宿主 2.22.1）。
+     *
+     * <p>截图（1272×2772，截图系 0.3687 缩放，density 2.9688）反推的真机 px：
+     * 滑条中心 1687、滑条视图高 54、时间行底边 1800；胶囊高 95（32dp）、下方间隔 71（24dp）、
+     * 屏幕边距 24（8dp）。
+     * 期望底边距 = 2772 −（1800 + 71 + 47 + 47）= 807 —— ⚠️ 内核全程整数运算，
+     * **半高是 95/2 = 47**（不是 47.5），中心与底边各加一次 ⇒ 合计少算 1px，
+     * 与旧分支「上方」那套整数口径保持一致（两边都吃同一个取整，才不会出现
+     * 「换分支时跳 1px」）。
+     *
+     * <p>锁的是**红框位置**这个不变量：胶囊整体在进度条（含其下方时间行）之下，
+     * 且离下方传输控件行（中心 ≈2150）还有余量 —— 既不压进度条，也不压播放控制行。
+     */
+    @Test
+    public void capsuleBottomBelowSlider_goldenVector_2_22_1() {
+        int screenH = SCREEN_H;          // 2772
+        int sliderCy = 1687;             // 真机：宿主 2.22.1 把进度条上移后的滑条中心
+        int sliderH = 54;
+        int timeLabelBottom = 1800;      // 真机：04:03 / -02:23 那行时间的底边
+        int gapPx = 71;                  // 24dp @ density 2.9688
+        int capsuleHPx = 95;             // 32dp
+        int edgePadPx = 24;              // 8dp
+        int fallbackSeekHalfPx = 27;     // 9dp
+
+        int bottomMargin = TestAccessBridge.belowBottom(
+                screenH, sliderCy, sliderH, timeLabelBottom,
+                gapPx, capsuleHPx, fallbackSeekHalfPx, edgePadPx);
+
+        assertEquals("红框位的底边距：2772 − (1800 + 71 + 47 + 47)", 807, bottomMargin);
+
+        // 不变量一：胶囊**整体**落在滑条视图底边之下（不压进度条）
+        int capsuleTop = screenH - bottomMargin - capsuleHPx;   // 1871
+        int sliderBottom = sliderCy + sliderH / 2;              // 1714
+        assertTrue("胶囊上沿必须在滑条底边之下（否则压进度条）", capsuleTop > sliderBottom);
+        // 不变量二：也落在时间行底边之下（不压时间）
+        assertTrue("胶囊上沿必须在时间行底边之下（否则压时间）", capsuleTop > timeLabelBottom);
+        // 不变量三：别怼到下方传输控件行（真机中心 ≈2150）
+        assertTrue("胶囊下沿必须为下方播放控制行留余量", capsuleTop + capsuleHPx < 2150);
+    }
+
+    /** 扫不到时间行时退到「滑条视图底边」：宁可偏一点，也不能给不出位置。 */
+    @Test
+    public void capsuleBottomBelowSlider_fallsBackToSliderBottomWithoutTimeLabel() {
+        int bottomMargin = TestAccessBridge.belowBottom(
+                SCREEN_H, 1687, 54, -1, 71, 95, 27, 24);
+        // 2772 − (1714 + 71 + 47 + 47) = 893（比有时间行时更**靠上** 86px，仍在进度条下方）
+        assertEquals(893, bottomMargin);
+    }
+
+    /** 滑条几何本身还没到手 ⇒ 明确返回「不可用」，由调用方保持现状（不许拿 0 冒充）。 */
+    @Test
+    public void capsuleBottomBelowSlider_unknownSliderIsUnavailable() {
+        assertEquals(-1, TestAccessBridge.belowBottom(SCREEN_H, 0, 54, 1800, 71, 95, 27, 24));
+        assertEquals(-1, TestAccessBridge.belowBottom(0, 1687, 54, 1800, 71, 95, 27, 24));
+    }
+
+    /**
+     * 极端输入（时间行被量到屏幕底部）仍要被安全钳制挡住，不许把按钮推出屏幕。
+     *
+     * ⚠️ 向下落位时「越界」的方向是**底边距变负**（按钮被推到屏幕下缘之外），
+     *    所以钳到的是**下界** {@code edgePadPx}，不是上界 —— 与直觉相反，别写反。
+     */
+    @Test
+    public void capsuleBottomBelowSlider_clampedInsideScreen() {
+        int bottomMargin = TestAccessBridge.belowBottom(SCREEN_H, 1687, 54, 2700, 71, 95, 27, 24);
+        assertEquals("越界时钳到屏幕下缘的边距（底边距不能为负）", 24, bottomMargin);
+    }
+
+    /**
+     * 【code 1045】宿主版本分岔（纯函数）：只有 ≥ 2.22.1 才走「进度条下方」。
+     *
+     * ⚠️ 判据必须是「≥」而不是「等于」—— 宿主将来发 2.22.2 / 2.23.0 时布局
+     * 大概率沿用新排布，用等于会静默退回旧落位（宿主一升级就坏、且坏得没声音）。
+     */
+    @Test
+    public void hostVersionGate_isAtLeastNotEquals() {
+        assertTrue(HostInfo.versionAtLeast("2.22.1", 2, 22, 1));
+        assertTrue(HostInfo.versionAtLeast("2.22.2", 2, 22, 1));
+        assertTrue(HostInfo.versionAtLeast("2.23.0", 2, 22, 1));
+        assertTrue("第三段按数值比，不是按字符串比：2.22.10 > 2.22.1",
+                HostInfo.versionAtLeast("2.22.10", 2, 22, 1));
+
+        assertFalse("旧宿主 2.22.0 必须继续走「进度条上方」",
+                HostInfo.versionAtLeast("2.22.0", 2, 22, 1));
+        assertFalse("缺段补零：2.22 视作 2.22.0", HostInfo.versionAtLeast("2.22", 2, 22, 1));
+        assertFalse("带后缀的版本串一律按保守口径处理",
+                HostInfo.versionAtLeast("2.22.1-rc1", 2, 22, 1));
+        assertFalse(HostInfo.versionAtLeast("", 2, 22, 1));
+        assertFalse(HostInfo.versionAtLeast(null, 2, 22, 1));
     }
 
     // ══════════════════════════════════════════════════════════════

@@ -29,6 +29,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 脚本 → (类别, 一句话说明它验什么)
 # ⚠️ 说明必须与脚本内部判据一致；改判据时同步改这里，否则索引表本身就会骗人。
 SCRIPTS = [
+    ('verify_1044.py', 'dex 字节码层',
+     'code 1044 / 2.4.3（字幕字体跟随系统设定）：aapt2 versionCode=1044 / versionName=2.4.3、'
+     '新键 subtitle_font_follow_system 与 fontFollowSystem= 读数、新类 SystemFont 的 clearTypeface/'
+     'applyBold 签名与调用点、类内绝不调 setTypeface、SubtitleStyle 三个新字段、Strings 三处引用、'
+     '新横幅进包 / 旧短横幅绝迹、ic_ui_font 资源与 pathData 元数校验（22 项）'),
+    ('verify_1044_src.py', '源码层',
+     'code 1044 源码侧：版本号四处、配置键四通道、SubtitleStyle 的 null typeface + 合成加粗口径、'
+     'SystemFont 走 Paint#set 且无 setTypeface、真窗/预览「先清后写」顺序、设置页开关行/回灌/'
+     '恢复默认/脏计数/图标/副标题、三语文案、矢量图规格、CHANGELOG（42 项）'),
     ('verify_1042.py', 'dex 字节码层',
      'code 1042 / 2.4.1（只升 code）离线错拿别人音轨字幕：aapt2 versionCode>=1042 / '
      'versionName=2.4.1、新横幅与【code 1042 履历串在包、ZiptreePrefetch.cacheGateAllows 进包、'

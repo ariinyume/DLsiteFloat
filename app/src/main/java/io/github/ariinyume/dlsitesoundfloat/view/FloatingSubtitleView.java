@@ -746,7 +746,9 @@ public class FloatingSubtitleView extends FrameLayout {
 
         scrollView.addView(container);
 
-        hint = new TextView(getContext());
+        // 【code 1046】字幕行一律用 SubtitleLineView：宿主里 MoriMod 的 BgPeel 会在
+        //   draw 路径上给每个 TextView 重设阴影，把配置的阴影盖掉（见该类注释）。
+        hint = new SubtitleLineView(getContext());
         // 【code 954】多语言：简体「无字幕」/ 繁体「無字幕」/ 非中文「No Subtitles」
         //   （见 I18n —— 这里**不能**用宿主 Context 的字符串资源，理由是类头那条：
         //    目标进程的 Resources 里没有本模块的资源。）
@@ -755,6 +757,7 @@ public class FloatingSubtitleView extends FrameLayout {
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         hint.setGravity(Gravity.CENTER);
         hint.setShadowLayer(TEXT_SHADOW_RADIUS, 0f, dp(1), TEXT_SHADOW_COLOR);
+        ((SubtitleLineView) hint).setSubtitleShadow(TEXT_SHADOW_RADIUS, dp(1), TEXT_SHADOW_COLOR);
         FrameLayout.LayoutParams hintLp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT);
@@ -930,7 +933,7 @@ public class FloatingSubtitleView extends FrameLayout {
         minHeightPx = 0;
         SubtitleStyle st = style();
         for (String line : lines) {
-            TextView tv = new TextView(getContext());
+            TextView tv = new SubtitleLineView(getContext());
             tv.setText(line);
             // 【M1】降级镜像行：字号沿用 legacy 的 18sp（不暴露给用户），其余（颜色/字重/对齐/
             // 阴影/内边距）全部走配置 —— 与活动行同一套观感，避免「有 cue 列表 / 没 cue 列表
@@ -961,7 +964,7 @@ public class FloatingSubtitleView extends FrameLayout {
                 if (currentLocalIndex < 0) {
                     currentLocalIndex = childIndex;
                 }
-                TextView tv = new TextView(getContext());
+                TextView tv = new SubtitleLineView(getContext());
                 tv.setText(joinSubtitles(cue));
                 // 【M1】活动行：字号 = 17sp × 主字幕放大倍数；颜色/高亮/字重/阴影/对齐走配置
                 styleLine(tv, st.activeSizeSp, st.activeColor, st.activeAlpha, true);
@@ -972,7 +975,7 @@ public class FloatingSubtitleView extends FrameLayout {
                 childIndex++;
             } else {
                 for (String line : cue.subtitles) {
-                    TextView tv = new TextView(getContext());
+                    TextView tv = new SubtitleLineView(getContext());
                     tv.setText(line);
                     // 【M1】非活动行：字号 = 17sp × 非活动行缩放比例；模糊由配置决定
                     styleLine(tv, st.inactiveSizeSp, st.inactiveColor, st.inactiveAlpha, false);
@@ -1021,13 +1024,31 @@ public class FloatingSubtitleView extends FrameLayout {
         SubtitleStyle st = style();
         tv.setGravity(st.gravity);
         tv.setPadding(dp(st.linePadH), dp(st.linePadV), dp(st.linePadH), dp(st.linePadV));
+        // 【code 1044】「跟随系统」：先把宿主字体抹掉，**必须放在字号/颜色/阴影之前** ——
+        //   {@link SystemFont#clearTypeface} 走的是 Paint#set(Paint) 整份复制，会把这些属性
+        //   一起清回默认值。已经是「未指定字体」时它是空操作，故每行只会真清一次。
+        if (st.fontFollowSystem) {
+            SystemFont.clearTypeface(tv.getPaint());
+        }
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp);
         tv.setTextColor(color);
         tv.setAlpha(alpha);
         // 阴影：半径/偏移/颜色（alpha 已按「阴影强度」折算）都来自配置。
         // radius = 0 时 setShadowLayer 自动不画阴影（阴影强度 0% 的效果由此保证）。
+        // 【code 1046】SubtitleLineView 会把这三个值记下来并在**每帧落笔前重写** ——
+        //   宿主里 MoriMod 的 BgPeel 会在 draw 路径上给每个 TextView 重设阴影，
+        //   只靠这一行写一次会被它盖掉（真机日志已证实配置链路本身没丢值）。
         tv.setShadowLayer(st.shadowRadiusPx, 0f, st.shadowDyPx, st.shadowColor);
-        tv.setTypeface(active ? st.activeTypeface : st.inactiveTypeface);
+        if (tv instanceof SubtitleLineView) {
+            ((SubtitleLineView) tv).setSubtitleShadow(
+                    st.shadowRadiusPx, st.shadowDyPx, st.shadowColor);
+        }
+        if (st.fontFollowSystem) {
+            // 跟随系统时不调 setTypeface（宿主改字体的钩子正是接在那里）
+            SystemFont.applyBold(tv.getPaint(), active ? st.activeFakeBold : st.inactiveFakeBold);
+        } else {
+            tv.setTypeface(active ? st.activeTypeface : st.inactiveTypeface);
+        }
         if (active && st.wrapExtraSpacingPx != 0f) {
             // 「长字幕内换行额外行距」只作用于会换行的活动行段落（PRD §FR-06）
             tv.setLineSpacing(st.wrapExtraSpacingPx, 1f);
@@ -1081,7 +1102,15 @@ public class FloatingSubtitleView extends FrameLayout {
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         paint.setTextSize(sizePx);
         // 必须与渲染用的字体一致（活动行字重由配置决定），否则测量宽度会偏小、导致多出一行。
-        paint.setTypeface(st.activeTypeface);
+        if (st.fontFollowSystem) {
+            // 【code 1044】测量也必须落在「平台默认字体 + 合成加粗」上（清空会连带清字号，
+            //   故清完补回），否则量出来的是宿主字体宽度、画出来的是系统字体宽度。
+            SystemFont.clearTypeface(paint);
+            paint.setTextSize(sizePx);
+            SystemFont.applyBold(paint, st.activeFakeBold);
+        } else {
+            paint.setTypeface(st.activeTypeface);
+        }
         Paint.FontMetrics fm = paint.getFontMetrics();
         float lineH = fm.descent - fm.ascent;
 

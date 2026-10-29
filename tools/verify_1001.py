@@ -1,3 +1,6 @@
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from sdkpath import build_tools as _build_tools
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -31,7 +34,7 @@ import zipfile
 
 DEXDUMP = os.environ.get(
     'DEXDUMP',
-    r'F:\WorkBuddyCache\DLSiteSound_Plus\toolchain\android-sdk\build-tools\34.0.0\dexdump.exe'
+    os.path.join(_build_tools('34.0.0'), 'dexdump.exe')
 )
 
 C_VIEW = 'Lio/github/ariinyume/dlsitesoundfloat/view/FloatingSubtitleView;'

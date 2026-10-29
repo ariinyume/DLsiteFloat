@@ -1,3 +1,6 @@
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from sdkpath import build_tools as _build_tools
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -34,7 +37,7 @@ import subprocess
 import sys
 import zipfile
 
-BT = r'F:\WorkBuddyCache\DLSiteSound_Plus\toolchain\android-sdk\build-tools\34.0.0'
+BT = _build_tools('34.0.0')
 DEXDUMP = os.path.join(BT, 'dexdump.exe')
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根（code 1037：dump 落到 app/build/，不再污染工作区根）
 

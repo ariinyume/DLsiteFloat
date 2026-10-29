@@ -41,8 +41,8 @@ import re
 import subprocess
 import sys
 
-GIT = r"C:/Users/ly/.workbuddy/binaries/PortableGit/versions/1.2.0/mingw64/bin/git.exe"
-DEFAULT_REPO = r"F:/WorkBuddyCache/DLSiteSound_Plus/DLsiteSound_FloatSubtitle"
+GIT = shutil.which("git") or "git"
+DEFAULT_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def last_commit_date(repo):

@@ -269,18 +269,41 @@ public class LiquidGlassDrawable extends Drawable {
     private static final float RIM_FADE_BOTTOM = 0.70f;
 
     // —— 胶囊「开」：紫玻璃（沿用设计稿 #584179 的色相）——
-    private static final int CON_BASE_TOP = 0xE86B4FA8;
-    private static final int CON_BASE_BOTTOM = 0xE2493577;
+    //
+    // 【code 1047】四档底色的 alpha 从 0xE8/0xE0（91%/88%）降到 **0x66/0x5E（40%/37%）**。
+    //   原值几乎不透明 ⇒ 玻璃压在封面上是"一块实色"，与宿主播放控件（实测 alpha 40%、
+    //   能透出底下的画面）不是一个材质。现在与 MoriAccent.BODY_ALPHA 对齐 ——
+    //   **颜色仍然跟 MoriMod 强调色走**（见 tinted()），只把「透多少」调成宿主那一档。
+    private static final int CON_BASE_TOP = 0x666B4FA8;
+    private static final int CON_BASE_BOTTOM = 0x5E493577;
     private static final int CON_GLOSS = 0x26FFFFFF;
     private static final int CON_RIM_TOP = 0x7AFFFFFF;
     private static final int CON_RIM_BOTTOM = 0x1FFFFFFF;
 
     // —— 胶囊「关」：深紫黑玻璃（沿用设计稿 #212042 的色相）——
-    private static final int COFF_BASE_TOP = 0xE031305F;
-    private static final int COFF_BASE_BOTTOM = 0xE01A1938;
+    private static final int COFF_BASE_TOP = 0x6631305F;
+    private static final int COFF_BASE_BOTTOM = 0x5E1A1938;
     private static final int COFF_GLOSS = 0x1CFFFFFF;
     private static final int COFF_RIM_TOP = 0x56FFFFFF;
     private static final int COFF_RIM_BOTTOM = 0x14FFFFFF;
+
+    // ── 【code 1046】强调色注入用的亮度比（由上面四档常量实测反推）────────
+    //
+    //   加权亮度 = (0.2126R + 0.7152G + 0.0722B) / 255
+    //   开态：top #6B4FA8 = 0.3584，bottom #493577 = 0.2432 ⇒ 比值 0.679
+    //   关态：top #31305F = 0.2024，bottom #1A1938 = 0.1084 ⇒ top/accent 0.565、
+    //         bottom/accent 0.302（关态整体比开态暗，靠亮度而不是色相区分）
+    private static final float ON_BOTTOM_RATIO = 0.679f;
+    private static final float OFF_TOP_RATIO = 0.565f;
+    private static final float OFF_BOTTOM_RATIO = 0.302f;
+
+    /** RGB 等比缩放（alpha 不变）—— 用于按亮度比派生玻璃的上下两档。 */
+    private static int scaleRgb(int argb, float k) {
+        int r = clamp255((int) (((argb >> 16) & 0xff) * k));
+        int g = clamp255((int) (((argb >> 8) & 0xff) * k));
+        int b = clamp255((int) ((argb & 0xff) * k));
+        return (r << 16) | (g << 8) | b;
+    }
 
     // ==================================================================
     // 颗粒霜化贴图（进程内共享、只建一次）
@@ -323,6 +346,20 @@ public class LiquidGlassDrawable extends Drawable {
     private final int kind;
     private final float radiusPx;
     private final float density;
+
+    /**
+     * 【code 1046】MoriMod 强调色（0 = 没有强调色，走原配色）。
+     *
+     * <p>code 1045 只把强调色接进了 {@code GradientDrawable} 那条路；而真机上用户开着
+     * **液态玻璃**（配置日志 {@code liquidGlass=true/45%}）⇒ 胶囊走的是本类的
+     * {@code KIND_CAPSULE_ON/OFF}，色值全是硬编码的紫 ⇒ 强调色从未上过屏。
+     * 这就是「按钮颜色没跟 MoriMod 选出的强调色」的直接根因。
+     *
+     * <p>注入口径与 MoriMod 自己换色同一哲学：**保留每层的 alpha 与上/下亮度差**，
+     * 只把色相/彩度换成强调色 —— 于是玻璃的高光、白边、颗粒、阴影层次全部原样，
+     * 变的只有「这颗胶囊是什么颜色」。
+     */
+    private final int accent;
 
     /**
      * 【2.2.13】玻璃外阴影的"环宽"（px）。0 = 不画阴影（胶囊 / 设置页预览 / 旧调用方）。
@@ -412,17 +449,33 @@ public class LiquidGlassDrawable extends Drawable {
     }
 
     public LiquidGlassDrawable(int kind, float radiusPx, float density, float shadowInsetPx) {
+        this(kind, radiusPx, density, shadowInsetPx, 0);
+    }
+
+    /**
+     * 【code 1046】胶囊便捷构造（带 MoriMod 强调色）。
+     *
+     * @param accent 强调色 ARGB；0 = 没有强调色，走硬编码的原配色（与旧版完全一致）
+     */
+    public LiquidGlassDrawable(int kind, float radiusPx, float density,
+                               float shadowInsetPx, int accent) {
         this.kind = kind;
         this.radiusPx = radiusPx;
         this.density = density > 0f ? density : 3f;
         this.shadowInsetPx = Math.max(0f, shadowInsetPx);
+        this.accent = accent;
         paint.setStyle(Paint.Style.FILL);
     }
 
     /** 播放页胶囊的便捷构造（{@code on} = 开/关态）。 */
     public static LiquidGlassDrawable capsule(float radiusPx, float density, boolean on) {
+        return capsule(radiusPx, density, on, 0);
+    }
+
+    /** 【code 1046】同上，但把 MoriMod 强调色喂进玻璃的上下底色。 */
+    public static LiquidGlassDrawable capsule(float radiusPx, float density, boolean on, int accent) {
         return new LiquidGlassDrawable(on ? KIND_CAPSULE_ON : KIND_CAPSULE_OFF,
-                radiusPx, density);
+                radiusPx, density, 0f, accent);
     }
 
     /**
@@ -900,9 +953,9 @@ public class LiquidGlassDrawable extends Drawable {
     private int baseTop() {
         switch (kind) {
             case KIND_CAPSULE_ON:
-                return CON_BASE_TOP;
+                return tinted(CON_BASE_TOP);
             case KIND_CAPSULE_OFF:
-                return COFF_BASE_TOP;
+                return tinted(COFF_BASE_TOP);
             case KIND_PANEL:
             default:
                 return P_BASE_TOP;
@@ -912,13 +965,46 @@ public class LiquidGlassDrawable extends Drawable {
     private int baseBottom() {
         switch (kind) {
             case KIND_CAPSULE_ON:
-                return CON_BASE_BOTTOM;
+                return tinted(CON_BASE_BOTTOM);
             case KIND_CAPSULE_OFF:
-                return COFF_BASE_BOTTOM;
+                return tinted(COFF_BASE_BOTTOM);
             case KIND_PANEL:
             default:
                 return P_BASE_BOTTOM;
         }
+    }
+
+    /**
+     * 【code 1046】把胶囊上下底色染成强调色，**保留原 alpha 与上下亮度差**。
+     *
+     * <p>上下两档的亮度比是设计稿标定出来的（上亮下暗才有"玻璃球面"的立体感），
+     * 只换色相会把这个立体感压平。做法：以上底为基准 = 强调色原色（MoriAccent 已做过
+     * 「太亮就压暗保白字可读」），下底按原设计稿两档的亮度比缩放。
+     * 高光 / 白边 / 颗粒 / 接触阴影本来就是中性色，不动。
+     */
+    private int tinted(int original) {
+        if (accent == 0 || (original & 0x00FFFFFF) == 0) {
+            return original;
+        }
+        if (original == CON_BASE_TOP) {
+            return keepAlpha(original, accent);
+        }
+        if (original == CON_BASE_BOTTOM) {
+            return keepAlpha(original, scaleRgb(accent, ON_BOTTOM_RATIO));
+        }
+        if (original == COFF_BASE_TOP) {
+            // 关态整体压暗一档（与 MoriAccent.offState 同一档，保证开/关仍靠亮度区分）
+            return keepAlpha(original, scaleRgb(accent, OFF_TOP_RATIO));
+        }
+        if (original == COFF_BASE_BOTTOM) {
+            return keepAlpha(original, scaleRgb(accent, OFF_BOTTOM_RATIO));
+        }
+        return original;
+    }
+
+    /** 只保留 alpha，RGB 换成给定值。 */
+    private static int keepAlpha(int original, int rgb) {
+        return (original & 0xFF000000) | (rgb & 0x00FFFFFF);
     }
 
     /** 均匀薄雾（只有面板有）。 */

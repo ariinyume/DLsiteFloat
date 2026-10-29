@@ -79,9 +79,11 @@ final class CapsuleGeometry {
         final boolean usedMid;
         /** 是否触发了滑条最小净距钳制。 */
         final boolean clamped;
+        /** 【code 1045】是否走了「进度条下方」分支（false = 旧的「进度条上方」）。 */
+        final boolean below;
 
         BottomResult(int bottomMargin, int capsuleHPx, int descStable, int sliderTop,
-                     int centerY, boolean usedMid, boolean clamped) {
+                     int centerY, boolean usedMid, boolean clamped, boolean below) {
             this.bottomMargin = bottomMargin;
             this.capsuleHPx = capsuleHPx;
             this.descStable = descStable;
@@ -89,6 +91,7 @@ final class CapsuleGeometry {
             this.centerY = centerY;
             this.usedMid = usedMid;
             this.clamped = clamped;
+            this.below = below;
         }
     }
 
@@ -196,7 +199,69 @@ final class CapsuleGeometry {
             bottomMargin = maxBottom;
         }
         return new BottomResult(bottomMargin, capsuleHPx, descStable, sliderTop,
-                centerY, usedMid, clamped);
+                centerY, usedMid, clamped, false);
+    }
+
+    /**
+     * 【code 1045】胶囊底边 —— **进度条下方**（宿主 2.22.1 起的新落位）。
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 为什么要换一边
+     *
+     * 宿主 2.22.1 把播放进度条整体上移了，原先「简介行 ↔ 滑条顶边」那条可用带被压没，
+     * 按钮再按旧公式摆就会压住简介/进度条（Ari 反馈：按钮位置要放到进度条**下方**、
+     * 播放控制行上方那块空档）。需求原话对应的位置就是：进度条 + 其下方时间行
+     * （{@code 04:03} / {@code -02:23}）之下、传输控件行之上。
+     *
+     * ─────────────────────────────────────────────────────────────────
+     * 口径（与「上方」分支的三处关键差别）
+     *
+     * 1. **基准线取「时间行底边」而不是滑条顶边**。时间文本紧贴滑条下沿同排
+     *    （{@code SubtitleViewHook} 的配对判据），以它的底边为基准才能不压住时间；
+     *    取不到时间行时退到「滑条视图底边」（宁可偏一点，也不能没有位置）。
+     * 2. **向下偏移**：按钮组顶边 = 基准线 + {@code gapPx}（不再是「往上减」）。
+     * 3. **不做净距钳制**。旧分支的 {@code minClear} 是为「别压到上方的滑条」而设的，
+     *    向下落位后这条约束失去意义；这里唯一要守的是**别掉出屏幕**（沿用同一套
+     *    安全钳制），下方是宿主自己的空白带，没有需要避让的控件。
+     *
+     * @param screenH           屏幕高（px）
+     * @param sliderCy          主滑条中心 y；{@code <=0} 表示未知
+     * @param sliderH           滑条视图高（px）；{@code <=0} 时按 {@code fallbackSeekHalfPx} 半高算
+     * @param timeLabelBottom   与滑条配对的时间文本（04:03 / -02:23）最大底边 y；{@code <=0} = 没扫到
+     * @param gapPx             {@code CAPSULE_BELOW_TIME_LABEL_DP} 的 px 值
+     * @param capsuleHPx        胶囊高 px
+     * @param fallbackSeekHalfPx 滑条高未知时的半高兜底（px）
+     * @param edgePadPx         安全钳制用的屏幕边距（px）
+     * @return 落位结果；{@code sliderCy <= 0} 时返回 {@code null}（调用方保持现状）
+     */
+    static BottomResult capsuleBottomBelowSlider(
+            int screenH, int sliderCy, int sliderH, int timeLabelBottom,
+            int gapPx, int capsuleHPx, int fallbackSeekHalfPx, int edgePadPx) {
+        if (screenH <= 0 || sliderCy <= 0) {
+            return null;
+        }
+        int seekHalf = sliderH > 0 ? sliderH / 2 : fallbackSeekHalfPx;
+        int sliderBottom = sliderCy + seekHalf;
+        // 时间行在滑条下方（宿主 2.22.0 起就是这排布）⇒ 取两者更靠下的那个当基准线。
+        int belowY = sliderBottom;
+        if (timeLabelBottom > belowY) {
+            belowY = timeLabelBottom;
+        }
+        int centerY = belowY + gapPx + capsuleHPx / 2;
+        int bottomMargin = screenH - (centerY + capsuleHPx / 2);
+        // 安全钳制：与上方分支同一套（别把按钮推到屏幕外）。
+        int minBottom = edgePadPx;
+        int maxBottom = Math.max(minBottom, screenH - capsuleHPx - edgePadPx);
+        if (bottomMargin < minBottom) {
+            bottomMargin = minBottom;
+        }
+        if (bottomMargin > maxBottom) {
+            bottomMargin = maxBottom;
+        }
+        // descStable / sliderTop 是本分支用不到的诊断量（保持「未采信」哨兵）；
+        // usedMid=true 表示「走了非兜底分支」，与旧分支的语义一致。
+        return new BottomResult(bottomMargin, capsuleHPx, -1, sliderBottom,
+                centerY, true, false, true);
     }
 
     /**

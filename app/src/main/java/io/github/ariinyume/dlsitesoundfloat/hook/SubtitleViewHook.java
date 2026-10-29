@@ -314,6 +314,19 @@ public class SubtitleViewHook {
         public int mainSliderTimeLabels;
 
         /**
+         * 【code 1045】与主滑条配对上的时间文本（{@code 04:03} / {@code -02:23}）的
+         * **最大底边**屏幕 y（px）；{@code -1} = 这次没扫到。
+         *
+         * 用途：宿主 2.22.1 起播放页胶囊要落到「进度条下方」，而时间文本紧贴滑条下沿同排
+         * ⇒ 以它的底边当基准线，才能既不压住进度条、也不压住时间（见
+         * {@code CapsuleGeometry#capsuleBottomBelowSlider}）。
+         *
+         * 只取**配对成功**的那两条（下面的配对循环里同步累计），绝不拿别处的时间文本
+         * 充数 —— 底部 mini-player 与列表项里也有时间文本，混进来会把按钮带跑。
+         */
+        public int timeLabelBottom = -1;
+
+        /**
          * 「播放页锚点」：主滑条所属的**页面级祖先容器**（弱引用）。
          *
          * 为什么需要它：RN 在切页 / 控制条隐藏 / 列表虚拟化回收时会让主滑条
@@ -550,6 +563,12 @@ public class SubtitleViewHook {
                 }
                 if (L[2] + L[4] > sliderL && L[2] < sliderR) {
                     n++;
+                    // 【code 1045】配对上的时间文本底边（{上, 高} → 底边）取最大者：
+                    //   两个时间文本同排，取更靠下那个，按钮才不会压住任一条。
+                    int bottom = L[3] + L[5];
+                    if (bottom > r.timeLabelBottom) {
+                        r.timeLabelBottom = bottom;
+                    }
                 }
             }
             r.mainSliderTimeLabels = n;

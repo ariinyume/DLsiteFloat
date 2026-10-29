@@ -1,3 +1,6 @@
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from sdkpath import build_tools as _build_tools
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -31,11 +34,11 @@ import subprocess
 import sys
 import zipfile
 
-BT = r'F:\WorkBuddyCache\DLSiteSound_Plus\toolchain\android-sdk\build-tools\36.0.0'
+BT = _build_tools('36.0.0')
 AAPT2 = os.path.join(BT, 'aapt2.exe')
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-UP = os.path.dirname(ROOT)                    # F:/WorkBuddyCache/DLSiteSound_Plus
+UP = os.path.dirname(ROOT)                    # 仓库的上一级（本机工作区）
 APK_NEW = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
     ROOT, 'app', 'build', 'outputs', 'apk', 'debug', 'DLsiteFloat-2.3.5-code1026-debug.apk')
 APK_OLD = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
