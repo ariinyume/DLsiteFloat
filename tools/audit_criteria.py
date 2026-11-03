@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-判据画像：把 tools/verify_*.py 里每条判据按「保质期来源」归类。
+判据画像：把 tools/ 与 tools/archive/ 下的 verify_*.py 里每条判据按「保质期来源」归类。
 
 用法：
     python tools/audit_criteria.py            # 打印画像
@@ -149,9 +149,11 @@ def main(argv):
 
     src_rows, dex_total, other = [], 0, []
     for f in sorted(cat):
-        p = os.path.join(HERE, f)
-        if not os.path.exists(p):
-            other.append((f, '文件不存在'))
+        # 2026-11-03 目录整理：判据脚本已归档到 tools/archive/，
+        #   统一走 run_all_verify.locate()（先顶层、后 archive）拿物理路径。
+        p = rav.locate(f)
+        if p is None:
+            other.append((f, '文件不存在（顶层与 archive/ 均未找到）'))
             continue
         src_layer = cat[f] == '源码层'
         rows, total = audit_file(p, src_layer)

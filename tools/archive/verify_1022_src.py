@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# --- tools/archive 归档兼容（2026-11-03 目录整理）------------------------------
+# 归档后本文件位于 tools/archive/，比原先深一层 ⇒ 一切基于 __file__ 的相对定位
+# （ROOT = dirname(dirname(__file__))、SRC = dirname(__file__)/../app/src…）
+# 都会错一层。这里把 __file__ 改回「tools/ 下的虚拟原位置」，正文表达式一律不用改；
+# 同时把 tools/ 塞进 sys.path，`from sdkpath import …` 仍可用。
+import os as _archive_os
+import sys as _archive_sys
+_archive_d = _archive_os.path.dirname(_archive_os.path.abspath(__file__))
+if _archive_os.path.basename(_archive_d) == 'archive':
+    _archive_tools = _archive_os.path.dirname(_archive_d)
+    __file__ = _archive_os.path.join(_archive_tools, _archive_os.path.basename(__file__))
+    if _archive_tools not in _archive_sys.path:
+        _archive_sys.path.insert(0, _archive_tools)
+# ----------------------------------------------------------------------------
 """
 【code 1022 / v2.3.4】P0 适配体检四项 + ziptree 取证的**源码层**验证。
 （读的是**活的工作区** ⇒ 版本号判下界、判据只守结构与接线，不钉字面量；见铁律 82/⑬）

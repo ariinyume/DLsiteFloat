@@ -31,6 +31,10 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# 【2026-11-03 目录整理】历史轮次的 verify_10XX 判据脚本已归档到 archive/。
+#   本脚本仍**在册调度**它们（回归能力不丢），只是物理位置变了。
+#   归档脚本自身带「__file__ 回拨」块，根目录语义与在 tools/ 下完全一致。
+ARCHIVE = os.path.join(HERE, 'archive')
 
 # 脚本 → (类别, 一句话说明它验什么)
 # ⚠️ 说明必须与脚本内部判据一致；改判据时同步改这里，否则索引表本身就会骗人。
@@ -450,10 +454,23 @@ def discover():
     return sorted(on_disk - registered)
 
 
+def locate(name):
+    """脚本物理位置：先找 tools/ 顶层，再找 tools/archive/。
+
+    归档区只放**历史轮次**的判据脚本；当前活跃工具（verify_layer / verify_pathdata /
+    verify_protocol_src / audit_criteria …）一律留在顶层。
+    """
+    for d in (HERE, ARCHIVE):
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def run_one(name, repo):
-    path = os.path.join(HERE, name)
-    if not os.path.exists(path):
-        return 'MISSING', 0, 0.0, '文件不存在'
+    path = locate(name)
+    if path is None:
+        return 'MISSING', 0, 0.0, '文件不存在（tools/ 与 tools/archive/ 均未找到）'
 
     argv = [sys.executable, path]
     extra, missing = build_argv(name, repo)
