@@ -223,6 +223,16 @@ def main():
         anchors = 6  # 上面 6 条即区分力锚
         print('  有区分力锚数：%d（code 993 与 994 必须给出不同结论）' % anchors)
         print()
+    else:
+        # 【11-03 体检】缺对照包时**绝不能**静默通过。
+        #   原实现在这里直接落到汇总，18/18 照样报「全部通过」——
+        #   实际上「新类是本轮新增而非原本就有」这条因果**根本没被证明**。
+        #   工作区里 code 993 的包已失（只有 992 和 994），实测就是这么静默降级的。
+        print('=== 6. 对照包（code 993）：未提供 —— 本段判据未执行 ===')
+        print('  ⚠️ 降级：无法证明 PageFollowPolicy 是「本轮新增」而不是原本就有。')
+        print('  ⚠️ 这是「单包通过」，不是「双包对照通过」；补齐 code 993 的包才算数。')
+        print('##DEGRADED## no-compare-apk(993)')
+        print()
 
     print('=' * 60)
     if fails:
@@ -230,6 +240,9 @@ def main():
         for f in fails:
             print('  ❌ %s' % f)
         return 1
+    if not apk_old:
+        print('单包通过：%d/%d（另有 2 条对照判据因缺 code 993 包未执行）' % (total, total))
+        return 0
     print('全部通过：%d/%d' % (total, total))
     return 0
 

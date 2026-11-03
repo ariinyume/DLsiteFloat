@@ -485,6 +485,13 @@ def run_one(name, repo):
             #   ⇒ 只靠退出码是不够的：**没有输出 = 没有断言**。
             if not out.strip():
                 return 'SUSPECT', p.returncode, dt, '退出码 0 但零输出（脚本可能没真正执行）'
+            # 【11-03 体检】脚本自报降级（对照包缺失 ⇒ 只跑了单包判据）时不能算 PASS。
+            #   verify_994 实测就是：缺 code 993 的包，18/18 照样报「全部通过」，
+            #   「新类是本轮新增」这条因果根本没被证明 —— 静默降级比 FAIL 更危险。
+            # ⚠️ 必须行首精确匹配：写成 `'DEGRADED ' in out` 会误伤 —— verify_1027_src
+            #   的判据名里就有「两通道 DEGRADED /」，被误判成降级（grep 命中 != 语义命中）。
+            if re.search(r'^##DEGRADED##', out, re.M):
+                return 'DEGRADED', p.returncode, dt, out
             return 'PASS', p.returncode, dt, out
         # exit 2 且是 usage 形态 ⇒ 参数问题，不算判据失败
         if p.returncode == 2 and 'usage' in out.lower():
@@ -626,6 +633,7 @@ def main(argv):
     bad = [r for r in rows if r[2] in ('FAIL', 'ERROR', 'TIMEOUT', 'MISSING')]
     skipped = [r for r in rows if r[2] == 'SKIP']
     envblocked = [r for r in rows if r[2] == 'ENVBLOCK']
+    degraded = [r for r in rows if r[2] == 'DEGRADED']
     print()
     if bad:
         print('❌ 未全绿：%d/%d 个脚本未通过' % (len(bad), len(rows)))
@@ -633,13 +641,16 @@ def main(argv):
             print('   - %s  (%s, exit=%d)' % (n, st, rc))
         rc_ret = 1
     else:
-        ran = len(rows) - len(skipped) - len(envblocked)
+        ran = len(rows) - len(skipped) - len(envblocked) - len(degraded)
         bits = []
         if skipped:
             bits.append('%d 个跳过：%s' % (len(skipped), ', '.join(r[0] for r in skipped)))
         if envblocked:
             bits.append('%d 个被环境拦截：%s'
                         % (len(envblocked), ', '.join(r[0] for r in envblocked)))
+        if degraded:
+            bits.append('%d 个降级通过（缺对照包，判据不全）：%s'
+                        % (len(degraded), ', '.join(r[0] for r in degraded)))
         print('✅ 全绿：%d/%d%s' % (ran, ran, ('（另有 ' + '；'.join(bits) + '）') if bits else ''))
         rc_ret = 0
     if skipped:
@@ -649,6 +660,10 @@ def main(argv):
         print('⚠️ 被环境拦截 %d 个（临时文件清理撞上批量删除保护 ⇒ 判据未跑完，'
               '**不是判据失败**；同一轮里别把本脚本连跑超过两次）：%s'
               % (len(envblocked), ', '.join(r[0] for r in envblocked)))
+    if degraded:
+        print('⚠️ 降级通过 %d 个（脚本自报 DEGRADED：缺对照包 ⇒ 对照类判据整段没跑，'
+              '**不等于判据通过**）：%s'
+              % (len(degraded), ', '.join(r[0] for r in degraded)))
 
     extra = discover()
     if extra:
