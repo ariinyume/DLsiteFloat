@@ -1302,4 +1302,219 @@ public class GoldenVectorTest {
                         WORK_KEY_A, /* 旧世界拿不到作品键 */ null,
                         T0, T0 + REAL_1006_JSON_LEAD_MS, CLAIM_MS));
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  HeartbeatPolicy —— 心跳节奏三档（2026-11-03 零状态内核拆分）
+    // ══════════════════════════════════════════════════════════════════
+    //
+    // ⚠️ 参数用 ActivityButtonHook 里的**真实常量值**（同 PokeThrottle 分节的铁律 28 精神）。
+    private static final long HB_AMBIGUOUS_MS = 150L;
+    private static final long HB_FAST_MS = 200L;
+    private static final long HB_NORMAL_MS = 600L;
+    private static final int HB_SETTLE_STREAK = 4;
+    private static final int HB_MAX_AMBIGUOUS = 12;
+
+    /** 过渡态且配额未用完 → 固定 150ms 快检 + 置 forceNextDetect；记忆位原样带回。 */
+    @Test
+    public void heartbeat_ambiguousArmsFastRecheck() {
+        TestAccessBridge.Beat b = TestAccessBridge.beat(
+                7, true, 3, HB_MAX_AMBIGUOUS,
+                true, true, 5, 2,
+                HB_AMBIGUOUS_MS, HB_FAST_MS, HB_NORMAL_MS, HB_SETTLE_STREAK);
+        assertEquals("过渡态走固定快检档", HB_AMBIGUOUS_MS, b.nextMs);
+        assertEquals("复检计数 +1", 4, b.ambiguousRechecks);
+        assertTrue("复检要绕过节流", b.forceNextDetect);
+        assertEquals("过渡态不动 verdict 记忆位", 5, b.lastVerdict);
+        assertEquals("过渡态不动 streak 记忆位", 2, b.stableStreak);
+    }
+
+    /** 过渡态但复检配额用尽 → 落入常规三档（不能赖在过渡态档不走）。 */
+    @Test
+    public void heartbeat_ambiguousExhaustedFallsThrough() {
+        TestAccessBridge.Beat b = TestAccessBridge.beat(
+                7, true, HB_MAX_AMBIGUOUS, HB_MAX_AMBIGUOUS,
+                true, true, 7, 3,
+                HB_AMBIGUOUS_MS, HB_FAST_MS, HB_NORMAL_MS, HB_SETTLE_STREAK);
+        assertFalse("配额耗尽 ⇒ 不再置 forceNextDetect", b.forceNextDetect);
+        assertEquals("同结论 streak 3→4，4 不小于 4 ⇒ 常规档", HB_NORMAL_MS, b.nextMs);
+        assertEquals(4, b.stableStreak);
+    }
+
+    /** 结论与按钮现状不符 → 快速收敛；两个记忆位一字不动。 */
+    @Test
+    public void heartbeat_mismatchGivesFastWithoutTouchingMemory() {
+        TestAccessBridge.Beat b = TestAccessBridge.beat(
+                0, false, 5, HB_MAX_AMBIGUOUS,
+                false /* 不是播放页 */, true /* 按钮还挂着 */,
+                9, 3,
+                HB_AMBIGUOUS_MS, HB_FAST_MS, HB_NORMAL_MS, HB_SETTLE_STREAK);
+        assertEquals("不符 ⇒ 尽快收敛", HB_FAST_MS, b.nextMs);
+        assertFalse(b.forceNextDetect);
+        assertEquals("不符档不动 verdict", 9, b.lastVerdict);
+        assertEquals("不符档不动 streak", 3, b.stableStreak);
+        assertEquals("不符档不动复检计数", 5, b.ambiguousRechecks);
+    }
+
+    /** 结论变了 → streak 归零并走快档（归零后 0 < 4）。 */
+    @Test
+    public void heartbeat_verdictChangeResetsStreak() {
+        TestAccessBridge.Beat b = TestAccessBridge.beat(
+                8, false, 0, HB_MAX_AMBIGUOUS,
+                true, true, 5 /* 上趟是 5 */, 3,
+                HB_AMBIGUOUS_MS, HB_FAST_MS, HB_NORMAL_MS, HB_SETTLE_STREAK);
+        assertEquals("结论变了 ⇒ 快档", HB_FAST_MS, b.nextMs);
+        assertEquals("verdict 记到新值", 8, b.lastVerdict);
+        assertEquals("streak 归零", 0, b.stableStreak);
+    }
+
+    /** streak 边界：3→4 那一趟恰好越线转常规档（差一次采样的老坑钉死在这里）。 */
+    @Test
+    public void heartbeat_settleStreakBoundary() {
+        // streak 2→3：3 < 4 ⇒ 仍是快档
+        TestAccessBridge.Beat fast = TestAccessBridge.beat(
+                5, false, 0, HB_MAX_AMBIGUOUS,
+                true, true, 5, 2,
+                HB_AMBIGUOUS_MS, HB_FAST_MS, HB_NORMAL_MS, HB_SETTLE_STREAK);
+        assertEquals("streak 未满 ⇒ 快档", HB_FAST_MS, fast.nextMs);
+        assertEquals(3, fast.stableStreak);
+        // streak 3→4：4 < 4 不成立 ⇒ 常规档
+        TestAccessBridge.Beat normal = TestAccessBridge.beat(
+                5, false, 0, HB_MAX_AMBIGUOUS,
+                true, true, 5, 3,
+                HB_AMBIGUOUS_MS, HB_FAST_MS, HB_NORMAL_MS, HB_SETTLE_STREAK);
+        assertEquals("streak 满 4 ⇒ 常规档", HB_NORMAL_MS, normal.nextMs);
+        assertEquals(4, normal.stableStreak);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  EmptyScanPolicy —— 退化测量补检推迟门（code 953，内核 2026-11-03 抽出）
+    // ══════════════════════════════════════════════════════════════════
+
+    /** 七路证据全空才算退化测量；任何一路在场都不算（真离开播放页照常收起）。 */
+    @Test
+    public void emptyScan_degenerateNeedsAllSevenGatesEmpty() {
+        assertTrue("七路全空 ⇒ 退化测量",
+                TestAccessBridge.scanDegenerate(false, false, false, 0, 0, 0, false));
+        // 单路证据在场即否决（逐路抽样，锚点在场也算 —— 面积归零归 948/949 归零档管）
+        assertFalse(TestAccessBridge.scanDegenerate(true, false, false, 0, 0, 0, false));
+        assertFalse(TestAccessBridge.scanDegenerate(false, true, false, 0, 0, 0, false));
+        assertFalse("锚点在场（哪怕面积 0）≠ 全空",
+                TestAccessBridge.scanDegenerate(false, false, true, 0, 0, 0, false));
+        assertFalse(TestAccessBridge.scanDegenerate(false, false, false, 1, 0, 0, false));
+        assertFalse(TestAccessBridge.scanDegenerate(false, false, false, 0, 1, 0, false));
+        assertFalse(TestAccessBridge.scanDegenerate(false, false, false, 0, 0, 1, false));
+        assertFalse(TestAccessBridge.scanDegenerate(false, false, false, 0, 0, 0, true));
+    }
+
+    /** 四道门逐门钉死：按钮没显示 / 非全空 / 证据超时 / 已补检过 —— 任一命中即不推迟。 */
+    @Test
+    public void emptyScan_deferGates() {
+        long ttl = 2000L; // HIDE_RECHECK_EVIDENCE_MS 真实值
+        long now = 100_000L;
+        // 全门通过 ⇒ 推迟
+        assertTrue("四门全过 ⇒ 本轮推迟收起",
+                TestAccessBridge.shouldDefer(true, true, true, now - 100L, now, ttl, false));
+        // 门① 按钮没显示 / 扫描缺失
+        assertFalse(TestAccessBridge.shouldDefer(true, false, true, now - 100L, now, ttl, false));
+        assertFalse(TestAccessBridge.shouldDefer(false, true, true, now - 100L, now, ttl, false));
+        // 门② 扫到证据 = 真的离开
+        assertFalse(TestAccessBridge.shouldDefer(true, true, false, now - 100L, now, ttl, false));
+        // 门③ 证据过期（恰好 2000ms 仍在窗内，2001ms 出窗）
+        assertTrue("恰好 TTL 边界内 ⇒ 仍犹豫",
+                TestAccessBridge.shouldDefer(true, true, true, now - ttl, now, ttl, false));
+        assertFalse("超出 TTL ⇒ 不该再犹豫",
+                TestAccessBridge.shouldDefer(true, true, true, now - ttl - 1L, now, ttl, false));
+        assertFalse("从没见过播放页证据",
+                TestAccessBridge.shouldDefer(true, true, true, 0L, now, ttl, false));
+        // 门④ 本回合已补检过一次（真离开时绝不赖着不走）
+        assertFalse("已补检过 ⇒ 还是全空就是真的走了",
+                TestAccessBridge.shouldDefer(true, true, true, now - 100L, now, ttl, true));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  DensityPolicy —— density 重锁状态机（code 939 bug2，内核 2026-11-03 抽出）
+    // ══════════════════════════════════════════════════════════════════
+    //
+    // ⚠️ 阈值用 ActivityButtonHook 里的真实常量值：DENSITY_RELOCK_MS=20000、
+    //   DENSITY_RELOCK_SAMPLES=100、容差 0.0001f。
+    private static final long DEN_RELOCK_MS = 20000L;
+    private static final int DEN_RELOCK_SAMPLES = 100;
+
+    /** 首次锁定：无条件采信，但**不打** screen-changed 日志（没有旧值可比）。 */
+    @Test
+    public void density_firstLockIsSilent() {
+        TestAccessBridge.Dens r = TestAccessBridge.densityStep(
+                0f, 0, 0L, 0,
+                3.0f, 1272 * 31 + 2772, 1_000L,
+                DEN_RELOCK_MS, DEN_RELOCK_SAMPLES);
+        assertEquals("首次锁定采信读数", 3.0f, r.use, 1e-6);
+        assertEquals(3.0f, r.lockedDensity, 1e-6);
+        assertEquals("首次锁定不打日志", 0, r.event);
+    }
+
+    /** 像素键变了（旋转/分屏/换屏）⇒ 无条件重锁；有旧值且不同才打 screen-changed。 */
+    @Test
+    public void density_screenChangeRelocks() {
+        TestAccessBridge.Dens r = TestAccessBridge.densityStep(
+                3.0f, 111, 0L, 0,
+                2.75f, 222 /* 新像素键 */, 5_000L,
+                DEN_RELOCK_MS, DEN_RELOCK_SAMPLES);
+        assertEquals("屏幕真的变了 ⇒ 采信新值", 2.75f, r.use, 1e-6);
+        assertEquals(222, r.lockedPxKey);
+        assertEquals("带旧值且不同 ⇒ 打 screen-changed", 1, r.event);
+    }
+
+    /** 转场伪值：像素键没变、读数漂移 ⇒ 沿用锁定值，首个样本打 spike。 */
+    @Test
+    public void density_spikeIsIgnored() {
+        TestAccessBridge.Dens r = TestAccessBridge.densityStep(
+                2.9688f, 111, 0L, 0,
+                3.5f /* 转场伪值 */, 111, 50_000L,
+                DEN_RELOCK_MS, DEN_RELOCK_SAMPLES);
+        assertEquals("伪值不采信 ⇒ 沿用锁定值", 2.9688f, r.use, 1e-6);
+        assertEquals(2.9688f, r.lockedDensity, 1e-6);
+        assertEquals("差异计数 1", 1, r.diffCount);
+        assertEquals("首个差异样本打 spike", 3, r.event);
+        assertEquals("差异起算于 now", 50_000L, r.diffSinceMs);
+    }
+
+    /** 持续差异的双门槛：时长与采样数**同时**满足才重锁；差一个都不行。 */
+    @Test
+    public void density_sustainedRelockDoubleGate() {
+        // 采样数够但时长差 1ms ⇒ 不重锁
+        TestAccessBridge.Dens early = TestAccessBridge.densityStep(
+                2.9688f, 111, 1_000L, 99,
+                3.5f, 111, 1_000L + DEN_RELOCK_MS - 1L,
+                DEN_RELOCK_MS, DEN_RELOCK_SAMPLES);
+        assertEquals("时长未满 ⇒ 仍沿用锁定值", 2.9688f, early.use, 1e-6);
+        assertEquals(100, early.diffCount);
+        // 时长够但采样数差 1 ⇒ 不重锁
+        TestAccessBridge.Dens few = TestAccessBridge.densityStep(
+                2.9688f, 111, 1_000L, 98,
+                3.5f, 111, 1_000L + DEN_RELOCK_MS,
+                DEN_RELOCK_MS, DEN_RELOCK_SAMPLES);
+        assertEquals("采样未满 ⇒ 仍沿用锁定值", 2.9688f, few.use, 1e-6);
+        // 双门槛恰好同时满足 ⇒ 重锁
+        TestAccessBridge.Dens done = TestAccessBridge.densityStep(
+                2.9688f, 111, 1_000L, 99,
+                3.5f, 111, 1_000L + DEN_RELOCK_MS,
+                DEN_RELOCK_MS, DEN_RELOCK_SAMPLES);
+        assertEquals("双门槛齐 ⇒ 真的换了显示大小", 3.5f, done.use, 1e-6);
+        assertEquals("sustained 事件", 2, done.event);
+        assertEquals("日志用采样数（含本步）", 100, done.samples);
+        assertEquals("重锁后差异计数清零", 0, done.diffCount);
+    }
+
+    /** 读数与锁定值一致（容差 0.0001）⇒ 清差异计数、无日志。 */
+    @Test
+    public void density_equalReadingResetsCounters() {
+        TestAccessBridge.Dens r = TestAccessBridge.densityStep(
+                3.0f, 111, 55_000L, 7,
+                3.0f + 0.00005f /* 容差内 */, 111, 60_000L,
+                DEN_RELOCK_MS, DEN_RELOCK_SAMPLES);
+        assertEquals("容差内视为一致 ⇒ 沿用锁定值", 3.0f, r.use, 1e-6);
+        assertEquals(0, r.diffCount);
+        assertEquals(0L, r.diffSinceMs);
+        assertEquals(0, r.event);
+    }
 }

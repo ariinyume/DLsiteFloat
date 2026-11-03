@@ -415,8 +415,6 @@ public class ActivityButtonHook {
      */
     private static final int CAPSULE_W_DP = 85;
     private static final int CAPSULE_H_DP = 32;
-    /** 【code 935 bug2】胶囊高度下限（dp）：可用带不足时按钮缩到这个值就不再缩。 */
-    private static final int CAPSULE_MIN_H_DP = 20;
     /** 【code 935 bug2】胶囊高度（px）；-1 = 还没算过。【code 936】恒为 32dp。 */
     private static int sCapsuleHPx = -1;
     /** 【code 936 bug2】简介底边逐帧翻转时的迟滞阈值（dp）。 */
@@ -560,14 +558,6 @@ public class ActivityButtonHook {
      *    {@link #capsuleBottomForSlider} 里的版本分岔）。两者绝不能同时生效。
      */
     private static final int CAPSULE_BELOW_TIME_LABEL_DP = 24;
-
-    /**
-     * 【code 923 几何 4】识别「一行淡色小字简介」时，允许它在主滑条上方多远（dp）。
-     *
-     * 比这更远的文本行（音轨大标题之类）不算简介，否则中点会被拉到太高、
-     * 按钮跑到标题旁边去。
-     */
-    private static final int DESC_SEARCH_MAX_DP = 220;
 
     /**
      * 按钮距屏幕底缘的边距（dp）—— v32 起**重新是唯一口径**（v31 曾把它降级成「兜底值」），
@@ -1348,9 +1338,6 @@ public class ActivityButtonHook {
      * 否则逐帧微抖会灌爆「相等才跳过」的缓存（1.21.10 踩过）。
      */
     private static int sCapsuleFollowY = Integer.MIN_VALUE;
-
-    /** 【v57】上一次写入的 translationY（px），与 {@link #applyCapsuleOffset} 的判等用。 */
-    private static int sCapsuleAppliedDy = Integer.MIN_VALUE;
 
     /** 【v57】跟随迟滞阈值（px）：目标位移与当前位移差小于它就**不动**。 */
     private static final int CAPSULE_FOLLOW_DEADZONE_PX = 6;
@@ -3566,33 +3553,27 @@ public class ActivityButtonHook {
     }
 
     /**
-     * 决定下一次心跳的间隔（v24 响应提速的核心）。
+     * 决定下一次心跳的间隔（v24 响应提速的核心）——判定内核已抽至 {@link HeartbeatPolicy}。
      *
-     * 原则：**只在「需要尽快收敛」的时候快，其余时间省电。**
-     *   1) 过渡态（主滑条 + mini-player 滑条同时在）→ 快速复检；
-     *   2) 结论与按钮**现状不一致**（例：还显示着按钮但判定已不确定）→ 快速跟踪；
-     *   3) 结论刚刚变化 → 快速跟踪一段（{@link #SETTLE_STREAK} 次）后转常规。
+     * <p>原则：**只在「需要尽快收敛」的时候快，其余时间省电。**
+     * 分支算术（过渡态复检 / 结论与现状不符 / 稳定 streak 三档）一字不在此处，
+     * 本方法只做「读状态 → 交内核 → 落账」（防双份真值，见 {@link HeartbeatPolicy} 铁律）。
      */
     private static long decideHeartbeat(int verdict, boolean ambiguous) {
-        if (ambiguous && sAmbiguousRechecks < MAX_AMBIGUOUS_RECHECKS) {
-            sAmbiguousRechecks++;
-            sForceNextDetect = true; // 过渡态复检要绕过节流，否则会被丢掉
-            return AMBIGUOUS_RECHECK_MS;
-        }
-
         boolean buttonVisible = sButtonGroup != null
                 && sButtonGroup.getVisibility() == View.VISIBLE;
-        if ((verdict == SubtitleViewHook.PAGE_PLAYER) != buttonVisible) {
-            return HEARTBEAT_FAST_MS; // 结论与现状不符 → 尽快收敛（离开播放页后的隐藏就走这条）
+        HeartbeatPolicy.Beat b = HeartbeatPolicy.decide(
+                verdict, ambiguous, sAmbiguousRechecks, MAX_AMBIGUOUS_RECHECKS,
+                verdict == SubtitleViewHook.PAGE_PLAYER, buttonVisible,
+                sLastVerdict, sStableStreak,
+                AMBIGUOUS_RECHECK_MS, HEARTBEAT_FAST_MS, HEARTBEAT_MS, SETTLE_STREAK);
+        sAmbiguousRechecks = b.ambiguousRechecks;
+        if (b.forceNextDetect) {
+            sForceNextDetect = true; // 过渡态复检要绕过节流，否则会被丢掉（只置真不清假）
         }
-
-        if (verdict != sLastVerdict) {
-            sLastVerdict = verdict;
-            sStableStreak = 0;
-        } else {
-            sStableStreak++;
-        }
-        return sStableStreak < SETTLE_STREAK ? HEARTBEAT_FAST_MS : HEARTBEAT_MS;
+        sLastVerdict = b.lastVerdict;
+        sStableStreak = b.stableStreak;
+        return b.nextMs;
     }
 
     /**
@@ -3666,19 +3647,16 @@ public class ActivityButtonHook {
      * @return true = 本轮已推迟（调用方直接 break，维持现状）
      */
     private static boolean deferHideOnEmptyScan(long now, SubtitleViewHook.ScanResult scan) {
-        if (scan == null || !Boolean.TRUE.equals(sLastDecision)) {
-            return false; // 按钮本来就没显示 —— 收无可收
-        }
-        if (scan.hasMainSlider || scan.hasBottomSlider || scan.anchorRef != null
-                || scan.wideSliderCount > 0 || scan.timeTextCount > 0
-                || scan.descCandidateCount > 0 || !scan.liveLines.isEmpty()) {
-            return false; // 有东西可测 —— 那是**真的**离开播放页，照常收起
-        }
-        if (sLastPlayerSeenMs == 0L || now - sLastPlayerSeenMs > HIDE_RECHECK_EVIDENCE_MS) {
-            return false; // 早就没有播放页证据了，不该再犹豫
-        }
-        if (sHideRecheckMs != 0L) {
-            return false; // 本回合已补检过一次，还是全空 ⇒ 真的走了
+        // 四道门判据已抽至 EmptyScanPolicy（零状态内核，见其铁律）；此处只留副作用。
+        boolean degenerate = scan != null && EmptyScanPolicy.isDegenerate(
+                scan.hasMainSlider, scan.hasBottomSlider, scan.anchorRef != null,
+                scan.wideSliderCount, scan.timeTextCount, scan.descCandidateCount,
+                !scan.liveLines.isEmpty());
+        if (!EmptyScanPolicy.shouldDefer(scan != null,
+                Boolean.TRUE.equals(sLastDecision), degenerate,
+                sLastPlayerSeenMs, now, HIDE_RECHECK_EVIDENCE_MS,
+                sHideRecheckMs != 0L)) {
+            return false; // 四道门任一未过 —— 照常收起（注释原文见 EmptyScanPolicy）
         }
         sHideRecheckMs = now;
         sForceNextDetect = true; // 补检必须绕过 DETECT_MIN_INTERVAL_MS 的节流
@@ -4499,6 +4477,9 @@ public class ActivityButtonHook {
     /**
      * 【code 939 bug2】取一个**不会抖**的 density —— 见 {@link #sLockedDensity} 的长注释。
      * 读数与锁定值不一致且像素尺寸没变时，一律沿用锁定值（转场伪值）。
+     *
+     * <p>重锁状态机已抽至 {@link DensityPolicy}（零状态内核）；本方法只留
+     * IO 读数、兜底、记忆位落账与三条日志（口径见 {@link DensityPolicy} 铁律）。
      */
     private static float stableDensity(Context ctx) {
         float d = 0f;
@@ -4513,44 +4494,34 @@ public class ActivityButtonHook {
         if (d <= 0f) {
             return sLockedDensity > 0f ? sLockedDensity : 3f;
         }
-        // 首次锁定 / 像素屏幕尺寸真的变了（旋转、分屏、换屏）
-        if (sLockedDensity <= 0f || pxKey != sLockedPxKey) {
-            if (sLockedDensity > 0f && Math.abs(d - sLockedDensity) > 0.0001f) {
-                LogGate.debug(TAG, " density re-locked (screen changed): "
-                        + sLockedDensity + " -> " + d + " pxKey=" + pxKey);
-            }
-            sLockedDensity = d;
-            sLockedPxKey = pxKey;
-            sDensityDiffSinceMs = 0L;
-            sDensityDiffCount = 0;
-            return d;
-        }
-        if (Math.abs(d - sLockedDensity) <= 0.0001f) {
-            sDensityDiffSinceMs = 0L;
-            sDensityDiffCount = 0;
-            return sLockedDensity;
-        }
-        // 像素尺寸没变但 density 变了 —— 真机实证这是「打开播放页转场瞬间」的伪值
+        float oldLocked = sLockedDensity;
+        long oldDiffSince = sDensityDiffSinceMs;
         long now = SystemClock.uptimeMillis();
-        if (sDensityDiffSinceMs == 0L) {
-            sDensityDiffSinceMs = now;
+        DensityPolicy.Result r = DensityPolicy.step(
+                sLockedDensity, sLockedPxKey, sDensityDiffSinceMs, sDensityDiffCount,
+                d, pxKey, now, DENSITY_RELOCK_MS, DENSITY_RELOCK_SAMPLES);
+        sLockedDensity = r.lockedDensity;
+        sLockedPxKey = r.lockedPxKey;
+        sDensityDiffSinceMs = r.diffSinceMs;
+        sDensityDiffCount = r.diffCount;
+        switch (r.event) {
+            case DensityPolicy.EVENT_RELOCK_SCREEN:
+                LogGate.debug(TAG, " density re-locked (screen changed): "
+                        + oldLocked + " -> " + d + " pxKey=" + pxKey);
+                break;
+            case DensityPolicy.EVENT_RELOCK_SUSTAINED:
+                LogGate.debug(TAG, " density re-locked (sustained diff): "
+                        + oldLocked + " -> " + d + " samples=" + r.samples
+                        + " overMs=" + (now - oldDiffSince));
+                break;
+            case DensityPolicy.EVENT_SPIKE:
+                LogGate.debug(TAG, " density spike ignored: read=" + d
+                        + " locked=" + oldLocked + " pxKey=" + pxKey);
+                break;
+            default:
+                break;
         }
-        sDensityDiffCount++;
-        if (now - sDensityDiffSinceMs >= DENSITY_RELOCK_MS
-                && sDensityDiffCount >= DENSITY_RELOCK_SAMPLES) {
-            LogGate.debug(TAG, " density re-locked (sustained diff): "
-                    + sLockedDensity + " -> " + d + " samples=" + sDensityDiffCount
-                    + " overMs=" + (now - sDensityDiffSinceMs));
-            sLockedDensity = d;
-            sDensityDiffSinceMs = 0L;
-            sDensityDiffCount = 0;
-            return d;
-        }
-        if (sDensityDiffCount == 1) {
-            LogGate.debug(TAG, " density spike ignored: read=" + d
-                    + " locked=" + sLockedDensity + " pxKey=" + pxKey);
-        }
-        return sLockedDensity;
+        return r.use;
     }
 
     /**

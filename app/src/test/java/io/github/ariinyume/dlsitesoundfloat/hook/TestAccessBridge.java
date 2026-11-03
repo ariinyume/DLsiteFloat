@@ -213,4 +213,89 @@ public Win(long needMs, long sinceMs, boolean goneStill, boolean hasEvidence) {
         return new Poke(d.passedMerge, d.allow, d.burstStartMs, d.lastEventMs,
                 d.lastPokeMs, d.windowStartMs, d.windowCount, d.quietBypass);
     }
+
+    // ── HeartbeatPolicy（2026-11-03 零状态内核拆分）──────────────────────
+
+    /** 把 package-private 的 {@code HeartbeatPolicy.Beat} 摊平供断言（只搬运、不换算）。 */
+    public static final class Beat {
+        public final long nextMs;
+        public final int ambiguousRechecks;
+        public final boolean forceNextDetect;
+        public final int lastVerdict;
+        public final int stableStreak;
+
+        public Beat(long nextMs, int ambiguousRechecks, boolean forceNextDetect,
+                    int lastVerdict, int stableStreak) {
+            this.nextMs = nextMs;
+            this.ambiguousRechecks = ambiguousRechecks;
+            this.forceNextDetect = forceNextDetect;
+            this.lastVerdict = lastVerdict;
+            this.stableStreak = stableStreak;
+        }
+    }
+
+    public static Beat beat(int verdict, boolean ambiguous,
+                            int ambiguousRechecks, int maxAmbiguousRechecks,
+                            boolean verdictIsPlayer, boolean buttonVisible,
+                            int lastVerdict, int stableStreak,
+                            long ambiguousRecheckMs, long fastMs, long normalMs,
+                            int settleStreak) {
+        HeartbeatPolicy.Beat b = HeartbeatPolicy.decide(verdict, ambiguous,
+                ambiguousRechecks, maxAmbiguousRechecks,
+                verdictIsPlayer, buttonVisible, lastVerdict, stableStreak,
+                ambiguousRecheckMs, fastMs, normalMs, settleStreak);
+        return new Beat(b.nextMs, b.ambiguousRechecks, b.forceNextDetect,
+                b.lastVerdict, b.stableStreak);
+    }
+
+    // ── EmptyScanPolicy（2026-11-03 零状态内核拆分）───────────────────────
+
+    public static boolean scanDegenerate(boolean hasMainSlider, boolean hasBottomSlider,
+                                         boolean hasAnchor, int wideSliderCount,
+                                         int timeTextCount, int descCandidateCount,
+                                         boolean hasLiveLines) {
+        return EmptyScanPolicy.isDegenerate(hasMainSlider, hasBottomSlider, hasAnchor,
+                wideSliderCount, timeTextCount, descCandidateCount, hasLiveLines);
+    }
+
+    public static boolean shouldDefer(boolean scanPresent, boolean buttonShown,
+                                      boolean degenerate, long lastPlayerSeenMs,
+                                      long now, long evidenceTtlMs, boolean alreadyArmed) {
+        return EmptyScanPolicy.shouldDefer(scanPresent, buttonShown, degenerate,
+                lastPlayerSeenMs, now, evidenceTtlMs, alreadyArmed);
+    }
+
+    // ── DensityPolicy（2026-11-03 零状态内核拆分）────────────────────────
+
+    /** 把 package-private 的 {@code DensityPolicy.Result} 摊平供断言（只搬运、不换算）。 */
+    public static final class Dens {
+        public final float use;
+        public final float lockedDensity;
+        public final int lockedPxKey;
+        public final long diffSinceMs;
+        public final int diffCount;
+        public final int event;
+        public final int samples;
+
+        public Dens(float use, float lockedDensity, int lockedPxKey,
+                    long diffSinceMs, int diffCount, int event, int samples) {
+            this.use = use;
+            this.lockedDensity = lockedDensity;
+            this.lockedPxKey = lockedPxKey;
+            this.diffSinceMs = diffSinceMs;
+            this.diffCount = diffCount;
+            this.event = event;
+            this.samples = samples;
+        }
+    }
+
+    public static Dens densityStep(float lockedDensity, int lockedPxKey,
+                                   long diffSinceMs, int diffCount,
+                                   float d, int pxKey, long now,
+                                   long relockMs, int relockSamples) {
+        DensityPolicy.Result r = DensityPolicy.step(lockedDensity, lockedPxKey,
+                diffSinceMs, diffCount, d, pxKey, now, relockMs, relockSamples);
+        return new Dens(r.use, r.lockedDensity, r.lockedPxKey,
+                r.diffSinceMs, r.diffCount, r.event, r.samples);
+    }
 }
