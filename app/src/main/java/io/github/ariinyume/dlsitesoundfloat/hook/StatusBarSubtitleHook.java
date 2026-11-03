@@ -28,7 +28,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.ColorStateList;
 import android.graphics.Paint;
-import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Handler;
@@ -59,7 +58,6 @@ import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 import java.lang.reflect.Method;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -242,7 +240,7 @@ public class StatusBarSubtitleHook {
      *
      * <p>所以：宽度取三个口径最大后再补这个余量（⚠️ 但每个口径都必须先过
      * {@link #MEASURE_TOLERANCE_PX} 的合理性闸门 —— 否则会把脏值放大）。
-     * 同时要求滚动终点**必须落在字符边界上**（见 {@link #snapToCharBoundary}），两边都不切字。
+     * 同时要求滚动终点**必须落在字符边界上**（见 {@link ScrollGoal} 的吸附逻辑），两边都不切字。
      */
     private static final int TAIL_MARGIN_PX = 3;
 
@@ -330,7 +328,6 @@ public class StatusBarSubtitleHook {
     private static final Map<View, Integer> sHiddenPrev = new IdentityHashMap<>();
     /** setVisibility 事件压制用的目标 id 缓存（O(1) 判断，别在热点路径做字符串比较）。 */
     private static int[] sTargetIds = new int[0];
-    private static final Map<String, Integer> sResIdCache = new HashMap<>();
 
     private static boolean sReceiverRegistered = false;
     private static boolean sSuppressed = false;
@@ -606,238 +603,9 @@ public class StatusBarSubtitleHook {
 
         hookVisibilitySuppressor();
         hookClockColorMirror();
-        // 【code 932】双击关闭功能整体移除（Ari：状态栏上面只要显示字幕就行，不需要点击关闭）。
-        // installDoubleTapToDismiss / installDoubleTapOnRoot / observeDoubleTap /
-        // tryAttachDoubleTap 方法保留但不再调用，App 侧 dismiss 广播接收器留着无害。
-    }
-
-    // ======================================================================
-    // 【code 924】双击状态栏字幕 -> 关闭状态栏字幕
-    // ======================================================================
-
-    /** 双击判定窗（ms）。真机 150~320ms 是人类双击的常见区间。 */
-    private static final long DOUBLE_TAP_WINDOW_MS = 320L;
-    /** 两次点击的最大位移（px）。超过就不算「双击同一点」。 */
-    private static final int DOUBLE_TAP_SLOP_PX = 60;
-    /** 上次单击的时间与坐标。 */
-    private static long sLastTapMs = 0L;
-    private static int sLastTapX = 0;
-    private static int sLastTapY = 0;
-
-    /**
-     * 在字幕行视图上挂 {@link View.OnTouchListener}，双击关闭状态栏字幕。
-     *
-     * ── 为什么挂在 sLineView（而不是整个状态栏）──
-     * 需求是「双击**状态栏字幕位置**」，挂在字幕行上语义最准；也天然避开了
-     * 左半边的时钟 / 通知图标区（那些地方双击可能是系统手势）。
-     *
-     * ── 为什么**不吃掉事件**（关键）──
-     * 状态栏是「下拉通知栏」手势的起点。若在 DOWN 就 return true，下拉会被废掉。
-     * 所以策略是：
-     *   · {@code onTouch} 里**只观察、不消费**，永远 return false —— 宿主照常收到事件，
-     *     下拉 / 点击 / 滑动一律不变；
-     *   · 只有当**确认为双击**（第二次 DOWN 落点与第一次在窗口内且位移很小）时，
-     *     才执行关闭动作。事件本身仍放行（系统这一下也做不了什么，因为已经在我们身上）。
-     * 代价是双击时系统可能同时收到一次多余的 DOWN/UP —— 实测（状态栏非交互区）
-     * 无可见副作用；换来的是「绝不破坏下拉」这个硬要求。
-     *
-     * ── 为什么要按「动作 + 落点」双重判定 ──
-     * 状态栏上的滑动（下拉）也会派发 DOWN/UP；只按时间判会把「快速下拉再点」
-     * 误判成双击。加 60px 位移门后，滑动几乎不可能连续两次落在同一点。
-     */
-    private static View.OnTouchListener sDoubleTapListener;
-
-    /**
-     * 【code 927 问题 2】状态栏根视图上的 dispatchTouchEvent hook 是否已装。
-     * 出问题时的历史证据：SystemUI 进程整个会话**零 touch 日志**
-     * —— 挂在 sLineView 上的 OnTouchListener 从来没被调用过一次。
-     */
-    private static volatile boolean sDoubleTapOnRootInstalled = false;
-
-    /** 【code 927 问题 2】dispatchTouchEvent 上收到的 DOWN 事件计数（取证：区分「没 hook 上」与「收不到事件」）。 */
-    private static int sRootDownCount = 0;
-
-    private static void installDoubleTapToDismiss() {
-        // 【code 927 问题 2】事件源不再挂 sLineView，改为挂**状态栏根视图的
-        //   dispatchTouchEvent**（见 installDoubleTapOnRoot）。
-        //
-        //   真机实证（work_diag_52 · SystemUI 进程整个会话）：**0 条 touch 日志**。
-        //   字幕行被塞在 status bar 的非交互区，触摸在**窗口层面**就被 systemui 的
-        //   下拉手势层吃掉，根本不会派发到子视图 —— 子视图 OnTouchListener 形同虚设。
-        //   而 dispatchTouchEvent 是**任何**落到状态栏窗口的事件的第一站，
-        //   在那里能拿到真实落点，再用「是否在字幕行屏幕矩形内」判定命中。
-        //   具体挂载在 attach 内部调用 installDoubleTapOnRoot(root)。
-        XposedCompat.log(TAG + "[双击] 双击关闭功能已启用（window=" + DOUBLE_TAP_WINDOW_MS
-                + "ms, slop=" + DOUBLE_TAP_SLOP_PX
-                + "px, source=statusbar.dispatchTouchEvent）");
-    }
-
-    /**
-     * 【code 927 问题 2】在**状态栏根视图**上挂 dispatchTouchEvent 观察者。
-     *
-     * 为什么必须换事件源：真机实证「挂 sLineView 一个事件都收不到」——
-     * 状态栏非交互区的触摸在窗口层面就被下拉手势层吃掉。
-     * dispatchTouchEvent 是任何落到状态栏窗口的事件的第一站，
-     * 且我们**只观察、不消费**（{@code proceed()} 原样放行，下拉通知栏不受影响）。
-     *
-     * 命中判定用「落点是否在字幕行视图的屏幕矩形内」——
-     * 比「事件是否派发到该视图」可靠（后者依赖 systemui 的命中测试策略）。
-     */
-    private static void installDoubleTapOnRoot(final View statusBarRoot) {
-        if (statusBarRoot == null || sDoubleTapOnRootInstalled) {
-            return;
-        }
-        try {
-            final Class<?> cls = statusBarRoot.getClass();
-            java.lang.reflect.Method m = XposedCompat.findMethodExact(cls, "dispatchTouchEvent",
-                    android.view.MotionEvent.class);
-            XposedCompat.hookMethod(m, new XposedInterface.Hooker() {
-                @Override
-                public Object intercept(XposedInterface.Chain chain) throws Throwable {
-                    try {
-                        Object a0 = chain.getArg(0);
-                        if (a0 instanceof android.view.MotionEvent) {
-                            observeDoubleTap((android.view.MotionEvent) a0);
-                        }
-                    } catch (Throwable ignored) {
-                    }
-                    return chain.proceed();   // **永不消费** —— 保住下拉通知栏
-                }
-            });
-            sDoubleTapOnRootInstalled = true;
-            XposedCompat.log(TAG + "[双击] hooked " + cls.getName() + ".dispatchTouchEvent");
-        } catch (Throwable t) {
-            XposedCompat.log(TAG + "[双击] hook dispatchTouchEvent failed: " + t);
-        }
-    }
-
-    /**
-     * 【code 927 问题 2】观察双击：只有落点**在字幕行屏幕矩形内**才计数。
-     * 只看 DOWN 沿；{@link #DOUBLE_TAP_WINDOW_MS} 窗 + {@link #DOUBLE_TAP_SLOP_PX} 位移门。
-     * 每 40 次 DOWN 汇总一行（取证：一次性日志事后查不出「偶发 vs 恒常」）。
-     */
-    private static void observeDoubleTap(android.view.MotionEvent e) {
-        if (e == null || e.getActionMasked() != android.view.MotionEvent.ACTION_DOWN) {
-            return;
-        }
-        View line = sLineView;
-        if (line == null || !line.isShown()) {
-            return;
-        }
-        try {
-            int[] loc = new int[2];
-            line.getLocationOnScreen(loc);
-            int pad = (int) (DOUBLE_TAP_SLOP_PX * 1.5f);   // 状态栏很矮，给点余量
-            float x = e.getRawX();
-            float y = e.getRawY();
-            boolean inside = x >= loc[0] - pad && x <= loc[0] + line.getWidth() + pad
-                    && y >= loc[1] - pad && y <= loc[1] + line.getHeight() + pad;
-            if (sRootDownCount++ % 40 == 0) {
-                LogGate.debug(TAG, "[双击] root DOWN #" + sRootDownCount
-                        + " at (" + (int) x + "," + (int) y + ") inside=" + inside
-                        + " lineRect=[" + loc[0] + "," + loc[1] + ","
-                        + line.getWidth() + "x" + line.getHeight() + "]");
-            }
-            if (!inside) {
-                sLastTapMs = 0L;   // 离开字幕区 -> 作废上次，避免「点A再点B」被算双击
-                return;
-            }
-            long now = SystemClock.uptimeMillis();
-            boolean inWindow = sLastTapMs != 0L && now - sLastTapMs <= DOUBLE_TAP_WINDOW_MS;
-            boolean near = Math.abs((int) x - sLastTapX) <= DOUBLE_TAP_SLOP_PX
-                    && Math.abs((int) y - sLastTapY) <= DOUBLE_TAP_SLOP_PX;
-            if (inWindow && near) {
-                sLastTapMs = 0L;
-                LogGate.debug(TAG, "[双击] hit at (" + (int) x + "," + (int) y + ")");
-                onSubtitleDoubleTapped(line.getContext());
-            } else {
-                sLastTapMs = now;
-                sLastTapX = (int) x;
-                sLastTapY = (int) y;
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
-    /** 在（新）字幕行视图上挂双击监听。重复调用无害（先清旧引用）。 */
-    private static void tryAttachDoubleTap(final Context ctx, View line) {
-        if (line == null) {
-            return;
-        }
-        if (sDoubleTapListener == null) {
-            sDoubleTapListener = new View.OnTouchListener() {
-                @Override
-                public boolean onTouch(View v, android.view.MotionEvent e) {
-                    try {
-                        if (e == null) {
-                            return false;
-                        }
-                        if (e.getActionMasked() != android.view.MotionEvent.ACTION_DOWN) {
-                            return false;   // 只看按下沿，松开沿忽略
-                        }
-                        long now = SystemClock.uptimeMillis();
-                        int x = (int) e.getRawX();
-                        int y = (int) e.getRawY();
-                        boolean inWindow = now - sLastTapMs <= DOUBLE_TAP_WINDOW_MS;
-                        boolean near = Math.abs(x - sLastTapX) <= DOUBLE_TAP_SLOP_PX
-                                && Math.abs(y - sLastTapY) <= DOUBLE_TAP_SLOP_PX;
-                        if (inWindow && near && v.isShown()) {
-                            sLastTapMs = 0L;   // 消费掉这组，避免三击连触发
-                            onSubtitleDoubleTapped(v.getContext());
-                        } else {
-                            sLastTapMs = now;
-                            sLastTapX = x;
-                            sLastTapY = y;
-                        }
-                    } catch (Throwable ignored) {
-                    }
-                    return false;   // **永不消费** —— 保住下拉通知栏
-                }
-            };
-        }
-        line.setOnTouchListener(sDoubleTapListener);
-    }
-
-    /**
-     * 双击生效：请求**关闭**状态栏字幕。
-     *
-     * ── 为什么不能直接调 {@link StatusBarSubtitleBridge#toggleAppEnabled} ──
-     * 那个方法改的是 {@code sAppEnabled} 这个**静态字段**。本类跑在 **SystemUI 进程**，
-     * 而 `toggleAppEnabled` 的正常调用方（胶囊按钮）跑在 **宿主 App 进程** ——
-     * 两个进程各有一份副本。在 SystemUI 里调它只会改本进程副本，
-     * App 进程下次推送字幕时又把它当「开着」打回来，表现为「关了又自己开」。
-     *
-     * ── 正确架构：反向广播 + 唯一落点 ──
-     * SystemUI 侧只发一条 {@link StatusBarSubtitleBridge#ACTION_DISMISS_REQUEST}
-     * 请求广播；**真正执行**放在 App 进程的 {@code ActivityButtonHook} 里 ——
-     * 与胶囊按钮点击**走同一条代码路径**（toggle + resendCurrentFromRepo + 刷按钮）。
-     * 这样「状态栏字幕开关」这个事实仍然只有**一个**写入口，
-     * 不会变成两个进程各写一半（1.21.12 的教训：同一事实被两个 UI 读到 → 先比口径）。
-     *
-     * 本地先 GONE 是为了手感（不等广播往返）；App 进程收到后会重推空行，
-     * 状态栏随之 hideSubtitleNow，两边的最终态一致。
-     */
-    private static void onSubtitleDoubleTapped(Context ctx) {
-        boolean sent = false;
-        try {
-            Intent i = new Intent(StatusBarSubtitleBridge.ACTION_DISMISS_REQUEST);
-            i.putExtra(StatusBarSubtitleBridge.EXTRA_DISMISS_REASON, "double_tap_status_bar");
-            ctx.sendBroadcast(i);
-            sent = true;
-        } catch (Throwable t) {
-            XposedCompat.log(TAG + "[双击] send dismiss request failed: " + t);
-        }
-        LogGate.debug(TAG, "[双击] 状态栏字幕位置双击 -> dismiss request sent=" + sent);
-        // 立即本地隐藏（手感）：不等 App 进程往返。
-        try {
-            if (sContainer != null) {
-                sContainer.setVisibility(View.GONE);
-            }
-            if (sLineView != null) {
-                sLineView.setVisibility(View.GONE);
-            }
-        } catch (Throwable ignored) {
-        }
+        // 【code 932】双击关闭功能已整体移除（Ari：状态栏上只要显示字幕，不需要点击关闭）。
+        // 【重构 1103】932 起即为死代码的 5 个方法 + 6 个字段 / 2 个常量已彻底删除；
+        //   App 侧 ScopeWatcher 的 dismiss 接收器仍保留（再也收不到广播，无害）。
     }
 
     // ======================================================================
@@ -1052,14 +820,6 @@ public class StatusBarSubtitleHook {
         }
 
         installLayoutListener(root);
-        // 【code 932】双击关闭功能整体移除（不再挂 root dispatchTouchEvent 观察者）。
-        // 【code 930 bug 2 修复】删除 sLineView 上的旧双击监听（tryAttachDoubleTap）：
-        //   它与 root dispatchTouchEvent 观察者**共享同一组 sLastTapMs/X/Y**，一次单击的
-        //   DOWN 先被 root 观察者置 sLastTapMs=now，同一事件派发到行视图 OnTouchListener
-        //   又判 inWindow(0ms) && near(同坐标) → 直接命中关闭 = Ari 复现的「单击就关闭」。
-        //   真机实证（work_diag_55）：root DOWN #1 at (390,94) 后 1ms 即 hit dismiss。
-        //   仅保留 root hook（要求两次独立 DOWN 在 320ms 内且位移 <60px 才算双击）。
-        //   tryAttachDoubleTap / sDoubleTapListener 方法保留（不再调用）以免改动 dex 结构。
         refreshSystemViews();
         registerReceiver(ctx);
         installConfigChannel(ctx);
@@ -1298,107 +1058,21 @@ public class StatusBarSubtitleHook {
 
     /** 找出 root 下**所有** id 命中的视图（findViewById 只给第一个，重建后可能同时存在新旧实例）。 */
     private static void collectByIds(View root, String[] names, List<View> out) {
-        if (root == null) {
-            return;
-        }
-        int[] ids = new int[names.length];
-        int n = 0;
-        for (String name : names) {
-            int id = resId(name);
-            if (id != 0) {
-                ids[n++] = id;
-            }
-        }
-        if (n == 0) {
-            return;
-        }
-        try {
-            ArrayDeque<View> queue = new ArrayDeque<>();
-            queue.add(root);
-            int guard = 0;
-            while (!queue.isEmpty() && guard++ < 3000) {
-                View v = queue.poll();
-                int vid = v.getId();
-                for (int i = 0; i < n; i++) {
-                    if (vid == ids[i]) {
-                        out.add(v);
-                        break;
-                    }
-                }
-                if (v instanceof ViewGroup) {
-                    ViewGroup g = (ViewGroup) v;
-                    for (int i = 0; i < g.getChildCount(); i++) {
-                        View c = g.getChildAt(i);
-                        if (c != null) {
-                            queue.add(c);
-                        }
-                    }
-                }
-            }
-        } catch (Throwable ignored) {
-        }
+        ViewProbe.collectByIds(root, SYSTEMUI_PKG, names, out);
     }
 
     private static View findSystemView(View root, String[] ids, String classHint) {
-        for (String id : ids) {
-            try {
-                int rid = resId(id);
-                if (rid != 0) {
-                    View v = root.findViewById(rid);
-                    if (v != null) {
-                        return v;
-                    }
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-        return findByClassHint(root, classHint);
+        return ViewProbe.findSystemView(root, SYSTEMUI_PKG, ids, classHint);
     }
 
     /** 广度优先按类名特征找视图（ROM 改资源名时的兜底）。 */
     private static View findByClassHint(View root, String hint) {
-        if (root == null) {
-            return null;
-        }
-        try {
-            ArrayDeque<View> queue = new ArrayDeque<>();
-            queue.add(root);
-            int guard = 0;
-            while (!queue.isEmpty() && guard++ < 4000) {
-                View v = queue.poll();
-                if (v.getClass().getName().contains(hint)) {
-                    return v;
-                }
-                if (v instanceof ViewGroup) {
-                    ViewGroup g = (ViewGroup) v;
-                    for (int i = 0; i < g.getChildCount(); i++) {
-                        View c = g.getChildAt(i);
-                        if (c != null) {
-                            queue.add(c);
-                        }
-                    }
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-        return null;
+        return ViewProbe.findByClassHint(root, hint);
     }
 
     private static int resId(String name) {
-        Integer cached = sResIdCache.get(name);
-        if (cached != null) {
-            return cached;
-        }
-        int id = 0;
-        try {
-            Context ctx = sRoot != null ? sRoot.getContext() : null;
-            if (ctx != null) {
-                id = ctx.getResources().getIdentifier(name, "id", SYSTEMUI_PKG);
-            }
-        } catch (Throwable ignored) {
-        }
-        sResIdCache.put(name, id);
-        return id;
+        return ViewProbe.resId(sRoot != null ? sRoot.getContext() : null,
+                SYSTEMUI_PKG, name);
     }
 
     private static void refreshResIds(Context ctx) {
@@ -1406,14 +1080,14 @@ public class StatusBarSubtitleHook {
             List<Integer> targets = new ArrayList<>();
             for (String n : CLOCK_IDS) {
                 int id = ctx.getResources().getIdentifier(n, "id", SYSTEMUI_PKG);
-                sResIdCache.put(n, id);
+                ViewProbe.cacheResId(n, id);
                 if (id != 0 && !targets.contains(id)) {
                     targets.add(id);
                 }
             }
             for (String n : NOTIF_AREA_IDS) {
                 int id = ctx.getResources().getIdentifier(n, "id", SYSTEMUI_PKG);
-                sResIdCache.put(n, id);
+                ViewProbe.cacheResId(n, id);
                 if (id != 0 && !targets.contains(id)) {
                     targets.add(id);
                 }
@@ -2081,38 +1755,16 @@ public class StatusBarSubtitleHook {
      * @return 是否采用了 real（调用方直接读 {@link #sLineLeftAcc}）
      */
     private static boolean acceptLineLeft(int real, int right) {
-        if (real <= 0 || real >= right) {
-            return false;
+        LineLeftGate.Decision d = LineLeftGate.decide(real, right, sLineLeftAcc,
+                sLineLeftRejectStreak, sLineLeftRejectPrev,
+                dp(FLUID_LINE_LEFT_DP), dp(20), LINE_LEFT_RELOCK_STREAK);
+        sLineLeftAcc = d.acc;
+        sLineLeftRejectStreak = d.streak;
+        sLineLeftRejectPrev = d.prev;
+        if (d.log != null) {
+            LogGate.debug(TAG, d.log);
         }
-        int anchor = (sLineLeftAcc > 0) ? sLineLeftAcc : dp(FLUID_LINE_LEFT_DP);
-        if (Math.abs(real - anchor) <= dp(20)) {
-            // 落在容差内 —— 正常采信（含徽标让位带来的 ±15dp 级平移）
-            sLineLeftAcc = real;
-            sLineLeftRejectStreak = 0;
-            sLineLeftRejectPrev = -1;
-            return true;
-        }
-        // 超出容差：先记账。单帧跳变（置脏瞬间的失真值）会因下一拍回到真值而被清空；
-        // 只有连续 N 拍都稳定停在同一个新位置，才认作容器真的搬家了。
-        if (sLineLeftRejectPrev > 0 && Math.abs(real - sLineLeftRejectPrev) <= dp(20)) {
-            sLineLeftRejectStreak++;
-        } else {
-            sLineLeftRejectStreak = 1;
-        }
-        sLineLeftRejectPrev = real;
-        if (sLineLeftRejectStreak >= LINE_LEFT_RELOCK_STREAK) {
-            sLineLeftAcc = real;
-            sLineLeftRejectStreak = 0;
-            sLineLeftRejectPrev = -1;
-            LogGate.debug(TAG, " line left relocked -> " + real
-                    + "px (sustained offset from anchor)");
-            return true;
-        }
-        if (sLineLeftRejectStreak == 1) {
-            LogGate.debug(TAG, " line left rejected -> " + real + "px (anchor="
-                    + anchor + ", tol=" + dp(20) + ")");
-        }
-        return false;
+        return d.accepted;
     }
 
     /**
@@ -2427,36 +2079,12 @@ public class StatusBarSubtitleHook {
 
     /** 按资源名找状态栏内部视图（带缓存 id，找不到返回 null）。 */
     private static View findById(String[] names) {
-        if (sRoot == null) {
-            return null;
-        }
-        for (String n : names) {
-            try {
-                int rid = resId(n);
-                if (rid != 0) {
-                    View v = sRoot.findViewById(rid);
-                    if (v != null) {
-                        return v;
-                    }
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-        return null;
+        return ViewProbe.findById(sRoot, SYSTEMUI_PKG, names);
     }
 
     /** 视图的屏幕 x。宽度计算里所有横向量都换算到这个坐标系再比较。 */
     private static int screenX(View v) {
-        if (v == null) {
-            return 0;
-        }
-        try {
-            int[] p = new int[2];
-            v.getLocationOnScreen(p);
-            return p[0];
-        } catch (Throwable t) {
-            return 0;
-        }
+        return ViewProbe.screenX(v);
     }
 
     /**
@@ -2496,26 +2124,7 @@ public class StatusBarSubtitleHook {
      * @param stopAt 判定上界（流体云容器自身）；为 null 则一路走到根
      */
     private static boolean isEffectivelyVisible(View v, View stopAt) {
-        if (v == null || !v.isShown()) {
-            return false;
-        }
-        try {
-            View cur = v;
-            int guard = 0;
-            while (cur != null && guard++ < 12) {
-                if (cur.getAlpha() <= 0.01f) {
-                    return false;
-                }
-                if (cur == stopAt) {
-                    break;
-                }
-                ViewParent p = cur.getParent();
-                cur = (p instanceof View) ? (View) p : null;
-            }
-            return true;
-        } catch (Throwable t) {
-            return false;
-        }
+        return ViewProbe.isEffectivelyVisible(v, stopAt);
     }
 
     /**
@@ -2531,38 +2140,7 @@ public class StatusBarSubtitleHook {
 
     /** 【code 937 问题1】{@code stopAt} = 有效可见性判定的上界（流体云容器自身）。 */
     private static int leftmostVisibleChildLeft(View group, View stopAt, int base, int minValid) {
-        if (!(group instanceof ViewGroup)) {
-            return Integer.MAX_VALUE;
-        }
-        ViewGroup vg = (ViewGroup) group;
-        int best = Integer.MAX_VALUE;
-        for (int i = 0; i < vg.getChildCount(); i++) {
-            View child = vg.getChildAt(i);
-            // 【code 937 问题1 根修】旧口径 getVisibility() 只反映**自身标志位**：
-            //   容器被 GONE / 从树上摘掉、或祖先正在 alpha 淡出时，子视图自己的
-            //   getVisibility() 仍是 VISIBLE、getAlpha() 仍是 1.0、width 仍 > 0
-            //   ⇒ 一个「已经画不出来」的容器照样通过判定并返回 left=448/454（真机实证：
-            //   让位已从 42px 退回 3px 的那一拍，宽度仍是 "by seeding_card_container left=454"）。
-            //   isEffectivelyVisible = isShown()（自身+所有祖先的可见性）+ 祖先链 alpha。
-            if (child == null || !isEffectivelyVisible(child, stopAt)) {
-                continue;
-            }
-            try {
-                if (child.getAlpha() <= 0.01f) {
-                    continue;
-                }
-                int l = screenX(child) - base;
-                if (child.getWidth() > 0 && l > minValid && l < best) {
-                    best = l;
-                }
-            } catch (Throwable ignored) {
-            }
-            int deeper = leftmostVisibleChildLeft(child, stopAt, base, minValid);
-            if (deeper < best) {
-                best = deeper;
-            }
-        }
-        return best;
+        return ViewProbe.leftmostVisibleChildLeft(group, stopAt, base, minValid);
     }
 
     private static boolean isFluidUsable(View v) {
@@ -2667,20 +2245,11 @@ public class StatusBarSubtitleHook {
     }
 
     private static boolean isAncestorOf(View ancestor, View target) {
-        View p = target;
-        int guard = 0;
-        while (p != null && guard++ < 60) {
-            if (p == ancestor) {
-                return true;
-            }
-            ViewParent pv = p.getParent();
-            p = pv instanceof View ? (View) pv : null;
-        }
-        return false;
+        return ViewProbe.isAncestorOf(ancestor, target);
     }
 
     private static boolean isDescendantOf(View v, View ancestor) {
-        return ancestor != null && isAncestorOf(ancestor, v);
+        return ViewProbe.isDescendantOf(v, ancestor);
     }
 
     // ======================================================================
@@ -2762,69 +2331,31 @@ public class StatusBarSubtitleHook {
         if (paint == null) {
             return 0;
         }
-        // ── 「必须完整露出」的文本宽度 ──────────────────────────────────────
-        // 三个口径，逐个都要先过合理性闸门：
-        //   · adv = measureText          → advance（字符步进）总和，基准
-        //   · ink = getTextBounds().right→ 字形轮廓右边界（理论上可能略超 adv）
-        //   · lay = Layout.getWidth()    → 排版宽度（正常应与 adv 几乎相等）
-        //
-        // 🔴🔴 **先验合理性，再取最大** —— 两件事缺一不可：
-        //   ① 只取 adv 会漏掉字形外溢（真机 968 报「末字差一点」）；
-        //   ② 但无闸门地取最大会被**脏值**放大：真机 969 首版实测
-        //      `getLayout()` 在「尚未完成一次真实 layout」时返回 **1048576（=1024×1024）**，
-        //      纳入 max ⇒ 目标 ≈105 万像素 ⇒ 字幕以 420px/s 滑出屏幕（用户报「直接飞走」）。
-        //   ⚠️ 旧代码的 `Math.min` 恰好歪打正着挡住了这个脏值 ——
-        //      把它改成 max 的前提是「输入可信」，所以这里把闸门补齐。
-        int adv = (int) Math.ceil(paint.measureText(text));
-
-        int ink = adv;
-        try {
-            Rect inkRect = new Rect();
-            paint.getTextBounds(text, 0, text.length(), inkRect);
-            int right = inkRect.right;
-            if (right > 0 && right <= adv + MEASURE_TOLERANCE_PX) {
-                ink = Math.max(ink, right);
-            }
-        } catch (Throwable ignored) {
-            // 拿不到轮廓边界就退回 advance，不抛错
-        }
-
-        sLayoutRejected = false;
-        int lay = adv;
+        int layoutW = -1;
         if (sLineView.getLayout() != null) {
-            int lw = (int) Math.ceil(sLineView.getLayout().getWidth());
-            if (lw > 0 && lw <= adv + MEASURE_TOLERANCE_PX) {
-                lay = Math.max(lay, lw);
-            } else if (lw > 0) {
-                // 脏值：只报一次，绝不采用
-                sLayoutRejected = true;
-                if (!sLayoutRejectedLogged) {
-                    sLayoutRejectedLogged = true;
-                    XposedCompat.log(TAG + " !! layout width abnormal (" + lw + "px vs adv="
-                            + adv + "px) -> IGNORED (would have flung the subtitle off screen)");
-                }
-            }
+            layoutW = (int) Math.ceil(sLineView.getLayout().getWidth());
         }
-        sLastMeasure = "adv=" + adv + " ink=" + ink + " layout=" + lay
-                + (sLayoutRejected ? "[rejected]" : "")
-                + " calcW=" + viewW;
-
-        int base = Math.max(Math.max(adv, ink), lay);
-        // 终极保底：任何「比 advance 大出一个字宽以上」的度量都不可信
-        if (base > adv + MEASURE_TOLERANCE_PX) {
-            base = adv + MEASURE_TOLERANCE_PX;
+        // 三口径测量 + 闸门 + 字符边界吸附，全在 ScrollGoal 这个零状态内核里
+        ScrollGoal.Goal g = ScrollGoal.compute(paint, text, viewW, layoutW,
+                TAIL_MARGIN_PX, COVER_MARGIN_PX, MEASURE_TOLERANCE_PX,
+                MAX_TAIL_CLIP_PX, MAX_NUDGE_PX);
+        sLayoutRejected = g.layoutRejected;
+        if (g.layoutRejected && !sLayoutRejectedLogged) {
+            sLayoutRejectedLogged = true;
+            XposedCompat.log(TAG + " !! layout width abnormal (" + g.rejectedLayoutW
+                    + "px vs adv=" + g.rejectedAdv
+                    + "px) -> IGNORED (would have flung the subtitle off screen)");
         }
-        if (base <= viewW) {
-            return 0;   // 放得下 -> 不滚（保持旧判据）
+        sLastMeasure = g.measure;
+        if (g.snapLog != null && !sSnapSideLogged) {
+            sSnapSideLogged = true;
+            LogGate.debug(TAG, g.snapLog);
         }
-        int target = base + TAIL_MARGIN_PX - viewW;
-        // 出口保底：滚动量绝不该超过文本总宽（超过就是滚到文本之外 = 满屏空白）
-        if (target > adv) {
-            target = adv;
+        if (g.nudgeLog != null && !sNudgeLogged) {
+            sNudgeLogged = true;
+            LogGate.debug(TAG, g.nudgeLog);
         }
-        // 【2.2.0 半字根修·第二处】终点必须落在**汉字边界**上，见 snapToCharBoundary 的注释；
-        // 并在「末尾仍差一点点」时允许微调（见 COVER_MARGIN_PX / MAX_NUDGE_PX）
-        return snapToCharBoundary(target, text, viewW, base + COVER_MARGIN_PX);
+        return g.target;
     }
 
     /** 最近一次宽度测量的诊断串（adv / ink / layout 三个口径），只用于日志。 */
@@ -2842,35 +2373,6 @@ public class StatusBarSubtitleHook {
      *
      * @return 长度 = 字符数 + 1；任何异常（字体度量拿不到）都返回 {@code null} 表示「不吸附」
      */
-    private static int[] charBoundaries(String text) {
-        if (sLineView == null || text == null || text.isEmpty()) {
-            return null;
-        }
-        Paint p = sLineView.getPaint();
-        if (p == null) {
-            return null;
-        }
-        int n = text.length();
-        float[] adv = new float[n];
-        try {
-            if (p.getTextWidths(text, adv) < n) {
-                return null;
-            }
-        } catch (Throwable t) {
-            return null;
-        }
-        int[] b = new int[n + 1];
-        float acc = 0f;
-        for (int i = 0; i < n; i++) {
-            if (adv[i] <= 0f) {
-                return null;   // 度量异常 -> 宁可不吸附，也不要算出坏值把滚动带偏
-            }
-            b[i] = (int) Math.round(acc);
-            acc += adv[i];
-        }
-        b[n] = (int) Math.ceil(acc);
-        return b;
-    }
 
     /**
      * 【2.2.0 半字根修·第二处】把滚动终点**就近吸附到字符边界**上。
@@ -2903,78 +2405,6 @@ public class StatusBarSubtitleHook {
      * @param viewW     可视宽（用于判断覆盖是否够）
      * @param coverNeed 期望被覆盖到的「文本坐标」上限（= 需要宽度 + 富余量）
      */
-    private static int snapToCharBoundary(int target, String text, int viewW, int coverNeed) {
-        if (target <= 0) {
-            return 0;
-        }
-        int[] b = charBoundaries(text);
-        if (b == null || b.length < 2) {
-            return target;   // 拿不到边界就不吸（保守：维持原行为）
-        }
-        final int maxSnap = b[b.length - 2];   // 最后一个字的起点
-        // 找 target 两侧最近的边界：lower = ≤target 的最大边界，upper = ≥target 的最小边界
-        int lower = -1;
-        int upper = -1;
-        for (int v : b) {
-            if (v <= target) {
-                lower = v;
-            }
-            if (upper < 0 && v >= target) {
-                upper = Math.min(v, maxSnap);
-            }
-        }
-        if (upper < 0) {
-            // target 比整段文本还长（说明上游输入异常，正常路径不可能走到）⇒
-            // 保底回落到「最后一个字的起点」：至少能看到末尾，而不是把视窗整段滑到文本之外。
-            return Math.min(target, maxSnap);
-        }
-        // 【code 971 就近吸附】取离 target 最近的字符边界（左或右），把过冲从
-        //   「最多一个字宽」压到「最多半个字宽」。
-        //
-        //   ⚠️ 「向下取」会裁掉末尾一点 —— 这是「留白」与「切末字」的此消彼长：
-        //   可视宽不是字宽的整数倍时，右对齐点（adv - viewW）几乎总落在字中间，
-        //   向左取边界 = 末字被裁，向右取边界 = 句尾留白。真机 13:34 实测过冲 +32px
-        //   （「金枪鱼」句：adv=882/viewW=371，theory=514 落在边界 504 与 546 之间，
-        //   向右取 546 留白 32px）。
-        //
-        //   ⇒ 折中：向下取时**允许末字被裁 ≤ MAX_TAIL_CLIP_PX**
-        //   （code 974 起 = 6px ≈ 1/7 字宽，句尾多为标点/语气词，肉眼几乎不可见；
-        //    比 969 修掉的 5px 硬切更轻，且只发生在「恰好卡在边界」的少数句子上）。
-        //   裁切超限就退回右边界，保住末字完整。这样过冲最多半个字、多数句子直接压到 0。
-        int chosen = upper;
-        if (lower >= 0) {
-            int tailBase = coverNeed - COVER_MARGIN_PX;   // = base（文本真实宽）
-            int clip = tailBase - (lower + viewW);        // 向下取会裁掉末字的量（>0 表示裁）
-            boolean lowerAcceptable = viewW <= 0 || clip <= MAX_TAIL_CLIP_PX;
-            int toUpper = upper - target;
-            int toLower = target - lower;
-            if (lowerAcceptable && toLower < toUpper) {
-                chosen = lower;
-            }
-            if (!sSnapSideLogged) {
-                sSnapSideLogged = true;
-                LogGate.debug(TAG, " snap: target=" + target + " lower=" + lower
-                        + " upper=" + upper + " -> " + chosen
-                        + (chosen == lower ? " [nearer-lower]" : " [upper]")
-                        + (lowerAcceptable ? "" : " (lower clips tail " + clip + "px)"));
-            }
-        }
-        // 微调：选中边界仍包不住 coverNeed 时，往右挪「差的那一点点」（限 MAX_NUDGE_PX）
-        if (viewW > 0 && chosen + viewW < coverNeed) {
-            int ideal = coverNeed - viewW;
-            int nudge = ideal - chosen;
-            if (nudge > 0 && nudge <= MAX_NUDGE_PX && ideal <= maxSnap) {
-                if (!sNudgeLogged) {
-                    sNudgeLogged = true;
-                    LogGate.debug(TAG, " tail nudge: " + chosen + " -> " + ideal
-                            + "px (+" + nudge + "px, coverNeed=" + coverNeed
-                            + ", viewW=" + viewW + ") [keeps tail fully visible]");
-                }
-                return ideal;
-            }
-        }
-        return chosen;
-    }
 
     /** 「末尾微调」只打一次日志，避免刷屏。 */
     private static volatile boolean sNudgeLogged = false;
