@@ -416,13 +416,16 @@ def main():
 
     seg = re.search(r'==== BUILD %s / code %s （([\s\S]*?)"\);'
                     % (re.escape(vname or ''), re.escape(vcode or 'x')), mod)
-    check('L6 调试段里的本轮履历含六段（①②③④⑤⑥）',
-          seg is not None and all(k in seg.group(1) for k in
+    # ⚠️ 历史段的 versionName 是**当年的** 2.3.1，不随轮次滚动（本轮的 vname 已是 2.3.2）
+    seg7 = re.search(r'==== BUILD 2\.3\.1 / code 1007 （([\s\S]*?)"\);', mod)
+    # 【11-03 重锚】L6/L11 模板判据锚 **1007 自己的历史条目**（履历追加式不覆盖 ⇒
+    #   历史被改写才红）。原绑 seg（当前 vname/vcode 的最新条目）—— 最新条目写法随轮次
+    #   演进（1047 只有五段、收尾句换措辞）⇒ 假 FAIL。
+    check('L6 调试段里的 1007 历史条目含六段（①②③④⑤⑥）（锚本条目）',
+          seg7 is not None and all(k in seg7.group(1) for k in
                                   ('①', '②', '③', '④', '⑤', '⑥')))
     check('L7 1007 的履历段仍在（履历追加式，不覆盖）',
           '==== BUILD 2.3.1 / code 1007 （' in mod)
-    # ⚠️ 历史段的 versionName 是**当年的** 2.3.1，不随轮次滚动（本轮的 vname 已是 2.3.2）
-    seg7 = re.search(r'==== BUILD 2\.3\.1 / code 1007 （([\s\S]*?)"\);', mod)
     check('L8 1007 履历点明用户口径的关键数字与落位口径（256MB / CC 左边 / 会话级默认关）',
           seg7 is not None and all(k in seg7.group(1)
                                    for k in ('256MB', 'CC', '会话级', '默认关')))
@@ -434,8 +437,8 @@ def main():
     #   ⇒ 「只升了横幅、履历段抄上一轮」照样被抓，且今后不用再改。
     check('L10 本轮履历段自报的【code】与横幅 code 一致（防履历段抄上一轮）',
           seg is not None and ('【code %s' % (vcode or 'x')) in seg.group(1))
-    check('L11 履历尾部写明「版本号」变化（与本仓「每段收尾都要交代版本号」的约定一致）',
-          seg is not None and '版本号' in seg.group(1))
+    check('L11 履历尾部写明「版本号」变化（锚 1007 本条目）',
+          seg7 is not None and '版本号' in seg7.group(1))
 
     # ══════════════ N. 【code 1008】取证件（诊断 + testID 兜底通道）══════════════
     svh8 = norm(svh)
@@ -560,9 +563,12 @@ def main():
     #   直读语义未变，判据跟新形态（同 verify_1021 的同款改写）。
     check('R5 【需求】换轨入口：在线**不**主动读本地，只有已确认离线才直接读盘',
           'isOffline() && (tryResumeFromDisk(where, newIdentity, newSelection)' in rc)
+    # 【11-03 现形化】1014 把回退改成「先算 fallbackIdentity/Selection 再调」⇒ if 条件与
+    #   调用点分开了。语义不变（云端超时 → 锁外回退本地盘），钉现形。
     check('R6 【需求】云端一直没给字幕 → 回退本地磁盘缓存（锁外，语义等同 JSON 晚到）',
           'no json in grace -> local fallback' in rc
-          and re.search(r'if \(noSubtitles && !spurious && tryResumeFromDisk\(', rc) is not None)
+          and re.search(r'if \(noSubtitles && !spurious\) \{', rc) is not None
+          and re.search(r'tryResumeFromDisk\("no json in grace -> local fallback"', rc) is not None)
     check('R7 【根因】落盘改为「先暂存、等权威轨标签」（不再用加载时刻的选择键）',
           'private void stageCacheToDisk(' in rc and 'private void flushStagedCache(' in rc
           and 'stagedCacheToken' in rc and 'CACHE_FLUSH_FALLBACK_MS = 2500L' in rc)
@@ -616,8 +622,10 @@ def main():
     #       裁决点 10:25:37 尚未到）⇒ Ari 体感「本地字幕用不了」。
     # 两个破口：① 窗口分级漏了「盘上有无本轨缓存」这一档；
     #           ② 兜底读盘用的是全局观测键（重建列表/快切时会指到别的轨）。
-    check('T1 【根因·破口一】窗口分级：手上有 cues **且**盘上无本轨缓存，才用 15s 长窗',
-          re.search(r'grace = \(cueCount > 0 && !diskFallbackReady\)\s*\n?\s*'
+    # 【11-03 追认】code 1040 合法加了 `&& !prefetchFallbackReady`（预取就绪 ⇒ 走标准窗
+    #   1000ms）。原钉旧形态自此必假红 ⇒ 钉现形（长窗条件 = 手上有 cues 且盘/预取都无垫背）。
+    check('T1 【根因·破口一】窗口分级：手上有 cues **且**盘/预取无本地垫背，才用 15s 长窗（1040 起含预取维度）',
+          re.search(r'grace = \(cueCount > 0 && !diskFallbackReady && !prefetchFallbackReady\)\s*\n?\s*'
                     r'\?\s*NO_SUBTITLE_GRACE_MS_CACHED\s*:\s*NO_SUBTITLE_GRACE_MS;', rc)
           is not None)
     check('T2 【新增】hasDiskCacheFor：纯内存索引查询（无磁盘 IO）',
@@ -634,11 +642,13 @@ def main():
     check('T5 换轨入口记下目标键（与 pendingToken 同处赋值）',
           'pendingTrackIdentity = newIdentity;' in rc
           and 'pendingTrackSelection = newSelection;' in rc)
+    # 【11-03 现形化】1014 的三元式落成两行赋值（fallbackIdentity/Selection），行尾是
+    #   `;` 不是 `,`/`))`。语义不变（目标键优先、观测键退路），钉现形。
     check('T6 【核心】兜底读盘优先用目标键，全局观测键只作退路',
           re.search(r'pendingTrackIdentity != 0L \? pendingTrackIdentity\s*\n?\s*'
-                    r': observedPlaylistIdentity,', rc) is not None
+                    r': observedPlaylistIdentity;', rc) is not None
           and re.search(r'pendingTrackSelection != 0L \? pendingTrackSelection\s*\n?\s*'
-                        r': observedPlaylistSelection\)\)', rc) is not None)
+                        r': observedPlaylistSelection;', rc) is not None)
     check('T7 负向：兜底处不再有无条件传观测键的旧形态',
           re.search(r'tryResumeFromDisk\("no json in grace -> local fallback",\s*\n?\s*'
                     r'observedPlaylistIdentity, observedPlaylistSelection\)', rc) is None)
@@ -759,16 +769,14 @@ def main():
     check('V7 【需求5】激活判定 = **只看授权位**（active = hostAuthorized）',
           re.search(r'boolean active = hostAuthorized;',
                     method_body(sett, r'private void renderStatusCard\(')) is not None)
-    check('V8 【需求5】授权判定纳入持久化镜像 mHostScopeSeen（跨页面重开 / 跨进程重启都认）',
-          re.search(r'boolean hostAuthorized = !probing\s*\n?\s*'
-                    r'&& \(mProbe.hostAuthorized \|\| mHostSeenOnce \|\| mHostScopeSeen\);',
-                    sc) is not None)
-    check('V9 【需求5】「曾确认授权」三个环节齐全：常量键 + 进页面读 + 探到就落盘',
-          'PREF_HOST_SCOPE_SEEN = "host_scope_seen"' in sc
-          and 'mHostScopeSeen = readHostScopeSeen();' in sc
-          and 'private boolean readHostScopeSeen()' in sc
-          and 'private void markHostScopeSeen()' in sc
-          and 'markHostScopeSeen();' in method_body(sett, r'private void startProbe\('))
+    # 【11-03 改判】1038 合法删除了「曾确认授权」持久化镜像三件套（mHostScopeSeen /
+    #   mHostSeenOnce / PREF_HOST_SCOPE_SEEN，激活只认本轮探测）。原正向锚自此必假红
+    #   ⇒ 转**负向锚**：三件套若被重新引进来才是回归。新机制的正向锚在 verify_1038。
+    check('V8 【1038 起绝迹·负向】旧记忆位 mHostScopeSeen / mHostSeenOnce 不在判据里',
+          re.search(r'\b(mHostScopeSeen|mHostSeenOnce)\b', sc) is None)
+    check('V9 【1038 起绝迹·负向】PREF_HOST_SCOPE_SEEN / readHostScopeSeen / markHostScopeSeen 全链不在',
+          all(t not in sc for t in
+              ('PREF_HOST_SCOPE_SEEN', 'readHostScopeSeen', 'markHostScopeSeen')))
     check('V10 【需求5 负向】原「DLsiteSound 未运行」中间态分支已整条删除',
           'hostNotRunning' not in sc)
 

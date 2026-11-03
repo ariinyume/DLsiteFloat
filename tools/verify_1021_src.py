@@ -151,8 +151,11 @@ def main():
 
     # ================= B. 结构不动 =================
     print('=== B. 分级 / 兜底 / 提前收窗：一行都不动 ===')
-    check('窗口分级那一行原样（有本地垫背才走标准窗）',
-          bool(re.search(r'grace\s*=\s*\(cueCount\s*>\s*0\s*&&\s*!diskFallbackReady\)\s*\n'
+    # 【11-03 追认】code 1040 合法加了预取垫背维度（`&& !prefetchFallbackReady`，
+    #   预取就绪 ⇒ 走标准窗 1000ms）——「一行原样」钉旧形态自此必假红。钉现形。
+    check('窗口分级那一行现形（有本地垫背：盘或预取，才走长窗）',
+          bool(re.search(r'grace\s*=\s*\(cueCount\s*>\s*0\s*&&\s*!diskFallbackReady'
+                         r'\s*&&\s*!prefetchFallbackReady\)\s*\n'
                          r'\s*\?\s*NO_SUBTITLE_GRACE_MS_CACHED\s*:\s*NO_SUBTITLE_GRACE_MS;', repo)))
     check('hasDiskCacheFor 定义仍在（纯内存索引查询）',
           'private boolean hasDiskCacheFor(long identity, long selection) {' in repo)
@@ -276,14 +279,21 @@ def main():
     check('常开横幅唯一（且 >= 1021）',
           len(banners) >= 1 and int(banners[0]) >= 1021, '横幅 code=%r' % banners[:1])
 
-    # 履历段：横幅之后**第一段** LogGate.debug 就是本轮
+    # 履历段：**最新**一条只判恒成立不变量（自报 == 横幅 code）；
+    #   模板判据（九段/收尾句）改锚 **1021 自己的历史条目** —— 履历追加式不覆盖 ⇒
+    #   篡改历史会被抓；而最新条目的写法随轮次演进（1040/1047 只有五段、收尾句换措辞），
+    #   钉最新必假红（11-03 实测 4 红里 3 条属此）。
     m = re.search(r'==== BUILD [\d.]+ / code (\d+) （(.*?)"\);', mod_raw, flags=re.S)
-    hist = m.group(2) if m else ''
+    hist_latest = m.group(2) if m else ''
     hcode = m.group(1) if m else ''
-    check('履历段切到（横幅后第一段）', bool(hist))
-    self_code = re.findall(r'【code (\d+)', hist)
+    check('履历段切到（横幅后第一段）', bool(hist_latest))
+    self_code = re.findall(r'【code (\d+)', hist_latest)
     check('履历段自报 code == 横幅 code（只升横幅、抄上一轮会被抓）',
           bool(self_code) and self_code[0] == hcode, '自报 %r 横幅 %s' % (self_code[:1], hcode))
+    # ── 模板判据锚 1021 自己的条目（历史不可改写）──────────────────
+    m_own = re.search(r'==== BUILD [\d.]+ / code 1021 （(.*?)"\);', mod_raw, flags=re.S)
+    hist = m_own.group(1) if m_own else ''
+    check('1021 历史条目可切出（履历追加式不覆盖）', bool(hist))
     check('履历段九段齐全（①~⑨）',
           all(ch in hist for ch in '①②③④⑤⑥⑦⑧⑨'))
     # 第二个版本号**可选**：版本号「不变」时按项目惯例省略它
@@ -292,10 +302,11 @@ def main():
     check('履历段收尾句合规（版本号 A 升/不变 [B]、code C 升 D。）', bool(m_tail), repr(m_tail[-1:]))
     if m_tail:
         a, _, b, c, _, d = m_tail[-1]
-        b_eff = b if b else a          # 「不变」⇒ 被省略的第二个版本号就是第一个
-        check('收尾句口径自洽（版本号 == 当前 name、code-after == 横幅 code）',
-              b_eff == name and d == hcode,
-              'B=%s name=%s D=%s 横幅=%s' % (b_eff, name, d, hcode))
+        # 【11-03 改口径】原比「版本号 == 当前 name、code-after == 横幅 code」——
+        #   那是「最新条目」的自洽口径，钉历史条目必假红（它写的本就是当年的号）。
+        #   历史条目的自洽 = 收尾句里 code-before/after 与本条目自己的编号对上。
+        check('收尾句口径自洽（code-before 1020 → code-after 1021，与本条目一致）',
+              d == '1021' and c == '1020', 'C=%s D=%s' % (c, d))
     # 【code 1034 改写】原锚钉死「版本号 2.3.3 不变」字样 —— 那是 1021 当轮履历的措辞。
     #   铁律 82：滚动工作区上的「本轮判据」必须泛化 ⇒ 改判收尾句里出现「版本号 X.Y.Z 不变」
     #   分支；具体版本号由上一条「收尾句口径自洽」守（b_eff == 当前 name）。

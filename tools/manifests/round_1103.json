@@ -1,0 +1,29 @@
+{
+  "round": "1103-refactor",
+  "desc": "11-03 轮清单（未发版重构）：ActivityButtonHook 抽零状态内核 x3 + 清死字段 x3。新轮次只维护这种小文件，不再新建 verify_10XX.py；四类恒成立口径见 verify_layer.py 头注释。",
+  "checks": [
+    {"type": "version_lower_bound", "code": 1047, "name_min": "2.4.3",
+     "desc": "版本下界：code >= 1047、versionName >= 2.4.3（永不随轮次假红）"},
+    {"type": "version_label_form",
+     "desc": "label 形态 MMDD.N（铁律 94：只守形态、不钉当天）"},
+    {"type": "banner_self_report",
+     "desc": "常开横幅自报 == 构建配置（versionName/versionCode 同源）"},
+    {"type": "banner_history", "own_code": 1043,
+     "sections": ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"], "tail_own": true,
+     "desc": "1043 历史条目九段 + 收尾句（锚历史：履历追加式不覆盖，被改写才红）"},
+    {"type": "src_contains",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/HeartbeatPolicy.java",
+     "pat": "final class HeartbeatPolicy",
+     "desc": "11-03 重构产物在位：HeartbeatPolicy 零状态内核"},
+    {"type": "src_absent",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/ActivityButtonHook.java",
+     "pat": "CAPSULE_MIN_H_DP",
+     "desc": "死字段已清：CAPSULE_MIN_H_DP 绝迹"},
+    {"type": "dex_string",
+     "pat": "subtitle_font_follow_system", "expect": true,
+     "desc": "dex 串池：配置键在包里"},
+    {"type": "aapt2_version", "code_min": 1047,
+     "desc": "aapt2 badging：versionCode >= 1047"},
+    {"type": "pathdata", "desc": "矢量图 pathData 语法层"}
+  ]
+}

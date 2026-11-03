@@ -84,17 +84,28 @@ def main():
         return ia >= 0 and ib >= 0 and ia < ib
 
     rows = [
-        # ── 版本号四处 ────────────────────────────────────────────
-        ('V1', 'build.gradle appVersionTag = 2.4.3',
-         has(gradle, "def appVersionTag = '2.4.3'")),
-        ('V2', 'build.gradle appVersionCode = 1044',
-         re.search(r'^def appVersionCode = 1044\s*$', gradle, re.M) is not None),
-        ('V3', 'build.gradle appVersionName = 2.4.3',
-         has(gradle, "def appVersionName = '2.4.3'")),
-        ('V4', 'build.gradle appVersionCodeLabel = 1023.1（构建当天）',
-         has(gradle, "def appVersionCodeLabel = '1023.1'")),
-        ('V5', '横幅常开行升到 2.4.3 / code 1044',
-         has(module, '[DLsiteSoundFloat] ==== BUILD 2.4.3 / code 1044"')),
+        # ── 版本号四处（【11-03 泛化】原为钉死 2.4.3/1044/1023.1 当轮值 —— 版本每轮
+        #    必涨 ⇒ 每轮假 FAIL，铁律 82。改「tag==name 同源 + 各值下界 + label 只守形态 +
+        #    横幅自报 == 构建配置」四条恒成立不变量）────────────────────────
+        ('V1', 'build.gradle appVersionTag == appVersionName（APK 文件名与包内版本同源）',
+         re.search(r"^def appVersionTag = '([^']+)'", gradle, re.M) is not None
+         and re.search(r"^def appVersionTag = '([^']+)'", gradle, re.M).group(1)
+         == re.search(r"^def appVersionName = '([^']+)'", gradle, re.M).group(1)),
+        ('V2', 'build.gradle appVersionCode >= 1044（下界）',
+         re.search(r'^def appVersionCode = (\d+)\s*$', gradle, re.M) is not None
+         and int(re.search(r'^def appVersionCode = (\d+)\s*$', gradle, re.M).group(1)) >= 1044),
+        ('V3', 'build.gradle appVersionName >= 2.4.3（下界）',
+         re.search(r"^def appVersionName = '([^']+)'", gradle, re.M) is not None
+         and tuple(int(x) for x in re.search(r"^def appVersionName = '([^']+)'",
+                                             gradle, re.M).group(1).split('.'))
+         >= (2, 4, 3)),
+        ('V4', 'build.gradle appVersionCodeLabel 形态 MMDD.N（铁律 94：只守形态、不钉当天）',
+         re.search(r"^def appVersionCodeLabel = '\d{4}\.\d+'", gradle, re.M) is not None),
+        ('V5', '横幅常开行自报 == 构建配置（versionName / versionCode 同源）',
+         re.search(r'==== BUILD ([\d.]+) / code (\d+)"', module) is not None
+         and re.search(r'==== BUILD ([\d.]+) / code (\d+)"', module).groups()
+         == (re.search(r"^def appVersionName = '([^']+)'", gradle, re.M).group(1),
+             re.search(r'^def appVersionCode = (\d+)\s*$', gradle, re.M).group(1))),
         ('V6', '本轮履历段【code 1044 已追加，且排在上一条之上',
          count(module, '【code 1044') >= 1
          and module.find('==== BUILD 2.4.3 / code 1044 （【code 1044')

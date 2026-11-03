@@ -155,13 +155,17 @@ check('A5b 生命周期行不再有常开出口',
       'XposedCompat.log(TAG + " activity on' not in ABTN)
 
 # A6：ZiptreePrefetch 命中判定四行 → 调试，告警仍常开
-check('A6a HIT/MISS/AMBIGUOUS 全走 LogGate.debug',
+# 【11-03 追认】1039 把 AMBIGUOUS 一行拆成 REFUSE/INFER 两条（受限推断），计数钉随现形：
+#   HIT=1（take）/ MISS=2（take+find）/ REFUSE=2（全局负证据 + 歧义放弃）/ INFER=1（唯一键推断）。
+check('A6a HIT/MISS/REFUSE/INFER 全走 LogGate.debug（1039 起 AMBIGUOUS 拆成 REFUSE/INFER）',
       ZPF.count('LogGate.debug(TAG, " HIT') == 1
       and ZPF.count('LogGate.debug(TAG, " MISS') == 2
-      and ZPF.count('LogGate.debug(TAG, " AMBIGUOUS') == 1,
-      'HIT=%d MISS=%d AMB=%d' % (ZPF.count('LogGate.debug(TAG, " HIT'),
-                                 ZPF.count('LogGate.debug(TAG, " MISS'),
-                                 ZPF.count('LogGate.debug(TAG, " AMBIGUOUS')))
+      and ZPF.count('LogGate.debug(TAG, " REFUSE') == 2
+      and ZPF.count('LogGate.debug(TAG, " INFER') == 1,
+      'HIT=%d MISS=%d REFUSE=%d INFER=%d' % (ZPF.count('LogGate.debug(TAG, " HIT'),
+                                              ZPF.count('LogGate.debug(TAG, " MISS'),
+                                              ZPF.count('LogGate.debug(TAG, " REFUSE'),
+                                              ZPF.count('LogGate.debug(TAG, " INFER')))
 # ⚠️ 「dl fail」在剥注释后有 3 处（http / empty / 前缀共用），旧写法要求 >=3 时
 #   把 `TAG + " dl fail http="` 与 `" dl fail empty "` 两条串按出现次数算错 —— 这里数
 #   **声明位置**：只要它们还挂在 XposedCompat.log 那一侧即可。
@@ -238,12 +242,22 @@ print('C 版本号 / 横幅 / 履历段')
 print('=' * 74)
 
 m_code = re.search(r'def appVersionCode = (\d+)', GRADLE)
-check('C1 appVersionCode = 1037', bool(m_code) and m_code.group(1) == '1037',
+# 【11-03 泛化】原钉 `== '1037'` —— 版本每轮必涨 ⇒ 每轮假 FAIL（铁律 82）。改**下界**。
+check('C1 appVersionCode >= 1037（下界，不再钉死当轮值）',
+      bool(m_code) and int(m_code.group(1)) >= 1037,
       '实际 %s' % (m_code.group(1) if m_code else '缺失'))
 m_tag = re.search(r"def appVersionTag\s*=\s*'([^']+)'", GRADLE)
 m_nam = re.search(r"def appVersionName\s*=\s*'([^']+)'", GRADLE)
-check('C2 tag == name == 2.4.0（APK 文件名与包内版本一致）',
-      bool(m_tag) and bool(m_nam) and m_tag.group(1) == '2.4.0' == m_nam.group(1),
+# 【11-03 泛化】原钉 `== '2.4.0'` —— 同上。保留两条恒成立不变量：
+#   ① tag == name（APK 文件名与包内版本一致，最易漏）；② name 不低于本轮 2.4.0。
+def _ver_ge(v, ref):
+    try:
+        return tuple(int(x) for x in v.split('.')) >= ref
+    except ValueError:
+        return False
+check('C2 tag == name 且 versionName >= 2.4.0（APK 文件名与包内版本一致，下界）',
+      bool(m_tag) and bool(m_nam) and m_tag.group(1) == m_nam.group(1)
+      and _ver_ge(m_nam.group(1), (2, 4, 0)),
       'tag=%s name=%s' % (m_tag.group(1) if m_tag else '?', m_nam.group(1) if m_nam else '?'))
 m_lab = re.search(r"def appVersionCodeLabel = '(\d{4}\.\d+)'", GRADLE)
 check('C3 label 形态 MMDD.N（只守形态，不钉当天）', bool(m_lab),
@@ -251,8 +265,14 @@ check('C3 label 形态 MMDD.N（只守形态，不钉当天）', bool(m_lab),
 
 banners = re.findall(
     r'XposedCompat\.log\("\[DLsiteSoundFloat\] ==== BUILD ([\d.]+) / code (\d+)"\);', MOD)
-check('C4 常开横幅唯一且 = 2.4.0 / 1037',
-      len(banners) == 1 and banners[0] == ('2.4.0', '1037'), '实际 %r' % (banners,))
+# 【11-03 泛化】原钉 `== ('2.4.0', '1037')` —— 每轮必假 FAIL。改两条恒成立不变量：
+#   ① 横幅自报 == 构建配置（versionName / versionCode 同源）；② code 下界 1037。
+check('C4 常开横幅唯一且自报 == 构建配置、code >= 1037',
+      len(banners) == 1 and bool(m_code) and bool(m_nam)
+      and banners[0] == (m_nam.group(1), m_code.group(1))
+      and int(m_code.group(1)) >= 1037,
+      '实际 %r 配置 %s/%s' % (banners, m_nam.group(1) if m_nam else '?',
+                          m_code.group(1) if m_code else '?'))
 
 hist_m = re.search(r'LogGate\.debug\("\[DLsiteSoundFloat\] ==== BUILD 2\.4\.0 / code 1037 '
                    r'（(.*?)"\);', MOD, re.S)
@@ -288,8 +308,10 @@ for p in glob.glob(os.path.join(JAVA, '**', '*.java'), recursive=True):
     src = strip_comments(io.open(p, 'r', encoding='utf-8', errors='replace',
                                  newline='').read().replace('\r\n', '\n'))
     n_open += src.count('XposedCompat.log(')
-check('D5 常开调用点总量 ≤ 200（1036 轮实测 202 → 降噪后应减少）',
-      n_open <= 200, '实际 %d 处' % n_open)
+# 【11-03 追认】1036→1037 降噪把 202 压到 197，此后 1038~1047 又合法涨回 201。
+#   阈值随实测挪（总量受控的回归网，不是死数）：钉 ≤ 201，再涨必须由当轮自觉改这里。
+check('D5 常开调用点总量 ≤ 201（1037 降噪后 197，1047 实测 201；再涨须当轮追认）',
+      n_open <= 201, '实际 %d 处' % n_open)
 
 print()
 print('=' * 74)

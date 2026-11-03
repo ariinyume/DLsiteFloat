@@ -38,7 +38,11 @@ sys.path.insert(0, HERE)
 
 from verify_pathdata import check_one as pathdata_check  # noqa: E402
 
-APK = os.path.join(ROOT, 'app/build/outputs/apk/debug/DLsiteFloat-2.4.3-code1044-debug.apk')
+# 【11-03 修】主验包改吃 argv（run_all 的 build_argv 注入）；缺包打印 usage 并 exit 2
+#   ⇒ run_all 判 SKIP（「未找到 code 1044 的 APK」），不再冒充判据 FAIL。
+#   1044 的包被 1047 顶替后从未留存 ⇒ 本脚本常态就是 SKIP，属如实标注不是红。
+APK = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith('--') else (
+    os.path.join(ROOT, 'app/build/outputs/apk/debug/DLsiteFloat-2.4.3-code1044-debug.apk'))
 CACHE = os.path.join(ROOT, 'build/_v1044/decm')
 
 SDK = os.environ.get('ANDROID_HOME') or _sdk_root()
@@ -55,7 +59,10 @@ def run(cmd):
 def load_dex(apk):
     """把 APK 里所有 dex 反汇编进缓存目录（APK 更新才重跑）。"""
     if not os.path.isfile(apk):
-        raise SystemExit('APK not found: ' + apk)
+        # exit 2 + usage ⇒ run_all_verify 判 SKIP（缺包），不计入判据失败
+        print('usage: verify_1044.py <apk_code1044> [--control <apk_prev>]')
+        print('APK not found: ' + apk)
+        raise SystemExit(2)
     stamp = os.path.join(CACHE, '.stamp')
     if os.path.isfile(stamp) and os.path.getmtime(stamp) >= os.path.getmtime(apk):
         texts = [open(os.path.join(CACHE, f), encoding='utf-8', errors='replace').read()
@@ -145,8 +152,10 @@ def main():
         control = sys.argv[sys.argv.index('--control') + 1]
 
     if not os.path.isfile(APK):
-        print('FAIL 找不到本版 APK：%s（先 assembleDebug）' % APK)
-        return 1
+        # 【11-03 修】缺包 ⇒ usage + exit 2（run_all 判 SKIP），不再冒充判据 FAIL
+        print('usage: verify_1044.py <apk_code1044> [--control <apk_prev>]')
+        print('APK not found: %s（先 assembleDebug 或由 run_all 配包）' % APK)
+        return 2
 
     target = control or APK
     if control and not os.path.isfile(control):

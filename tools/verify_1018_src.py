@@ -364,8 +364,11 @@ def main():
     bcode = banners[0] if banners else ''
     check('履历段存在（自报 code == 横幅 code）',
           bool(bcode) and ('【code %s' % bcode) in mod_raw)
-    check('履历段收尾句合规（code (b-1) 升 b）',
-          bool(bcode) and ('、code %d 升 %s。' % (int(bcode) - 1, bcode)) in mod_raw)
+    # 【11-03 重锚】原绑 banners[0]（最新条目，找「code 1046 升 1047。」）—— 最新条目
+    #   措辞随轮次演进（1047 写「code 推到 1047」）⇒ 每轮假 FAIL。改锚 1018 自己的历史条目
+    #   （履历追加式不覆盖 ⇒ 这行只要被改写就红，是真的历史不可改写回归网）。
+    check('履历段收尾句合规（1017 升 1018，锚本条目）',
+          '、code 1017 升 1018。' in mod_raw)
     m_hist = re.search(r'LogGate\.debug\("\[DLsiteSoundFloat\] ==== BUILD [\d.]+ / code %s （(.*?)"\);'
                        % re.escape(bcode),
                        mod_raw, re.S)

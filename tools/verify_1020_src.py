@@ -301,14 +301,20 @@ def main():
     check('常开横幅唯一（且 >= 1020）',
           len(banners) >= 1 and int(banners[0]) >= 1020, '横幅 code=%r' % banners[:1])
 
-    # 履历段：横幅之后**第一段** LogGate.debug 就是本轮
+    # 履历段：**最新**一条只判恒成立不变量（自报 == 横幅 code）；
+    #   模板判据（九段/收尾句）改锚 **1020 自己的历史条目** —— 履历追加式不覆盖 ⇒
+    #   篡改历史会被抓；最新条目写法随轮次演进，钉最新必假红（11-03 实测 2 红属此）。
     m = re.search(r'==== BUILD [\d.]+ / code (\d+) （(.*?)"\);', mod_raw, flags=re.S)
-    hist = m.group(2) if m else ''
+    hist_latest = m.group(2) if m else ''
     hcode = m.group(1) if m else ''
-    check('履历段切到（横幅后第一段）', bool(hist))
-    self_code = re.findall(r'【code (\d+)', hist)
+    check('履历段切到（横幅后第一段）', bool(hist_latest))
+    self_code = re.findall(r'【code (\d+)', hist_latest)
     check('履历段自报 code == 横幅 code（只升横幅、抄上一轮会被抓）',
           bool(self_code) and self_code[0] == hcode, '自报 %r 横幅 %s' % (self_code[:1], hcode))
+    # ── 模板判据锚 1020 自己的条目（历史不可改写）──────────────────
+    m_own = re.search(r'==== BUILD [\d.]+ / code 1020 （(.*?)"\);', mod_raw, flags=re.S)
+    hist = m_own.group(1) if m_own else ''
+    check('1020 历史条目可切出（履历追加式不覆盖）', bool(hist))
     check('履历段九段齐全（①~⑨）',
           all(ch in hist for ch in '①②③④⑤⑥⑦⑧⑨'))
     # 【code 1021】第二个版本号改**可选**：「版本号不变」时按项目惯例省略它
@@ -317,11 +323,10 @@ def main():
     check('履历段收尾句合规（版本号 A 升/不变 [B]、code C 升 D。）', bool(m_tail), repr(m_tail[-1:]))
     if m_tail:
         a, _, b, c, _, d = m_tail[-1]
-        b_eff = b if b else a          # 「不变」⇒ 被省略的第二个版本号就是第一个
-        check('收尾句口径自洽（版本号 == 当前 name、code-after == 横幅 code）',
-              b_eff == name and d == hcode,
-              'B=%s name=%s D=%s 横幅=%s' % (b_eff, name, d, hcode))
-    hit_bad = [w for w in BANNER_FORBIDDEN if w in hist]
+        # 【11-03 改口径】历史条目的自洽 = 收尾句 code 与本条目自己的编号对上（1019 → 1020）。
+        check('收尾句口径自洽（code-before 1019 → code-after 1020，与本条目一致）',
+              d == '1020' and c == '1019', 'C=%s D=%s' % (c, d))
+    hit_bad = [w for w in BANNER_FORBIDDEN if w in hist_latest]
     check('履历段不点名本轮新标识符（防空/负向探针自命中）',
           not hit_bad, '违禁词：%r' % hit_bad)
 

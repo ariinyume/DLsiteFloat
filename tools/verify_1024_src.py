@@ -228,15 +228,29 @@ def main():
           re.search(r'public static Hit take\(long durMs, String workKeyHint\)', prefetch) is not None)
     check('旧的单参 take 已不存在',
           re.search(r'public static Hit take\(long durMs\)', prefetch) is None)
-    check('先收集全部时长命中的作品', 'List<Pack> matched = new ArrayList<>(2);' in prefetch)
-    check('作品键认人优先', re.search(r'if \(hinted != null\) \{\s*\n\s*pick = hinted;', prefetch) is not None)
-    check('唯一候选可直接用', re.search(r'else if \(matched\.size\(\) == 1\)', prefetch) is not None)
-    check('跨作品歧义 ⇒ 放弃命中并落日志',
-          'AMBIGUOUS dur=' in prefetch and 'refuse hit' in prefetch)
-    check('hasDuration 只看索引不碰磁盘',
-          re.search(r'private static boolean hasDuration\(Pack p, long durMs\)', prefetch) is not None)
-    check('命中日志标明是靠什么认到的（work-scoped / sole candidate）',
-          '[work-scoped]' in prefetch and '[sole candidate]' in prefetch)
+    # 【11-03 现形化】1039 把「matched 列表 + pick=hinted/唯一候选」重构为
+    #   「find() 受限推断」（无作品键时收集全池同长作品键、唯一才采用）；
+    #   1042 补 cacheGateAllows 时长闸门。旧形态钉自此必假红 ⇒ 全组钉现形。
+    check('无作品键时收集全池同长作品键做受限推断（1039 形态）',
+          'LinkedHashSet<String> keys = new LinkedHashSet<>();' in prefetch
+          and 'keys.add(t.workKey);' in prefetch)
+    check('作品键认人优先（hint 非空走严格匹配）',
+          re.search(r'if \(hint == null \|\| hint\.isEmpty\(\)\)', prefetch) is not None
+          and 'if (!hint.equals(t.workKey))' in prefetch)
+    check('唯一候选可直接用（keys.size()==1 才推断，否则 REFUSE）',
+          'if (keys.size() != 1) {' in prefetch
+          and 'hint = keys.iterator().next();' in prefetch)
+    check('跨作品歧义 ⇒ 放弃命中并落日志（1039 起 REFUSE 两条腿：负证据/歧义键）',
+          ' REFUSE dur=' in prefetch
+          and '(some prefetched work has' in prefetch
+          and '(ambiguous work key: ' in prefetch)
+    check('负证据只看索引不碰磁盘（1039 hasAnyNoSubtitle + 1042 cacheGateAllows）',
+          re.search(r'private static boolean hasAnyNoSubtitle\(List<Pack> packs, long durMs\)',
+                    prefetch) is not None
+          and 'public static boolean cacheGateAllows(long durMs)' in prefetch)
+    check('命中/推断日志标明是靠什么认到的（HIT 带 work= / INFER 带 unique work key）',
+          ' INFER dur=' in prefetch and '(unique work key across ' in prefetch
+          and ' HIT dur=' in prefetch and ' work=' in prefetch)
     check('works() / tracks() 读数出口存在',
           re.search(r'public static int works\(\)', prefetch) is not None
           and re.search(r'public static int tracks\(\)', prefetch) is not None)
@@ -335,8 +349,10 @@ def main():
 
     # ---------- F 边界 ----------
     print('F 本轮不动的边界')
-    check('缓存索引结构版本仍是 4（条目形态未变，不清毒）',
-          re.search(r'INDEX_SCHEMA = 4;', cache) is not None)
+    # 【11-03 追认】1043 把 INDEX_SCHEMA 4→5（1042 写坏条目的定向清理版）。
+    #   「仍是 4」自此假红 ⇒ 钉现值 5，条目形态再变须当轮追认本钉。
+    check('缓存索引结构版本 = 5（1043 起定向清理版；再变须当轮追认）',
+          re.search(r'INDEX_SCHEMA = 5;', cache) is not None)
     check('抓取闸门三层判据没被改（体积/媒体类型/媒体后缀）',
           all(has(network, k) for k in ('MEDIA_CT_HINTS', 'MEDIA_EXT_HINTS', 'peekLimit')))
     check('换轨判据仍用三元组身份（makeIdentity 仍在）',

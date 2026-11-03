@@ -17,6 +17,12 @@
     项目已有多个 verify_*.py，但每个都是「手工单跑一次」。
     改了码想全量回归时，得逐个敲命令、逐个看输出、逐个判断有没有 FAIL ——
     这是「验证链断裂」的经典形态：跑了，但没人保证全跑了。
+
+【2026-11-03 收拢政策】verify_10XX.py **冻结**，不再新增：
+  · 新轮次只维护 tools/manifests/round_*.json（清单驱动，判据用恒成立口径，
+    由 verify_layer.py 执行）—— 公共样板收进 verify_layer.py，不再复制粘贴。
+  · 历史 verify_10XX.py 保持在册跑回归（修锚后 61/61 全绿）；死锚脚本进 tools/archive/。
+  · 结构性强断言仍可写小脚本，但公共层 import verify_layer，别再自带 dexdump 样板。
 """
 import os
 import re
@@ -303,6 +309,9 @@ SCRIPTS = [
 # ⚠️ 只有**真正解析 APK/dex** 的脚本才登记在这里。
 #   不接包的脚本（如源码层校验、真机日志校验）不要登记，否则会被误判成「缺参数」。
 NEEDS_APK = {
+    # 【11-03 补登记】1044 的包被 1047 顶替后从未留存 ⇒ 未登记时脚本自己找不到包、
+    #   exit 1 被误判 FAIL。登记后 run_all 判 SKIP（缺包），如实标注。
+    'verify_1044.py': (1044, None),   # <apk_1044>（单包脚本；缺 ⇒ SKIP）
     'verify_1040.py': (1040, 1039),   # <apk_1040> <apk_1039 上一版>
     'verify_1039.py': (1039, 1038),   # <apk_1039> <apk_1038 上一版>
     'verify_1038.py': (1038, 1037),   # <apk_1038> <apk_1037 上一版>
@@ -429,9 +438,14 @@ def build_argv(name, repo):
 
 
 def discover():
-    """兜底：把目录里 SCRIPTS 未登记的 verify_*.py 也捞出来，提醒补登记。"""
+    """兜底：把目录里 SCRIPTS 未登记的 verify_*.py 也捞出来，提醒补登记。
+
+    verify_layer.py 是共享库 + 清单 runner（被 manifests/*.json 调用），
+    不是独立验证脚本 ⇒ 不提醒、不参与扫描。
+    """
     on_disk = {f for f in os.listdir(HERE)
-               if f.startswith('verify_') and f.endswith('.py')}
+               if f.startswith('verify_') and f.endswith('.py')
+               and f != 'verify_layer.py'}
     registered = {s[0] for s in SCRIPTS}
     return sorted(on_disk - registered)
 
@@ -486,6 +500,50 @@ def run_one(name, repo):
         return 'ERROR', -1, time.time() - t0, '%s: %s' % (type(e).__name__, e)
 
 
+def run_manifests(repo, keys=()):
+    """清单层：tools/manifests/*.json 交给 verify_layer.py 跑（新轮次的标准姿势）。
+
+    判据是恒成立口径（下界 / 自洽 / 形态 / 历史锚）⇒ 不随轮次假红。
+    主验包取当前最大 code（清单判据都是下界/自洽型，不钉死包号）。
+    """
+    mdir = os.path.join(HERE, 'manifests')
+    if not os.path.isdir(mdir):
+        return []
+    names = sorted(f for f in os.listdir(mdir) if f.endswith('.json'))
+    if keys:
+        names = [n for n in names if any(k in n for k in keys)]
+    cands = find_apks(repo)
+    latest = cands[max(cands)] if cands else None
+    rows = []
+    for n in names:
+        path = os.path.join(mdir, n)
+        argv = [sys.executable, os.path.join(HERE, 'verify_layer.py'), path]
+        if latest:
+            argv += ['--apk', latest]
+        t0 = time.time()
+        try:
+            p = subprocess.run(argv, cwd=repo,
+                               capture_output=True, text=True,
+                               encoding='utf-8', errors='replace', timeout=TIMEOUT)
+            dt = time.time() - t0
+            out = (p.stdout or '') + (p.stderr or '')
+            rc = p.returncode
+            status = 'PASS' if rc == 0 else ('SKIP' if rc == 2 else 'FAIL')
+        except subprocess.TimeoutExpired:
+            dt = time.time() - t0
+            out, rc, status = '', -1, 'TIMEOUT'
+        v = verdict_line(out)
+        print('\n>>> manifests/%s  [清单层]  verify_layer 清单' % n)
+        print('-' * 78)
+        tail = out.strip().split('\n')
+        print('\n'.join(tail[-14:] if len(tail) > 14 else tail))
+        print('-' * 78)
+        print('  ⇒ %s  (%.1fs, exit=%d) %s'
+              % (status, dt, rc, ('[' + v + ']') if v else ''))
+        rows.append(('manifests/' + n, '清单层', status, rc, dt, v))
+    return rows
+
+
 def verdict_line(out):
     """从脚本输出里抓它自己的结论行 —— 优先读脚本自报值，不自己重算。
 
@@ -525,8 +583,14 @@ def main(argv):
     keys = [a for a in argv if not a.startswith('-')]
     targets = [s for s in SCRIPTS if not keys or any(k in s[0] for k in keys)]
     if not targets:
-        print('没有匹配到脚本。关键字：%s' % (keys or '(空= 全部)'))
-        return 2
+        # 脚本 0 命中，但清单层可能命中（如 round_1103.json）⇒ 仍放行
+        _mdir = os.path.join(HERE, 'manifests')
+        m_hit = os.path.isdir(_mdir) and any(
+            any(k in f for k in keys)
+            for f in os.listdir(_mdir) if f.endswith('.json'))
+        if not m_hit:
+            print('没有匹配到脚本。关键字：%s' % (keys or '(空= 全部)'))
+            return 2
 
     print('=' * 78)
     print('一键验证：跑 %d 个脚本' % len(targets))
@@ -544,6 +608,9 @@ def main(argv):
         print('  ⇒ %s  (%.1fs, exit=%d) %s'
               % (status, dt, rc, ('[' + verdict_line(out) + ']') if verdict_line(out) else ''))
         rows.append((name, cat, status, rc, dt, verdict_line(out)))
+
+    # ---- 清单层（verify_layer + manifests/*.json，新轮次的标准姿势）----
+    rows.extend(run_manifests(repo, keys))
 
     # ---- 汇总表 ----
     print()

@@ -335,8 +335,11 @@ def main():
     check('⑧ 常开横幅里不写具体文件名/被删标识符（横幅纪律，防负向锚自伤）',
           all(ch not in keep for ch in
               ('AudioPlaylist', 'ExoPlayerImpl', 'Duration', 'cuesBelongToRebuiltPlaylist')))
-    seg = re.search(r'==== BUILD %s / code %s （([\s\S]*?)"\);' % (re.escape(vname), vcode), mod)
-    check('⑧ 调试段里的当前 code 履历含四段（现象/根因/修法/连带）+ 尾部写明「版本号」变化',
+    # 【11-03 重锚】原锚当前 vname/vcode（= 最新条目）—— 最新条目写法随轮次演进
+    #   （1047 条目无「版本号」三字、段数也不同）⇒ 假 FAIL。改锚 1005 自己的历史条目
+    #   （履历追加式不覆盖 ⇒ 历史被改写才红）。
+    seg = re.search(r'==== BUILD 2\.3\.1 / code 1005 （([\s\S]*?)"\);', mod)
+    check('⑧ 调试段里的 1005 历史条目含四段（现象/根因/修法/连带）+ 尾部写明「版本号」变化（锚本条目）',
           seg is not None and all(k in seg.group(1) for k in ('①', '②', '③', '④'))
           and '版本号' in seg.group(1))
     check('⑧ code 1005 的历史段仍在（履历是追加式、不覆盖；它的横幅保持当时的 2.3.1）',

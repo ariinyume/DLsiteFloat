@@ -383,15 +383,16 @@ def main():
     #   抄上一轮照样会被抓），收尾句改按**模板**判（版本号可能与 code 同时升）。
     check('履历段存在（自报 code == 横幅 code）',
           len(banners) == 1 and ('【code %s' % banners[0]) in mod_raw)
-    check('履历段收尾句合规（版本号 A 升/不变 [B]、code C 升/不变 D。）',
+    # 【11-03 重锚】收尾句与模板判据改锚 **1019 自己的历史条目**（履历追加式不覆盖 ⇒
+    #   篡改历史会被抓）；原绑 banners[0]（最新条目）—— 最新写法随轮次演进，钉最新必假红。
+    check('履历段收尾句合规（版本号 A 升/不变 [B]、code C 升/不变 1019。）',
           len(banners) == 1 and re.search(
               # 【code 1021】第二个版本号改**可选**：版本号「不变」时按项目惯例省略它
               #   （`版本号 2.3.3 不变、code 1020 升 1021。` —— 1012~1017 各轮都这么写），
               #   旧模板强制要求它 ⇒ 「不变」的轮次必然假 FAIL。
-              r'版本号 \d+\.\d+\.\d+ (?:升|不变)(?: \d+\.\d+\.\d+)?、code \d+ (?:升|不变) %s。'
-              % banners[0], mod_raw) is not None)
-    m_hist = re.search(r'LogGate\.debug\("\[DLsiteSoundFloat\] ==== BUILD [\d.]+ / code %s （(.*?)"\);'
-                       % (banners[0] if len(banners) == 1 else 'x'),
+              r'版本号 \d+\.\d+\.\d+ (?:升|不变)(?: \d+\.\d+\.\d+)?、code \d+ (?:升|不变) 1019。'
+              , mod_raw) is not None)
+    m_hist = re.search(r'LogGate\.debug\("\[DLsiteSoundFloat\] ==== BUILD [\d.]+ / code 1019 （(.*?)"\);',
                        mod_raw, re.S)
     hist = m_hist.group(1) if m_hist else ''
     check('履历段可切出（非空）', bool(hist))
@@ -399,7 +400,11 @@ def main():
           '"' not in hist and '\\' not in hist and '`' not in hist)
     check('履历段九段（①..⑨ 各一）',
           all(hist.count(c) == 1 for c in '①②③④⑤⑥⑦⑧⑨'))
-    hit_tok = [t for t in BANNER_FORBIDDEN if t in hist]
+    # 违禁词扫**最新**条目（未来条目也不许点名 1019 的探针词，否则负向锚自伤）
+    m_latest = re.search(r'LogGate\.debug\("\[DLsiteSoundFloat\] ==== BUILD [\d.]+ / code (\d+) （(.*?)"\);',
+                         mod_raw, re.S)
+    hist_forbid = m_latest.group(2) if m_latest else ''
+    hit_tok = [t for t in BANNER_FORBIDDEN if t in hist_forbid]
     check('履历段不点名本轮新增标识符（防空／负向探针自命中）', not hit_tok,
           '命中: %s' % (hit_tok or '无'))
 
