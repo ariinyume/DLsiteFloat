@@ -127,6 +127,30 @@ final class CapsuleGeometry {
             int screenH, int sliderCy, int sliderH, int descBottomY, int prevDescStable,
             int gapPx, int capsuleHPx, int aboveSliderTopPx, int minClearPx,
             int descHysteresisPx, int fallbackSeekHalfPx, int edgePadPx) {
+        return capsuleBottomForSlider(screenH, 0, sliderCy, sliderH, descBottomY, prevDescStable,
+                gapPx, capsuleHPx, aboveSliderTopPx, minClearPx, descHysteresisPx,
+                fallbackSeekHalfPx, edgePadPx);
+    }
+
+    /**
+     * 【code 1048】带「窗口原点」的版本 —— 修「宿主变成浮窗/分屏后胶囊整体下移」。
+     *
+     * <h3>── 为什么要它（Ari 2026-11-04 10:11 的录屏）──</h3>
+     * 胶囊是 {@code decor} 的子 View，{@code bottomMargin} 是**相对 decor 底边**的量；
+     * 而扫描拿到的 {@code sliderCy / timeLabelBottom} 是 {@link android.view.View#getLocationOnScreen}
+     * 的**屏幕坐标**。两者只有在「decor 顶边贴在屏幕 y=0」时才重合 —— 全屏时成立，
+     * 一旦宿主被塞进浮窗（decor 下移 {@code decorTop}），公式就整体差 {@code decorTop}：
+     * 胶囊被摆低 {@code decorTop} px（真机实测 166px ≈ 一整行，正好压到底部图标行上）。
+     *
+     * <p>⇒ 换算前先把测量值减掉窗口原点：{@code localY = screenY - decorTop}。
+     * 全屏时 {@code decorTop == 0} ⇒ <b>与本版之前逐像素一致</b>（老向量不用改）。
+     *
+     * @param decorTopPx decor 顶边在屏幕上的 y（{@code getLocationOnScreen()[1]}；未知传 0）
+     */
+    static BottomResult capsuleBottomForSlider(
+            int screenH, int decorTopPx, int sliderCy, int sliderH, int descBottomY,
+            int prevDescStable, int gapPx, int capsuleHPx, int aboveSliderTopPx,
+            int minClearPx, int descHysteresisPx, int fallbackSeekHalfPx, int edgePadPx) {
         if (screenH <= 0 || sliderCy <= 0) {
             return null;
         }
@@ -188,7 +212,8 @@ final class CapsuleGeometry {
             }
         }
 
-        int bottomMargin = screenH - (centerY + capsuleHPx / 2);
+        // 【code 1048】减掉窗口原点：测量值是屏幕坐标，bottomMargin 是 decor 内坐标。
+        int bottomMargin = screenH - (centerY - decorTopPx + capsuleHPx / 2);
         // 安全钳制：别把按钮推到屏幕外（分屏 / 极矮屏 / 滑条贴顶）。
         int minBottom = edgePadPx;
         int maxBottom = Math.max(minBottom, screenH - capsuleHPx - edgePadPx);
@@ -237,6 +262,19 @@ final class CapsuleGeometry {
     static BottomResult capsuleBottomBelowSlider(
             int screenH, int sliderCy, int sliderH, int timeLabelBottom,
             int gapPx, int capsuleHPx, int fallbackSeekHalfPx, int edgePadPx) {
+        return capsuleBottomBelowSlider(screenH, 0, sliderCy, sliderH, timeLabelBottom,
+                gapPx, capsuleHPx, fallbackSeekHalfPx, edgePadPx);
+    }
+
+    /**
+     * 【code 1048】带「窗口原点」的版本 —— 目前真机走的正是这一支（宿主 2.22.1 起
+     * 胶囊落在进度条下方），所以「浮窗下整体下移一整行」的现场就在这条公式上。
+     *
+     * @param decorTopPx decor 顶边在屏幕上的 y；全屏时 0（→ 与本版之前逐像素一致）
+     */
+    static BottomResult capsuleBottomBelowSlider(
+            int screenH, int decorTopPx, int sliderCy, int sliderH, int timeLabelBottom,
+            int gapPx, int capsuleHPx, int fallbackSeekHalfPx, int edgePadPx) {
         if (screenH <= 0 || sliderCy <= 0) {
             return null;
         }
@@ -248,7 +286,8 @@ final class CapsuleGeometry {
             belowY = timeLabelBottom;
         }
         int centerY = belowY + gapPx + capsuleHPx / 2;
-        int bottomMargin = screenH - (centerY + capsuleHPx / 2);
+        // 【code 1048】减掉窗口原点（见「上方」分支同一段注释）。
+        int bottomMargin = screenH - (centerY - decorTopPx + capsuleHPx / 2);
         // 安全钳制：与上方分支同一套（别把按钮推到屏幕外）。
         int minBottom = edgePadPx;
         int maxBottom = Math.max(minBottom, screenH - capsuleHPx - edgePadPx);

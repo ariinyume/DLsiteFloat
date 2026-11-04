@@ -100,6 +100,32 @@ public final class TestAccessBridge {
         return r == null ? -1 : r.bottomMargin;
     }
 
+    /**
+     * 【code 1048】「进度条下方」落位 + 窗口原点（decorTop）。
+     *
+     * @return bottomMargin（px）；{@code -1} = 输入不可用（内核返回 null）
+     */
+    public static int belowBottomAt(int screenH, int decorTop, int sliderCy, int sliderH,
+            int timeLabelBottom, int gapPx, int capsuleHPx, int fallbackSeekHalfPx,
+            int edgePadPx) {
+        CapsuleGeometry.BottomResult r = CapsuleGeometry.capsuleBottomBelowSlider(
+                screenH, decorTop, sliderCy, sliderH, timeLabelBottom, gapPx, capsuleHPx,
+                fallbackSeekHalfPx, edgePadPx);
+        return r == null ? -1 : r.bottomMargin;
+    }
+
+    /** 【code 1048】「滑条上方」落位 + 窗口原点（decorTop）。 */
+    public static int aboveBottomAt(int screenH, int decorTop, int sliderCy, int sliderH,
+            int descBottomY, int prevDescStable, int gapPx, int capsuleHPx,
+            int aboveSliderTopPx, int minClearPx, int descHysteresisPx,
+            int fallbackSeekHalfPx, int edgePadPx) {
+        CapsuleGeometry.BottomResult r = CapsuleGeometry.capsuleBottomForSlider(
+                screenH, decorTop, sliderCy, sliderH, descBottomY, prevDescStable, gapPx,
+                capsuleHPx, aboveSliderTopPx, minClearPx, descHysteresisPx,
+                fallbackSeekHalfPx, edgePadPx);
+        return r == null ? -1 : r.bottomMargin;
+    }
+
     // ── AnchorDeadPolicy ───────────────────────────────────────────────
 
     public static boolean confirmWindow(

@@ -1517,4 +1517,47 @@ public class GoldenVectorTest {
         assertEquals(0L, r.diffSinceMs);
         assertEquals(0, r.event);
     }
+
+    // ── 【code 1048】窗口原点（浮窗 / 分屏）下的落位不变式 ──────────────────
+
+    /**
+     * ★ 语义核心：**窗口整体平移不许改变胶囊相对内容的位置**。
+     *
+     * <p>真机现场（{@code LSPosed_20261104_101135}）：宿主进浮窗时 decor 整体下移
+     * 166px，同一批控件的屏幕坐标同步 +166 —— 此时落位必须与全屏**逐像素相同**。
+     * 旧公式（不减 decorTop）会少算这 166px，胶囊被摆低一整行、压到底部图标行上。
+     */
+    @Test
+    public void capsuleBottom_isInvariantUnderWindowMove() {
+        int atTopZero = TestAccessBridge.belowBottomAt(
+                SCREEN_H, 0, 1687, 54, 1800, 71, 95, 27, 24);
+        int windowMoved = TestAccessBridge.belowBottomAt(
+                SCREEN_H, 166, 1687 + 166, 54, 1800 + 166, 71, 95, 27, 24);
+        assertEquals("全屏基线（decorTop=0）必须与本版之前一致", 807, atTopZero);
+        assertEquals("浮窗下移 166px 不许改变落位", atTopZero, windowMoved);
+    }
+
+    /**
+     * 反过来：窗口动了而测量值没动（扫描还是旧的一帧）⇒ 落位要**跟着窗口**补偿，
+     * 而不是原地不动。差值正好是 decorTop。
+     */
+    @Test
+    public void capsuleBottom_compensatesWhenOnlyWindowMoved() {
+        int atTopZero = TestAccessBridge.belowBottomAt(
+                SCREEN_H, 0, 1687, 54, 1800, 71, 95, 27, 24);
+        int onlyWindowMoved = TestAccessBridge.belowBottomAt(
+                SCREEN_H, 166, 1687, 54, 1800, 71, 95, 27, 24);
+        assertEquals("底边距要按窗口原点整体补偿", atTopZero + 166, onlyWindowMoved);
+    }
+
+    /** 「滑条上方」老分支同样要减 window origin（宿主 2.22.0 及以前走这里）。 */
+    @Test
+    public void aboveBranchAlsoHonoursDecorTop() {
+        int a = TestAccessBridge.aboveBottomAt(
+                SCREEN_H, 0, 1799, 54, 1722, 0, 95, 95, 74, 60, 30, 27, 24);
+        int b = TestAccessBridge.aboveBottomAt(
+                SCREEN_H, 166, 1799 + 166, 54, 1722 + 166, 0, 95, 95, 74, 60, 30, 27, 24);
+        assertTrue("两条分支都要对窗口平移不敏感", a > 0);
+        assertEquals(a, b);
+    }
 }

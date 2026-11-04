@@ -1257,6 +1257,23 @@ public class ActivityButtonHook {
     /** 最近一次扫描用的屏幕尺寸（{@link #isPageHeld} 要用它算锚点可见面积）。 */
     private static int sLastScreenW = 0;
     private static int sLastScreenH = 0;
+    /**
+     * 【code 1048】decor 顶边在**屏幕上**的 y（{@code getLocationOnScreen()[1]}）。
+     *
+     * <h3>为什么必须记它（Ari 2026-11-04 录屏：浮窗里按钮错位）</h3>
+     * 扫描拿到的 {@code sliderCy / timeLabelBottom} 是 {@link View#getLocationOnScreen}
+     * 的**屏幕坐标**，而胶囊的 {@code bottomMargin} 是**相对 decor 底边**的量 ——
+     * 两者只在「decor 顶边 = 屏幕 y 0」时重合。全屏时成立（真机实测 decorTop=0），
+     * 一旦宿主被塞进浮窗、decor 整体下移，公式就整体差这么多：
+     * 胶囊被摆低 {@code decorTop} px。真机 {@code LSPosed_20261104_101135} 里那段
+     * 166px 的位移（同一批控件在浮窗前后的坐标差）正好让它压到底部图标行上。
+     *
+     * <p>只在 {@link #detectAndLayout} 里更新；{@link #ensureButton} 建的兜底位读它时
+     * 允许是 0（还没扫过 ⇒ 无处可错）。
+     */
+    private static int sDecorTopScreen = 0;
+    /** 上一次扫描看到的 decorTop —— 变了就说明窗口动了/换了形态，几何要强制重落位。 */
+    private static int sPlacedDecorTop = 0;
 
     /**
      * 本次「前台会话」里是否**已经确认过当前是播放页**（v43）。
@@ -2897,7 +2914,8 @@ public class ActivityButtonHook {
                     // 【v57】初始位置也尽量用滑条推导（与 showButton 同口径），
                     // 避免「先出现在右下角、判为播放页后再跳到滑条上方」的闪跳
                     // （这正是 v42 修过的那类问题，只是坐标换了地方）。
-                    int btnWantBottom = capsuleBottomForSlider(activity, btnScreenH);
+                    int btnWantBottom = capsuleBottomForSlider(activity, btnScreenH,
+                            sDecorTopScreen);
                     boolean btnUsedFallback = false;
                     if (btnWantBottom <= 0) {
                         btnWantBottom = dip2px(activity, BUTTON_BOTTOM_DP);
@@ -3249,8 +3267,22 @@ public class ActivityButtonHook {
             int screenH = decor.getHeight() > 0
                     ? decor.getHeight()
                     : decor.getResources().getDisplayMetrics().heightPixels;
+            // 【code 1048】decor 顶边在屏幕上的 y —— 测量值是屏幕坐标，必须减掉它才能
+            //   换算成 bottomMargin（见 {@link #sDecorTopScreen} 的类内说明）。
+            int decorTop = readDecorTop(decor);
+            // 窗口形态变了（浮窗进出 / 分屏 / 转屏 / 被拖动）⇒ 几何必须**无条件**重落位：
+            //   § 只看「滑条/时间行动没动」是看不出来的 —— 浮窗里宿主可能一个控件都不挪，
+            //   只是整个窗口换了位置或换了大小（真机 10:11:05→10:11:16 这段就是这样）。
+            boolean windowMoved = decorTop != sPlacedDecorTop
+                    || screenW != sLastScreenW || screenH != sLastScreenH;
+            sDecorTopScreen = decorTop;
             sLastScreenW = screenW;
             sLastScreenH = screenH;
+            if (windowMoved) {
+                sPlacedDecorTop = decorTop;
+                LogGate.debug(TAG, " [几何7] window geometry changed -> decor top=" + decorTop
+                        + "px h=" + screenH + "px w=" + screenW + "px, force re-place");
+            }
 
             // 🔴🔴 【code 927 问题 3】几何更新点**独立触发**按钮重落位。
             //
@@ -3261,7 +3293,7 @@ public class ActivityButtonHook {
             //   现在：几何（sLastSliderCy / sLastDescBottomY / sLastSliderRightPx）
             //   一更新就在这里重算并落地，与 showButton 的调用时机彻底解耦。
             //   必须先于下面 showButton 的判定调用，这样同一帧里 showButton 也能看到新值。
-            replaceCapsuleByGeometry(activity, screenW, screenH, false);
+            replaceCapsuleByGeometry(activity, screenW, screenH, windowMoved, decorTop);
 
             // v38：扫描心跳也要刷新「页面最后运动的时刻」。
             // 它是「离开播放页」确认窗的起算点（见下面 deadFor），刷新源必须足够可靠；
@@ -3310,7 +3342,7 @@ public class ActivityButtonHook {
                     captureFollowBaseline();
                     sLastDecision = Boolean.TRUE;
                     sPlayerConfirmedInSession = true; // v43：本会话确认过播放页 → 抑制门解闸
-                    showButton(activity, repo, screenW, screenH);
+                    showButton(activity, repo, screenW, screenH, sDecorTopScreen);
                     break;
                 }
 
@@ -3412,7 +3444,7 @@ public class ActivityButtonHook {
                             hideButton("unknown + anchor alive timeout");
                         } else if (!Boolean.TRUE.equals(sLastDecision)) {
                             sLastDecision = Boolean.TRUE;
-                            showButton(activity, repo, screenW, screenH);
+                            showButton(activity, repo, screenW, screenH, sDecorTopScreen);
                         }
                     } else if (sPlayerAnchor == null) {
                         sAnchorAliveSinceMs = 0L;
@@ -3716,6 +3748,31 @@ public class ActivityButtonHook {
         }
     }
 
+    /** 复用的小数组（UI 线程独占；避免每 55ms 一次扫描都新建）。 */
+    private static final int[] sDecorLoc = new int[2];
+
+    /**
+     * 【code 1048】读 decor 顶边在**屏幕上**的 y（{@code getLocationOnScreen()[1]}）。
+     *
+     * <p>扫描拿到的所有 y 都是屏幕坐标（{@code getLocationOnScreen}），而胶囊的
+     * {@code bottomMargin} 是相对 decor 底边的量 —— 换算前必须减掉这个原点。
+     * 全屏时它是 0，所以本方法**在改之前**不会改变任何落位（老逻辑等价）。
+     *
+     * <p>任何异常（decor 还没 attach / 被回收）一律返回 0：宁可退回全屏口径，
+     * 也不让一次异常把胶囊摆到屏幕外。
+     */
+    private static int readDecorTop(View decor) {
+        if (decor == null) {
+            return 0;
+        }
+        try {
+            decor.getLocationOnScreen(sDecorLoc);
+            return sDecorLoc[1];
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
     /**
      * 【code 923 几何 4】胶囊底边落位 —— **有副作用的外壳**，真正的算术在 {@link CapsuleGeometry}。
      *
@@ -3731,7 +3788,7 @@ public class ActivityButtonHook {
      *
      * @return bottomMargin（px）；{@code <=0} 表示几何不可用，调用方保持现状
      */
-    private static int capsuleBottomForSlider(Context ctx, int screenH) {
+    private static int capsuleBottomForSlider(Context ctx, int screenH, int decorTop) {
         if (screenH <= 0 || sLastSliderCy <= 0) {
             return -1;
         }
@@ -3746,6 +3803,7 @@ public class ActivityButtonHook {
         CapsuleGeometry.BottomResult r = below
                 ? CapsuleGeometry.capsuleBottomBelowSlider(
                         screenH,
+                        decorTop,
                         sLastSliderCy,
                         sLastSliderH,
                         sLastTimeLabelBottom,
@@ -3755,6 +3813,7 @@ public class ActivityButtonHook {
                         dip2px(ctx, 8))
                 : CapsuleGeometry.capsuleBottomForSlider(
                         screenH,
+                        decorTop,
                         sLastSliderCy,
                         sLastSliderH,
                         sLastDescBottomY,
@@ -3799,6 +3858,7 @@ public class ActivityButtonHook {
                     + " density=" + sLockedDensity
                     + (r.clamped ? " CLAMPED" : "")
                     + " bottomMargin=" + r.bottomMargin
+                    + " decorTop=" + decorTop
                     + " calls=" + sCbCallCount);
         }
         return r.bottomMargin;
@@ -3835,7 +3895,7 @@ public class ActivityButtonHook {
      * @param force 忽略快照无条件重算（ensureButton 建好按钮、或几何首次到手时用）
      */
     private static void replaceCapsuleByGeometry(Activity activity, int screenW, int screenH,
-                                                 boolean force) {
+                                                 boolean force, int decorTop) {
         if (activity == null || sButtonGroup == null || screenH <= 0) {
             return;
         }
@@ -3859,7 +3919,7 @@ public class ActivityButtonHook {
             //   各写一份，两处漂移过一次；口径值一字未变，仍是「屏宽 − 按钮宽 − 8dp」）。
             wantRight = CapsuleGeometry.clampRight(
                     wantRight, screenW, btnW, dip2px(activity, 8));
-            int bySlider = capsuleBottomForSlider(activity, screenH);
+            int bySlider = capsuleBottomForSlider(activity, screenH, decorTop);
             applyCapsuleHeight();
             if (bySlider <= 0) {
                 return;
@@ -3889,7 +3949,9 @@ public class ActivityButtonHook {
                 LogGate.debug(TAG, " [几何6] capsule re-placed by geometry -> bottom="
                         + bySlider + "px right=" + wantRight
                         + "px (descBottom=" + sLastDescBottomY
-                        + " sliderCy=" + sLastSliderCy + " force=" + force + ")");
+                        + " sliderCy=" + sLastSliderCy
+                        + " decorTop=" + decorTop + " decorH=" + screenH
+                        + " force=" + force + ")");
             }
         } catch (Throwable t) {
             XposedCompat.log(TAG + " replaceCapsuleByGeometry failed: " + t);
@@ -3897,7 +3959,7 @@ public class ActivityButtonHook {
     }
 
     private static void showButton(Activity activity, SubtitleRepository repo,
-                                   int screenW, int screenH) {
+                                   int screenW, int screenH, int decorTop) {
         int btnW = sButtonGroup.getWidth() > 0 ? sButtonGroup.getWidth()
                 : dip2px(activity, CAPSULE_W_DP * 2 + CAPSULE_GAP_DP);
         int btnH = sButtonGroup.getHeight() > 0 ? sButtonGroup.getHeight()
@@ -3914,7 +3976,7 @@ public class ActivityButtonHook {
         wantRight = CapsuleGeometry.clampRight(
                 wantRight, screenW, btnW, dip2px(activity, 8));
         // 【v57】底边由滑条推导；取不到滑条时先用上次值，再不行退回 v32 的常量安全位。
-        int bySlider = capsuleBottomForSlider(activity, screenH);
+        int bySlider = capsuleBottomForSlider(activity, screenH, decorTop);
         applyCapsuleHeight();
         if (bySlider > 0) {
             sCapsuleFollowY = bySlider;
