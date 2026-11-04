@@ -1,0 +1,49 @@
+{
+  "round": "1104-scrollfix",
+  "desc": "11-04 轮清单（未发版修 bug）：StatusBarSubtitleHook 三处真问题 —— ① 清两个只写不读的死字段（sScrollTarget / sScrollDurMs）；② buildViews 起手 cancelScroll，杜绝孤儿动画驱动新视图；③ 布局监听器改「先摘后挂」+ 记挂载 root，杜绝 sLayoutDirty 永久粘住。⚠️ 本清单刻意只做源码层：本轮未发版，dex / aapt2 断言等发版轮再补 —— 否则判据会绑在「本地构建产物」上，别人没有那个包就整席红。",
+  "checks": [
+    {"type": "version_lower_bound", "code": 1047, "name_min": "2.4.3",
+     "desc": "版本下界：code >= 1047、versionName >= 2.4.3（本轮不动版本号）"},
+    {"type": "version_label_form",
+     "desc": "label 形态 MMDD.N（铁律 94：只守形态、不钉当天）"},
+    {"type": "banner_self_report",
+     "desc": "常开横幅自报 == 构建配置（versionName/versionCode 同源）"},
+
+    {"type": "src_regex_absent",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "\\bsScrollTarget\\s*=",
+     "desc": "死字段①：sScrollTarget 的赋值/声明绝迹（只写不读，唯一真相是 sLiveTargetPx）"},
+    {"type": "src_regex_absent",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "\\bsScrollDurMs\\s*=",
+     "desc": "死字段②：sScrollDurMs 的赋值/声明绝迹（同样只写不读）"},
+
+    {"type": "src_regex",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "private static void buildViews\\(Context ctx\\) \\{\\n[\\s\\S]{0,1200}?\\n        cancelScroll\\(\\);",
+     "desc": "孤儿动画：buildViews 开头必须有 cancelScroll()（ValueAnimator 不随 detach 取消，回调读静态 sLineView）"},
+    {"type": "src_regex",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "sLineView != view",
+     "desc": "孤儿回调：recheckFitAfterLayout 的 Runnable 必须做视图身份校验（捕获发起时的 TextView）"},
+
+    {"type": "src_regex_absent",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "if \\(sLayoutListener != null\\) \\{",
+     "desc": "监听器丢失：installLayoutListener 的「非 null 就 return」早退分支绝迹（只挂得上一次的根因）"},
+    {"type": "src_regex",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "private static void installLayoutListener\\(final View root\\) \\{\\n\\s+try \\{\\n\\s+releaseLayoutListener\\(\\);",
+     "desc": "监听器丢失：install 首句必须是 releaseLayoutListener()（先摘后挂，重复调用幂等）"},
+    {"type": "src_contains",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "private static View sLayoutRoot;",
+     "desc": "监听器丢失：必须记住挂载 root（否则新 root 上挂没挂无从判断）"},
+    {"type": "src_regex",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "installLayoutListener\\(root\\);\\n\\s+if \\(sSuppressed\\)",
+     "desc": "监听器丢失：attach() 的 alive 分支也要（重）挂 —— 窗口重 attach 会换掉 ViewTreeObserver"},
+
+    {"type": "pathdata", "desc": "矢量图 pathData 语法层"}
+  ]
+}

@@ -320,6 +320,12 @@ public class StatusBarSubtitleHook {
     private static TextView sLineView;
     private static ValueAnimator sAnimator;
     private static ViewTreeObserver.OnGlobalLayoutListener sLayoutListener;
+    /**
+     * 【2026-11-04】布局监听器**当前挂在哪个 root 上**。
+     * 之前只存 listener 不存挂载点，重建时既摘不掉旧的、也无法判断新的有没有挂上；
+     * 见 {@link #installLayoutListener(View)} 的注释（sLayoutDirty 永久粘住那条链）。
+     */
+    private static View sLayoutRoot;
 
     /** 每次压制都重新收集：状态栏重建后旧引用会失效（问题 1 的根因）。 */
     private static final List<View> sClockViews = new ArrayList<>();
@@ -469,8 +475,12 @@ public class StatusBarSubtitleHook {
     private static boolean sWidthSettled = false;
 
     // 滚动状态
-    private static int sScrollTarget = 0;
-    private static long sScrollDurMs = 0L;
+    // 【2026-11-04 清死字段】这里原有 `sScrollTarget` 与 `sScrollDurMs` 两个 int/long：
+    //   前者 1.21.11 引入 {@link #sLiveTargetPx} 后就被架空（6 处赋值、**0 处读**），
+    //   后者只有 startScroll 里一次赋值、同样无人读。编译器不报（赋值即算「已使用」），
+    //   于是两处「看起来在维护目标/时长」的假写入一路留着，排查时会误以为它们有语义。
+    //   ⇒ 滚动目标一律以 {@link #sLiveTargetPx} 为唯一真相；时长只活在 animateScrollTo 的入参里。
+    //   ⚠️ 别再往里加「镜像字段」：要读就用 sLiveTargetPx。
 
     /**
      * 滚动的**绝对速度**（px/ms），在 startScroll() 时定死一次。
@@ -770,6 +780,11 @@ public class StatusBarSubtitleHook {
         if (alive) {
             // 状态栏重建了子视图：只刷新引用 + 重新压制（否则新实例的时钟会露出来）
             refreshSystemViews();
+            // 【2026-11-04 修】这条分支同样要（重）挂布局监听器：
+            //   窗口重新 attach 时 View 的 ViewTreeObserver 会被换成新的实例，
+            //   旧 observer 上的注册随之作废 —— 光看 sLayoutListener != null 是看不出这事的。
+            //   installLayoutListener 内部是「先摘后挂」，重复调用安全。
+            installLayoutListener(root);
             if (sSuppressed) {
                 sSuppressed = false;     // 强制重新压制（收集新实例）
                 applySuppression(true);
@@ -840,12 +855,30 @@ public class StatusBarSubtitleHook {
     /**
      * 状态栏每次布局都过一遍：重新压制被露出来的时钟/图标、跟上流体云边界、同步颜色。
      * 这三件事在「切页 / 状态栏重建 / 流体云伸缩」时都需要及时反应（问题 1、2、3）。
+     *
+     * <p>【2026-11-04 修】这里原来是「{@code sLayoutListener != null} 就 return」——
+     * 而 {@code sLayoutListener} 全类没有任何一处置 null ⇒ **只挂得上一次**。状态栏重建后
+     * 新 root 上没人挂，旧的随 detached root 的 ViewTreeObserver 一起作废，于是
+     * {@link #sLayoutDirty} 只剩旧回调会清 ⇒ **永久粘住**：
+     * <pre>
+     *   applyBadgeInset 改 marginStart → sLayoutDirty = true → 永不清
+     *   → applyFluidBoundary 的 `sLineView != null &amp;&amp; !sLayoutDirty &amp;&amp; right &gt; 0` 永久为假
+     *   → 行左界实测分支（acceptLineLeft）被永久掐死
+     *   → 退回常量 FLUID_LINE_LEFT_DP(38dp=113px)
+     *   → 另一种徽标状态下可用宽度差约 39px ⇒「字幕右端离流体云时近时远」复发
+     * </pre>
+     * 讽刺的是 applyBadgeInset 附近的注释正好写着这个失效模式，只是没料到监听器会丢。
+     *
+     * <p>⇒ 改成「**每次都先摘后挂**」：{@link ViewTreeObserver} 的注册是幂等的（同一 listener
+     * 重复 add 会重复回调，所以必须先 remove），摘不掉/已死都容忍（try/catch 后照挂新的）。
      */
     private static void installLayoutListener(final View root) {
         try {
-            if (sLayoutListener != null) {
+            releaseLayoutListener();
+            if (root == null) {
                 return;
             }
+            sLayoutRoot = root;
             sLayoutListener = new ViewTreeObserver.OnGlobalLayoutListener() {
                 @Override
                 public void onGlobalLayout() {
@@ -872,7 +905,33 @@ public class StatusBarSubtitleHook {
         }
     }
 
+    /** 见 {@link #installLayoutListener(View)}：摘掉挂在旧 root 上的布局监听器（没有就什么都不做）。 */
+    private static void releaseLayoutListener() {
+        final ViewTreeObserver.OnGlobalLayoutListener old = sLayoutListener;
+        final View oldRoot = sLayoutRoot;
+        sLayoutListener = null;
+        sLayoutRoot = null;
+        if (old == null || oldRoot == null) {
+            return;
+        }
+        try {
+            // 旧 root 若已 detach，这里拿到的是一个已作废的 observer：remove 无害；
+            // 若旧 root 竟然还活着（多窗口/分屏），这一步正好避免两个 root 同时驱动同一份静态状态。
+            oldRoot.getViewTreeObserver().removeOnGlobalLayoutListener(old);
+        } catch (Throwable ignored) {
+        }
+    }
+
     private static void buildViews(Context ctx) {
+        // 【2026-11-04 修】重建前先停掉旧动画（{@link #cancelScroll} 就在下一行）。
+        //   原来这里没有这一步，而 {@link ValueAnimator} **不随视图 detach 自动取消**，
+        //   它的 update 回调读的是**静态** {@link #sLineView}（见 animateScrollTo 的 onAnimationUpdate）
+        //   ⇒ 状态栏在滚动进行中被重建（换主题 / SystemUI 重启，正是 attach() 里 alive==false 那条分支）后，
+        //   旧动画会继续把**新** TextView 的 scrollX 往旧目标推，最长可达 SCROLL_MAX_MS(12s)。
+        //   新一行到达时 showLine 会 setScrollX(0)，但动画每帧又覆盖回去 ⇒
+        //   表现为「新字幕开头被裁 + 抖动」，且日志上完全看不到 cancel，极难归因。
+        //   放在最前面（早于任何字段复位/新建视图）才能保证「旧动画的回调一定晚于换代」。
+        cancelScroll();
         sContainer = new FrameLayout(ctx);
         sContainer.setClipChildren(true);
         sContainer.setVisibility(View.GONE);
@@ -1375,7 +1434,6 @@ public class StatusBarSubtitleHook {
         applySuppression(false);
         stopTick();
         sShownLine = null;
-        sScrollTarget = 0;
         sLiveTargetPx = 0;
         sScrollArmed = false;
     }
@@ -2437,7 +2495,6 @@ public class StatusBarSubtitleHook {
             sScrollArmed = true;           // 已起滚：之后宽度变化走 retarget（不再重启动画）
             if (target <= 0) {
                 sLineView.setScrollX(0);   // 放得下 → 静态显示，不滚动
-                sScrollTarget = 0;
                 sLiveTargetPx = 0;
                 // 【2.2.0 半字根修·兜底】「放得下」这个结论是在宽度刚写进 LayoutParams
                 //   时下的；若父容器实际量给子视图的宽度更小（钳制）、或字体刚从时钟
@@ -2452,9 +2509,7 @@ public class StatusBarSubtitleHook {
             if (dur < minDurBySpeed) {
                 dur = minDurBySpeed;
             }
-            sScrollTarget = target;
             sLiveTargetPx = target;
-            sScrollDurMs = dur;
             // 速度在此**一次性定死**：之后流体云伸缩只改目标，绝不重算速度（1.21.11 问题 1）。
             // 【code 934 bug1 卡住根修】速度下限 = 半倍兜底速度(70px/s)：小目标(target=10px)
             //   会定出 2.5px/s 的微速度并被后续 retarget 沿用 -> 244px 要滚 96 秒
@@ -2483,17 +2538,24 @@ public class StatusBarSubtitleHook {
      *
      * <p>⇒ 下一帧（layout 已落地）用**真实宽度**复核一次：真的放不下就按原速度补上滚动。
      * 只复核一次，不做轮询；已经滚起来的（目标 &gt; 0）直接让路，绝不打断。
+     *
+     * <p>【2026-11-04】加**视图身份闸**：{@code View.post} 的 Runnable 在视图 detach 后仍会跑，
+     * 而它读的是静态 {@code sLineView}。若这中间状态栏被重建（换主题 / SystemUI 重启），
+     * 它就等于拿**上一行**的复核结论去驱动**新视图**（此时 sWidthSettled/sScrollArmed 都被
+     * buildViews 复位了，速度还是 0 ⇒ 会按兜底速度直接起滚）—— 又是一种「先整行再半截」。
+     * ⇒ 捕获发起时的 TextView，跑的时候不认人就直接放弃。
      */
     private static void recheckFitAfterLayout() {
-        if (sLineView == null) {
+        final TextView view = sLineView;
+        if (view == null) {
             return;
         }
-        sLineView.post(new Runnable() {
+        view.post(new Runnable() {
             @Override
             public void run() {
                 try {
-                    if (sLineView == null || sAnimator != null) {
-                        return;
+                    if (sLineView != view || sAnimator != null) {
+                        return;   // 视图已被重建（或已起新动画）→ 这一拍作废
                     }
                     if (sLiveTargetPx > 0 || sLineView.getScrollX() != 0) {
                         return;   // 已经安排了滚动 / 已在滚 —— 别插手
@@ -2503,7 +2565,6 @@ public class StatusBarSubtitleHook {
                         LogGate.debug(TAG, " fit recheck: does NOT fit -> real target="
                                 + real + "px (start scroll, tail was clipped)");
                         sLiveTargetPx = real;
-                        sScrollTarget = real;
                         continueScrollToLiveTarget();
                     }
                 } catch (Throwable ignored) {
@@ -2560,7 +2621,6 @@ public class StatusBarSubtitleHook {
                         LogGate.debug(TAG, " scroll recheck after settle: "
                                 + sLiveTargetPx + "->" + realTarget + "px (tail was clipped)");
                         sLiveTargetPx = realTarget;
-                        sScrollTarget = realTarget;
                         continueScrollToLiveTarget();
                         return;
                     }
@@ -2603,7 +2663,6 @@ public class StatusBarSubtitleHook {
             }
             int prev = sLiveTargetPx;
             sLiveTargetPx = target;
-            sScrollTarget = target;
             int cur = sLineView.getScrollX();
             LogGate.debug(TAG, " scroll retarget: " + prev + "->" + target + "px cur=" + cur
                     + " speed=" + (int) (sScrollSpeedPxPerMs * 1000f) + "px/s");
