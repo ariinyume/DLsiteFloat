@@ -767,6 +767,41 @@ public final class SubtitleCache {
         }
     }
 
+    /**
+     * 【code 1048】磁盘这一本账里，**这个时长**分别属于哪些作品键。
+     *
+     * <p>用途：给预取池的「时长推断」当交叉证据（见 {@code CacheIdentity#decide}）。
+     * 磁盘条目是「当初带着 URL 的作品键写下的」—— 它对「同一个时长在用户库里是不是
+     * 有多部作品」，比只留 16 部、按 LRU 淘汰的预取池更接近事实。
+     *
+     * <p>刻意**不看选择键 / 不看 idx**：这里回答的是「这个时长是不是跨作品重复」，
+     * 而不是「这一轨的缓存是哪条」。作品键为空的条目（预取兜底写下的、没有 URL 的那批）
+     * 不贡献证据 —— 它们本身就是被推断出来的，拿它当证据会自我循环。
+     *
+     * @param durMs 目标轨时长（毫秒）；{@code <= 0} 返回空集
+     */
+    public java.util.Set<String> workKeysForDuration(long durMs) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (!ready || durMs <= 0L) {
+            return out;
+        }
+        try {
+            synchronized (lock) {
+                for (Entry e : entries) {
+                    if (e.workKey == null || e.workKey.isEmpty() || e.durMs <= 0L) {
+                        continue;
+                    }
+                    if (Math.abs(e.durMs - durMs) <= 250L) {
+                        out.add(e.workKey);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // 缓存查询失败绝不影响主流程
+        }
+        return out;
+    }
+
     /** 清空整个缓存（设置页「清除所有字幕缓存」）。 */
     public void clearAll() {
         synchronized (lock) {

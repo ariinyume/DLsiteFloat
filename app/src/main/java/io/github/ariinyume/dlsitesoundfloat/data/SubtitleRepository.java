@@ -297,6 +297,21 @@ public class SubtitleRepository implements LineSource {
      */
     private volatile long observedPlaylistSelection = 0L;
     /**
+     * 【code 1048】当前播放列表的**时长指纹**：本列表里各轨已经观测到的时长（{@code idx → durMs}）。
+     *
+     * <p>唯一用途：当预取池只能靠「时长」推断作品时，用它当<b>反证据</b>
+     * （见 {@link CacheIdentity#decide} 的第二道闸）。判据是「候选包必须至少握有本列表
+     * 另一条轨的时长」—— 真正属于这个列表的包必然握得住，被 LRU 淘汰后顶替上来的
+     * 陌生人则几乎不可能。
+     *
+     * <p>写入口只有 {@link #noteObservedPlaylistIdentity}（宿主每次读到活跃列表都会推）。
+     * {@code idx == 0} 的时长变了就整体重置 —— 那是「换了一部作品但曲目数恰好相同」
+     * 的最早可读信号，比 {@code trackCount} 更灵敏。
+     */
+    private final java.util.Map<Integer, Long> observedDurByIdx = new java.util.HashMap<>();
+    /** 指纹当前归属的 {@code trackCount}；{@code -1} = 还没建立。 */
+    private volatile int observedFingerprintTc = -1;
+    /**
      * 【code 1004】手上这份 cues 在**加载那一刻**宿主选择的是哪条轨（选择键；0 = 未知）。
      *
      * <p>与 {@link #cuesOwnerIdentity} 同生共死（同一次加载盖章、硬裁决一起清），
@@ -1207,6 +1222,69 @@ public class SubtitleRepository implements LineSource {
     }
 
     /**
+     * 【code 1048】累积/重置「当前播放列表的时长指纹」（{@code idx → durMs}）。
+     *
+     * <p>三条纪律：
+     * <ul>
+     *   <li><b>只记带时长的读数</b>：装载期 {@code duration == 0} 的读数会把指纹毒成 0，
+     *       而 0 对任何包都「匹配」；</li>
+     *   <li><b>{@code trackCount} 变了就整体重置</b>：换列表了，旧指纹不能留；</li>
+     *   <li><b>{@code idx == 0} 的时长变了也重置</b>：换了一部作品但曲目数恰好相同 ——
+     *       这时 {@code trackCount} 看不出差别，而第 1 轨的时长一定不同（真机这一例：
+     *       176231ms vs 1909823ms）。</li>
+     * </ul>
+     *
+     * <p>不触发任何状态变更、不落日志（高频路径）。
+     */
+    private void noteFingerprint(long identity) {
+        if (identity <= 0L) {
+            return;
+        }
+        int tc = PlaylistKey.identityTrackCount(identity);
+        int idx = PlaylistKey.identityIndex(identity);
+        long dur = PlaylistKey.identityDurationMs(identity);
+        if (tc <= 0 || idx < 0 || dur <= 0L) {
+            return;
+        }
+        synchronized (observedDurByIdx) {
+            if (tc != observedFingerprintTc) {
+                observedDurByIdx.clear();
+                observedFingerprintTc = tc;
+            }
+            Long prevFirst = observedDurByIdx.get(0);
+            if (idx == 0 && prevFirst != null && Math.abs(prevFirst - dur) > 250L) {
+                observedDurByIdx.clear();     // 同曲目数、不同作品
+            }
+            observedDurByIdx.put(idx, dur);
+        }
+    }
+
+    /** 【code 1048】本列表里**除了 {@code idx} 之外**已观测到的时长（指纹判据的入参）。 */
+    private long[] otherObservedDurs(int idx) {
+        synchronized (observedDurByIdx) {
+            if (observedDurByIdx.size() <= 1) {
+                return new long[0];
+            }
+            long[] out = new long[observedDurByIdx.size() - 1];
+            int n = 0;
+            for (java.util.Map.Entry<Integer, Long> e : observedDurByIdx.entrySet()) {
+                if (e.getKey() == null || e.getKey() == idx || e.getValue() == null) {
+                    continue;
+                }
+                if (n < out.length) {
+                    out[n++] = e.getValue();
+                }
+            }
+            if (n == out.length) {
+                return out;
+            }
+            long[] trimmed = new long[n];
+            System.arraycopy(out, 0, trimmed, 0, n);
+            return trimmed;
+        }
+    }
+
+    /**
      * 【980】由 {@code PlayerSourceHook} 在每次读到<b>活跃播放列表</b>时推送其身份。
      *
      * <p>只用于给新加载的 cues 盖「主人」印章（见 {@link #cuesOwnerIdentity}），
@@ -1217,6 +1295,8 @@ public class SubtitleRepository implements LineSource {
      */
     public void noteObservedPlaylistIdentity(long identity) {
         observedPlaylistIdentity = identity;
+        // 【code 1048】顺手累积「本列表的时长指纹」—— 它是离线推断作品时的唯一反证据。
+        noteFingerprint(identity);
         // 【code 1007】权威读数带时长 ⇒ 给「等待中的缓存条目」补盖身份（副键 → 主键），
         //   它才可能被命中。补盖自带时间轴交叉校验（见 SubtitleCache#stampDuration）。
         if (identity != 0L) {
@@ -1770,12 +1850,43 @@ public class SubtitleRepository implements LineSource {
             return false;
         }
         io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.Hit hit;
+        // 【code 1048】先判「这份到底能不能算这一轨的」—— 判据全部收在 CacheIdentity（纯函数）。
+        //   1042 只给**磁盘**装了时长歧义闸门，预取池这边还留着 1039 的「全池唯一即采信」，
+        //   于是「磁盘拒绝 → 预取放行」成了必然顺序，而预取的「唯一」只是「这个 16 部容量的
+        //   池子里唯一」。真机 2026-11-04 10:07:57 就是这么把别人的台词放上屏的。
+        String decisionKey;
         try {
-            // 【code 1024】带上「当前作品键」—— 预取池的身份只有毫秒时长，多部作品同值时会
-            //   撞车。作品键是「宿主写在这份 JSON 的 URL 里的作品路径」，最强的一维证据；
-            //   给不出来时由预取池自己判「候选唯一才取、有歧义就放弃」（作品维强约束）。
+            java.util.Map<String, long[]> cand =
+                    io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch
+                            .durationCandidates(durMs);
+            java.util.Set<String> diskKeys = cacheUsable()
+                    ? SubtitleCache.get().workKeysForDuration(durMs)
+                    : java.util.Collections.<String>emptySet();
+            CacheIdentity.Decision d = CacheIdentity.decide(durMs, freshWorkKey(), cand,
+                    diskKeys, otherObservedDurs(PlaylistKey.identityIndex(newIdentity)));
+            if (!d.hit()) {
+                if (!cand.isEmpty()) {
+                    // 有候选却被拒 ⇒ 一定值得留痕（否则「为什么这轨没字幕」无从查证）
+                    XposedCompat.log("[DLsiteSoundFloat] [code 1048] prefetch REFUSE (" + d.reason
+                            + ") dur=" + durMs + "ms identity=" + newIdentity
+                            + " -> blank rather than another work's lines");
+                }
+                return false;
+            }
+            decisionKey = d.workKey;
+            if (d.inferred) {
+                XposedCompat.log("[DLsiteSoundFloat] [code 1048] prefetch INFER (" + d.reason
+                        + ") dur=" + durMs + "ms -> work=" + d.workKey
+                        + " (no work-key evidence; corroborated by disk/fingerprint)");
+            }
+        } catch (Throwable t) {
+            return false;
+        }
+        try {
+            // 判定出的作品键**原样传回去**：take(durMs, key) 走的是严格匹配（作品键+时长），
+            //   不再触发池内推断 —— 判据只有这一处，池子只负责取文件。
             hit = io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.take(
-                    durMs, freshWorkKey());
+                    durMs, decisionKey);
         } catch (Throwable t) {
             return false;
         }

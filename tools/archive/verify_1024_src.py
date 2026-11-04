@@ -270,8 +270,13 @@ def main():
           and re.search(r'public static int tracks\(\)', prefetch) is not None)
     check('summary() 复用两个出口（不各算一遍）',
           'return works() + " works / " + tracks() + " tracks";' in prefetch)
-    check('Repository 兜底把作品键传进去',
-          re.search(r'ZiptreePrefetch\.take\(\s*\n?\s*durMs, freshWorkKey\(\)\)', prefetch + repo) is not None)
+    # 【2026-11-04 修锚】code 1048 起第二参不再固定是 freshWorkKey()，而是 CacheIdentity
+    #   的判定产物 decisionKey ⇒ 旧锚（钉字面 freshWorkKey()）失效。改用**意图口径**：
+    #   传进去的必须是一个标识符（作品键），不能是 null / 字面量 —— 这才是「别把作品维
+    #   丢掉」这个判据的本意（铁律 109：判据只许钉形态与意图，不许钉具体变量名）。
+    check('Repository 兜底把作品键传进去（不是 null / 字面量）',
+          re.search(r'ZiptreePrefetch\.take\(\s*\n?\s*durMs,\s*(?!null\b)[A-Za-z_]\w*\s*[),]',
+                    prefetch + repo) is not None)
 
     # ---------- D 离线文案删除 ----------
     print('D 离线文案回退到「无字幕」')

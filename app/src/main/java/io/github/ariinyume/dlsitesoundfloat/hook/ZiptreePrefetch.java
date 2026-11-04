@@ -601,6 +601,83 @@ public final class ZiptreePrefetch {
         }
     }
 
+    /**
+     * 【code 1048】「这个时长在池里有哪些候选」—— 供 {@code CacheIdentity#decide} 做推断判据。
+     *
+     * <p>返回{@code 作品键 → 该作品键已知的全部轨时长}（含有字幕的轨与**明确无字幕**的轨）：
+     * 指纹判据要问的是「这个包到底像不像当前这个播放列表」，而无字幕轨同样是列表的形状证据
+     * —— 例如某部作品的第 1 轨没字幕，它的时长在 {@link Pack#noSubtitleTracks} 里，
+     * 只算 {@link Pack#tracks} 会把它误判成「指纹不吻合」。
+     *
+     * <p>键取 {@link Track#workKey} 而不是 {@link Pack#workno}：同一份包里的 bonus 轨
+     * 带子目录，作品键与主轨**不同**（见 {@code PlaylistKey#workKeyOf}），按包分组会把两条
+     * 不同作品键的轨混成一个候选。
+     *
+     * <p>只做内存查询，不做文件 IO；池子没加载/关闭时返回空表。
+     */
+    public static Map<String, long[]> durationCandidates(long durMs) {
+        Map<String, long[]> out = new LinkedHashMap<>();
+        if (sDisabled || durMs <= 0L) {
+            return out;
+        }
+        try {
+            ensureIndexLoaded();
+            List<Pack> snapshot;
+            synchronized (LOCK) {
+                snapshot = new ArrayList<>(PACKS.values());
+            }
+            // 先看哪些作品键「有这个时长」
+            LinkedHashSet<String> hitKeys = new LinkedHashSet<>();
+            for (Pack p : snapshot) {
+                for (Track t : p.tracks) {
+                    if (Math.abs(t.durMs - durMs) <= DUR_TOLERANCE_MS) {
+                        hitKeys.add(t.workKey);
+                    }
+                }
+            }
+            if (hitKeys.isEmpty()) {
+                return out;
+            }
+            // 再把这些作品键的**全部**轨时长摊出来（指纹用）
+            Map<String, List<Long>> acc = new LinkedHashMap<>();
+            for (Pack p : snapshot) {
+                for (Track t : p.tracks) {
+                    if (!hitKeys.contains(t.workKey)) {
+                        continue;
+                    }
+                    List<Long> l = acc.get(t.workKey);
+                    if (l == null) {
+                        l = new ArrayList<>();
+                        acc.put(t.workKey, l);
+                    }
+                    l.add(t.durMs);
+                }
+                for (NoSubtitleTrack n : p.noSubtitleTracks) {
+                    if (!hitKeys.contains(n.workKey)) {
+                        continue;
+                    }
+                    List<Long> l = acc.get(n.workKey);
+                    if (l == null) {
+                        l = new ArrayList<>();
+                        acc.put(n.workKey, l);
+                    }
+                    l.add(n.durMs);
+                }
+            }
+            for (Map.Entry<String, List<Long>> e : acc.entrySet()) {
+                List<Long> l = e.getValue();
+                long[] arr = new long[l.size()];
+                for (int i = 0; i < arr.length; i++) {
+                    arr[i] = l.get(i);
+                }
+                out.put(e.getKey(), arr);
+            }
+            return out;
+        } catch (Throwable e) {
+            return out;
+        }
+    }
+
     /** 【code 1024 / P1-8】已预取几部作品（设置页读数用）。 */
     public static int works() {
         try {
