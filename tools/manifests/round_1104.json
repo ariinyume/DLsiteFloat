@@ -1,6 +1,6 @@
 {
   "round": "1104-scrollfix",
-  "desc": "11-04 轮清单（未发版修 bug）：StatusBarSubtitleHook 三处真问题 —— ① 清两个只写不读的死字段（sScrollTarget / sScrollDurMs）；② buildViews 起手 cancelScroll，杜绝孤儿动画驱动新视图；③ 布局监听器改「先摘后挂」+ 记挂载 root，杜绝 sLayoutDirty 永久粘住。⚠️ 本清单刻意只做源码层：本轮未发版，dex / aapt2 断言等发版轮再补 —— 否则判据会绑在「本地构建产物」上，别人没有那个包就整席红。",
+  "desc": "11-04 轮清单（未发版）：① 修 SBH 三处时序 bug（死字段 ×2 清除 / buildViews 起手 cancelScroll / 布局监听器「先摘后挂」）；② 拆「量 / 判」——ScrollGoal 劈出 measure/plan + 新增 ScrollPace / ScrollRetarget 两个纯函数内核（调用点改薄、判定可单测）。⚠️ 本清单刻意只做源码层：本轮未发版，dex / aapt2 断言等发版轮再补 —— 否则判据会绑在「本地构建产物」上，别人没有那个包就整席红。",
   "checks": [
     {"type": "version_lower_bound", "code": 1047, "name_min": "2.4.3",
      "desc": "版本下界：code >= 1047、versionName >= 2.4.3（本轮不动版本号）"},
@@ -44,6 +44,39 @@
      "pat": "installLayoutListener\\(root\\);\\n\\s+if \\(sSuppressed\\)",
      "desc": "监听器丢失：attach() 的 alive 分支也要（重）挂 —— 窗口重 attach 会换掉 ViewTreeObserver"},
 
-    {"type": "pathdata", "desc": "矢量图 pathData 语法层"}
+    {"type": "pathdata", "desc": "矢量图 pathData 语法层"},
+
+    {"type": "src_contains",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/ScrollPace.java",
+     "pat": "final class ScrollPace",
+     "desc": "② 配速内核在位：ScrollPace（起滚定速 / 续滚算时间，零状态纯 int）"},
+    {"type": "src_contains",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/ScrollRetarget.java",
+     "pat": "final class ScrollRetarget",
+     "desc": "② 重定目标内核在位：ScrollRetarget（927/933/934/1.21.11 的判定收口）"},
+    {"type": "src_regex_absent",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "\\bSCROLL_(MIN_MS|MAX_MS|FALLBACK_MS|MAX_SPEED_PX_PER_S|FALLBACK_SPEED_PX_PER_S)\\b",
+     "desc": "② 滚动时长/速度常量已搬进 ScrollPace（hook 里绝迹，杜绝「第二处消费者」的错觉）"},
+    {"type": "src_regex",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "ScrollPace\\.Pace pace = ScrollPace\\.forLine\\(target, sDurationMs\\);",
+     "desc": "② startScroll 的定速走内核（一条语句，算术不再内联）"},
+    {"type": "src_regex",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/StatusBarSubtitleHook.java",
+     "pat": "ScrollRetarget\\.Decision d = ScrollRetarget\\.decide\\(",
+     "desc": "② retargetScrollForNewWidth 的判定走内核（hook 只执行副作用）"},
+    {"type": "src_regex",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/ScrollGoal.java",
+     "pat": "static Goal compute\\(Paint paint, CharSequence cs, int viewW, int layoutWidth,\\s*\\n\\s*int tailMargin, int coverMargin, int tolerance,\\s*\\n\\s*int maxTailClip, int maxNudge\\) \\{\\s*\\n\\s*return plan\\(measure\\(paint, cs, layoutWidth, tolerance\\),",
+     "desc": "② 拆「量/判」落地：compute 退化成一行薄封装（measure → plan），调用点零改动"},
+    {"type": "src_regex_absent",
+     "file": "app/src/main/java/io/github/ariinyume/dlsitesoundfloat/hook/ScrollGoal.java",
+     "pat": "snap\\(raw, text, paint",
+     "desc": "② 旧 snap 签名（吃 Paint）绝迹 —— 否则 plan 又变回不可测"},
+    {"type": "src_contains",
+     "file": "app/src/test/java/io/github/ariinyume/dlsitesoundfloat/ScrollKernelTest.java",
+     "pat": "public class ScrollKernelTest",
+     "desc": "② 黄金向量测试在位（26 条：配速/续滚/重定目标/目标计算）"}
   ]
 }

@@ -72,21 +72,51 @@ final class ScrollGoal {
     }
 
     /**
-     * 算「这一行需要滚多远」。
+     * 【2026-11-04 拆「量 / 判」】**测量结果** —— 唯一需要 Android 的那一段的产物。
      *
-     * @param paint         字幕行的 Paint（字体/字号已经同步过，度量结果就是屏上所见）
-     * @param text          当前行的文本
-     * @param viewW         可视宽（已扣掉左右 padding）
-     * @param layoutWidth   排版宽；&lt;=0 表示「还没 layout 过 / 拿不到」，按 adv 处理
-     * @param tailMargin    末尾保留的富余像素（{@code TAIL_MARGIN_PX}）
-     * @param coverMargin   「期望被覆盖到」的额外富余（{@code COVER_MARGIN_PX}）
-     * @param tolerance     合理性闸门容差（{@code MEASURE_TOLERANCE_PX}）
-     * @param maxTailClip   向下吸附时允许裁掉末字的最大像素（{@code MAX_TAIL_CLIP_PX}）
-     * @param maxNudge      末尾微调的最大挪动量（{@code MAX_NUDGE_PX}）
+     * <p>为什么要有它：可测性的瓶颈不是「状态散在字段里」，而是「计算坐在 {@link Paint} 上」
+     * （纯 JVM 测试里造不出 Paint，所以这个内核抽出来一年了仍然零测试）。
+     * 把「量」（{@link #measure}，碰 Paint）与「判」（{@link #plan}，纯 int）切开之后，
+     * {@code plan} 就能用「造假边界数组」的方式单测 —— 969/970/971/974 那一串
+     * 「半字 / 留白 / 末字被裁」的判定终于有了回归网。
+     *
+     * <p>字段全部是 {@code measure} 那一刻的**快照**：{@code plan} 不再回头问 Paint，
+     * 也就不会出现「同一次计算里量了两遍、中间 Paint 被改过」这种不一致。
      */
-    static Goal compute(Paint paint, CharSequence cs, int viewW, int layoutWidth,
-                        int tailMargin, int coverMargin, int tolerance,
-                        int maxTailClip, int maxNudge) {
+    static final class Metrics {
+        /** advance 宽（{@code ceil(measureText)}）。 */
+        final int adv;
+        /** 字形墨迹右边界（≥ adv 时才算数，已过合理性闸门）。 */
+        final int ink;
+        /** 采信后的排版宽；{@code layoutWidth<=0} 或判为脏值时就等于 adv。 */
+        final int layout;
+        /** layout 宽是否被判为脏值（1024×1024 那类）。 */
+        final boolean layoutRejected;
+        /** 被判脏值时的**原始** layout 宽（供日志）。 */
+        final int rawLayoutW;
+        /** 字符起点数组：长度 = 字符数 + 1，末项 = 文本总宽；{@code null} = 不吸附。 */
+        final int[] bounds;
+
+        Metrics(int adv, int ink, int layout, boolean layoutRejected, int rawLayoutW,
+                int[] bounds) {
+            this.adv = adv;
+            this.ink = ink;
+            this.layout = layout;
+            this.layoutRejected = layoutRejected;
+            this.rawLayoutW = rawLayoutW;
+            this.bounds = bounds;
+        }
+    }
+
+    /**
+     * 【量】**唯一碰 {@link Paint} 的一步**：三口径宽度 + 字符边界。
+     *
+     * @param paint       字幕行的 Paint（字体/字号已经同步过，度量结果就是屏上所见）
+     * @param text        当前行的文本
+     * @param layoutWidth 排版宽；&lt;=0 表示「还没 layout 过 / 拿不到」，按 adv 处理
+     * @param tolerance   合理性闸门容差（{@code MEASURE_TOLERANCE_PX}）
+     */
+    static Metrics measure(Paint paint, CharSequence cs, int layoutWidth, int tolerance) {
         String text = cs == null ? "" : cs.toString();
         int adv = (int) Math.ceil(paint.measureText(text));
 
@@ -112,28 +142,65 @@ final class ScrollGoal {
                 rejected = true;
             }
         }
-        String measure = "adv=" + adv + " ink=" + ink + " layout=" + lay
-                + (rejected ? "[rejected]" : "")
+        return new Metrics(adv, ink, lay, rejected, layoutWidth,
+                charBoundaries(paint, text));
+    }
+
+    /**
+     * 【判】用 {@link Metrics} 算「这一行需要滚多远」——**纯 int，可单测**。
+     *
+     * @param m             {@link #measure} 的快照
+     * @param viewW         可视宽（已扣掉左右 padding）
+     * @param tailMargin    末尾保留的富余像素（{@code TAIL_MARGIN_PX}）
+     * @param coverMargin   「期望被覆盖到」的额外富余（{@code COVER_MARGIN_PX}）
+     * @param tolerance     合理性闸门容差（{@code MEASURE_TOLERANCE_PX}）
+     * @param maxTailClip   向下吸附时允许裁掉末字的最大像素（{@code MAX_TAIL_CLIP_PX}）
+     * @param maxNudge      末尾微调的最大挪动量（{@code MAX_NUDGE_PX}）
+     */
+    static Goal plan(Metrics m, int viewW, int tailMargin, int coverMargin, int tolerance,
+                     int maxTailClip, int maxNudge) {
+        String measure = "adv=" + m.adv + " ink=" + m.ink + " layout=" + m.layout
+                + (m.layoutRejected ? "[rejected]" : "")
                 + " calcW=" + viewW;
 
-        int base = Math.max(Math.max(adv, ink), lay);
+        int base = Math.max(Math.max(m.adv, m.ink), m.layout);
         // 终极保底：任何「比 advance 大出一个字宽以上」的度量都不可信
-        if (base > adv + tolerance) {
-            base = adv + tolerance;
+        if (base > m.adv + tolerance) {
+            base = m.adv + tolerance;
         }
         if (base <= viewW) {
             // 放得下 -> 不滚（保持旧判据）；此时**不做**吸附与微调（与原实现一致）
-            return new Goal(0, measure, rejected, layoutWidth, adv, null, null);
+            return new Goal(0, measure, m.layoutRejected, m.rawLayoutW, m.adv, null, null);
         }
         int raw = base + tailMargin - viewW;
         // 出口保底：滚动量绝不该超过文本总宽（超过就是滚到文本之外 = 满屏空白）
-        if (raw > adv) {
-            raw = adv;
+        if (raw > m.adv) {
+            raw = m.adv;
         }
-        Snap snap = snap(raw, text, paint, viewW, base + coverMargin,
+        Snap snap = snap(raw, m.bounds, viewW, base + coverMargin,
                 coverMargin, maxTailClip, maxNudge);
-        return new Goal(snap.value, measure, rejected, layoutWidth, adv,
+        return new Goal(snap.value, measure, m.layoutRejected, m.rawLayoutW, m.adv,
                 snap.sideLog, snap.nudgeLog);
+    }
+
+    /**
+     * 算「这一行需要滚多远」（原入口，保留为**一行薄封装**，调用方零改动）。
+     *
+     * @param paint        字幕行的 Paint（字体/字号已经同步过，度量结果就是屏上所见）
+     * @param text         当前行的文本
+     * @param viewW        可视宽（已扣掉左右 padding）
+     * @param layoutWidth  排版宽；&lt;=0 表示「还没 layout 过 / 拿不到」，按 adv 处理
+     * @param tailMargin   末尾保留的富余像素（{@code TAIL_MARGIN_PX}）
+     * @param coverMargin  「期望被覆盖到」的额外富余（{@code COVER_MARGIN_PX}）
+     * @param tolerance    合理性闸门容差（{@code MEASURE_TOLERANCE_PX}）
+     * @param maxTailClip  向下吸附时允许裁掉末字的最大像素（{@code MAX_TAIL_CLIP_PX}）
+     * @param maxNudge     末尾微调的最大挪动量（{@code MAX_NUDGE_PX}）
+     */
+    static Goal compute(Paint paint, CharSequence cs, int viewW, int layoutWidth,
+                        int tailMargin, int coverMargin, int tolerance,
+                        int maxTailClip, int maxNudge) {
+        return plan(measure(paint, cs, layoutWidth, tolerance),
+                viewW, tailMargin, coverMargin, tolerance, maxTailClip, maxNudge);
     }
 
     /** 吸附结果：终点 + 两条日志（哪一侧 / 有没有微调）。 */
@@ -205,12 +272,12 @@ final class ScrollGoal {
      * 滑到文本之外（全空白）。正常机型的可视宽（真机 508px）远大于一个字宽，
      * 该保护不会生效；它只防「可视宽 &lt; 一个字宽」这种退化情形。
      */
-    private static Snap snap(int target, String text, Paint paint, int viewW, int coverNeed,
+    private static Snap snap(int target, int[] bounds, int viewW, int coverNeed,
                              int coverMargin, int maxTailClip, int maxNudge) {
         if (target <= 0) {
             return new Snap(0, null, null);
         }
-        int[] b = charBoundaries(paint, text);
+        int[] b = bounds;
         if (b == null || b.length < 2) {
             return new Snap(target, null, null);   // 拿不到边界就不吸（保守：维持原行为）
         }

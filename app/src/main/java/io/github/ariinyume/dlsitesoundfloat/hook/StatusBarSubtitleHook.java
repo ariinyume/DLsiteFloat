@@ -208,15 +208,14 @@ public class StatusBarSubtitleHook {
     /** 流体云避让后字幕至少保留这么宽；比这还窄就认为探测到了假目标，放弃避让。 */
     private static final float MIN_LINE_W_DP = 56f;
 
-    /** 单程滚动时长边界。优先取「字幕行自身播放时长」，夹在该区间内。 */
-    private static final long SCROLL_MIN_MS = 1500L;
-    private static final long SCROLL_MAX_MS = 12000L;
-    private static final long SCROLL_FALLBACK_MS = 4000L;
-    /** 速度上限（px/s）：行很长而时长很短时，别糊成一团。 */
-    private static final float SCROLL_MAX_SPEED_PX_PER_S = 420f;
-
-    /** 【1.21.11】某行「从没滚过」却因为变窄而要滚时的兜底速度（沿用常态速度量级）。 */
-    private static final float SCROLL_FALLBACK_SPEED_PX_PER_S = 140f;
+    /**
+     * 单程滚动时长/速度口径（1500 / 12000 / 4000ms 与 420 / 140 px/s）。
+     *
+     * <p>【2026-11-04 拆「量 / 判」】这几项连同「速度下限 70px/s」一起搬进了
+     * {@link ScrollPace}。它们只服务两件事 ——「起滚时定速」与「续滚时算剩余时间」；
+     * 留在本类里会让人以为还有第二个消费者（本项目已经吃过一次「镜像字段」的亏：
+     * 两个只写不读的字段活了两个大版本）。改参数请去 {@code ScrollPace}。
+     */
     /** 新字幕行出现后先静置这么久再起滚（问题 4：先静置 200ms 再向后滚）。 */
     private static final long SCROLL_START_DELAY_MS = 200L;
     /**
@@ -927,7 +926,7 @@ public class StatusBarSubtitleHook {
         //   原来这里没有这一步，而 {@link ValueAnimator} **不随视图 detach 自动取消**，
         //   它的 update 回调读的是**静态** {@link #sLineView}（见 animateScrollTo 的 onAnimationUpdate）
         //   ⇒ 状态栏在滚动进行中被重建（换主题 / SystemUI 重启，正是 attach() 里 alive==false 那条分支）后，
-        //   旧动画会继续把**新** TextView 的 scrollX 往旧目标推，最长可达 SCROLL_MAX_MS(12s)。
+        //   旧动画会继续把**新** TextView 的 scrollX 往旧目标推，最长可达 ScrollPace.MAX_MS(12s)。
         //   新一行到达时 showLine 会 setScrollX(0)，但动画每帧又覆盖回去 ⇒
         //   表现为「新字幕开头被裁 + 抖动」，且日志上完全看不到 cancel，极难归因。
         //   放在最前面（早于任何字段复位/新建视图）才能保证「旧动画的回调一定晚于换代」。
@@ -2473,7 +2472,7 @@ public class StatusBarSubtitleHook {
      * 单程左移：scrollX 0 → (文本宽 - 可视宽)，线性插值，播完停在末尾。
      *
      * 时长优先取「该字幕行自身的播放时长」（← App 侧按 cue 的 start/end 算出并随广播带来），
-     * 夹在 [SCROLL_MIN_MS, SCROLL_MAX_MS]，并受 SCROLL_MAX_SPEED_PX_PER_S 约束。
+     * 夹在 {@link ScrollPace} 的 [{@code MIN_MS}, {@code MAX_MS}]，并受 {@code MAX_SPEED_PX_PER_S} 约束。
      * 这正是「缓慢而逐渐地从左播到右」，而不是系统跑马灯那种到头就弹回起点。
      */
     private static void startScroll() {
@@ -2503,20 +2502,14 @@ public class StatusBarSubtitleHook {
                 recheckFitAfterLayout();
                 return;
             }
-            long dur = sDurationMs > 0 ? sDurationMs : SCROLL_FALLBACK_MS;
-            dur = Math.max(SCROLL_MIN_MS, Math.min(SCROLL_MAX_MS, dur));
-            long minDurBySpeed = (long) (target * 1000f / SCROLL_MAX_SPEED_PX_PER_S);
-            if (dur < minDurBySpeed) {
-                dur = minDurBySpeed;
-            }
             sLiveTargetPx = target;
-            // 速度在此**一次性定死**：之后流体云伸缩只改目标，绝不重算速度（1.21.11 问题 1）。
-            // 【code 934 bug1 卡住根修】速度下限 = 半倍兜底速度(70px/s)：小目标(target=10px)
-            //   会定出 2.5px/s 的微速度并被后续 retarget 沿用 -> 244px 要滚 96 秒
-            //   （23:00:06 日志铁证 96770ms）= 「卡住不再继续滚动」。
-            double spd = dur > 0 ? (double) target / (double) dur : 0d;
-            sScrollSpeedPxPerMs = Math.max(spd, SCROLL_FALLBACK_SPEED_PX_PER_S * 0.5 / 1000d);
-            dur = Math.max(60L, (long) (target / sScrollSpeedPxPerMs));
+            // 【2026-11-04 拆「量/判」】时长与速度全交给 {@link ScrollPace}（唯一碰这两件事的地方）：
+            //   速度在此**一次性定死**，之后流体云伸缩只改目标、绝不重算速度（1.21.11 问题 1）；
+            //   934 bug1 的「速度下限 70px/s」也钉在里面 —— 小目标(target=10px) 会定出 2.5px/s
+            //   的微速度并被后续 retarget 沿用 ⇒ 244px 要滚 96 秒（日志铁证 96770ms）=「卡住不再滚」。
+            ScrollPace.Pace pace = ScrollPace.forLine(target, sDurationMs);
+            sScrollSpeedPxPerMs = pace.speedPxPerMs;
+            long dur = pace.durMs;
             animateScrollTo(sLineView.getScrollX(), target, dur);
             // ⚠️ 这里的 liveW 是**实时读**的宽度（可能是「还没 layout 完」的旧值），
             //    真正参与计算的是 sLastMeasure 里的 calcW —— 两者不一致正是「读到旧值」的信号，
@@ -2652,37 +2645,40 @@ public class StatusBarSubtitleHook {
         }
         try {
             int target = computeScrollTarget(newWidthPx);
+            int cur = sLineView.getScrollX();
             // 【2.2.0 半字根修】迟滞必须**单向**：
             //   · 目标变大（可视区变窄 ⇒ 要滚得更远）→ **立刻采信**，绝不压着 ——
             //     压着不放的代价是「末尾那几个像素永远滚不到」＝ 最后一个字被裁掉半截；
             //   · 目标变小（可视区变宽 ⇒ 能少滚一点）→ 才用迟滞挡抖动（多滚几像素只是末尾留白）。
             //   旧实现是双向 |delta|<8 一律忽略，于是「该滚更远」也被吞掉了最多 8px。
-            int delta = target - sLiveTargetPx;
-            if (delta == 0 || (delta < 0 && -delta < TARGET_HYSTERESIS_PX)) {
+            //   【2026-11-04】这几条判定已整体搬进 {@link ScrollRetarget}（纯函数、有黄金向量），
+            //   这里只按动作执行副作用 —— 别再往本方法里加判断分支。
+            ScrollRetarget.Decision d = ScrollRetarget.decide(
+                    cur, sLiveTargetPx, target, sScrollArmed, sAnimator != null,
+                    TARGET_HYSTERESIS_PX);
+            if (d.action == ScrollRetarget.Action.NONE) {
                 return;   // 差异太小 / 变小且不显著：连记录都不改（迟滞治抖，别每帧都动）
             }
             int prev = sLiveTargetPx;
-            sLiveTargetPx = target;
-            int cur = sLineView.getScrollX();
-            LogGate.debug(TAG, " scroll retarget: " + prev + "->" + target + "px cur=" + cur
+            sLiveTargetPx = d.liveTarget;
+            LogGate.debug(TAG, " scroll retarget: " + prev + "->" + d.liveTarget + "px cur=" + cur
                     + " speed=" + (int) (sScrollSpeedPxPerMs * 1000f) + "px/s");
-            if (!sScrollArmed) {
-                return;   // 这一行还没起滚：postScrollWhenLaidOut -> startScroll 会用新宽度重算
-            }
-            if (target <= 0 || cur >= target) {
+            if (d.action == ScrollRetarget.Action.CANCEL) {
                 // 【code 934 bug2 根修】变宽 -> 新目标比当前位置还小：旧逻辑 cancel 冻结，
                 //   右侧留白最多达宽度差（实测 129px，23:00:22 日志 cur=517 target=388
                 //   冻结）直到本条字幕结束 = 「字幕右端离流体云太远」。改为一次性回正
                 //   到新目标（文字尾端重新贴齐右边界；目标 0 = 放得下，回行首正常显示）。
                 cancelScroll();
-                if (target >= 0 && cur - target > TARGET_HYSTERESIS_PX) {
-                    sLineView.setScrollX(Math.max(target, 0));
+                if (d.seatX != ScrollRetarget.NO_SEAT) {
+                    sLineView.setScrollX(d.seatX);
                 }
                 return;
             }
-            if (sAnimator == null) {
+            if (d.action == ScrollRetarget.Action.CONTINUE) {
                 continueScrollToLiveTarget();   // 动画已跑完或被停：按原速度续上（不重新定速）
             }
+            // 剩下的 ADOPT：这一行还没起滚（postScrollWhenLaidOut -> startScroll 会用新宽度重算），
+            // 或动画正在跑（由 animateScrollTo 的每帧比较处理）—— 都只需要改目标。
         } catch (Throwable ignored) {
         }
     }
@@ -2700,22 +2696,13 @@ public class StatusBarSubtitleHook {
         }
         int target = sLiveTargetPx;
         int cur = sLineView.getScrollX();
-        if (target - cur <= 2) {
-            return;
-        }
-        double speed = sScrollSpeedPxPerMs > 0
-                ? sScrollSpeedPxPerMs
-                : (SCROLL_FALLBACK_SPEED_PX_PER_S / 1000d);
-        long remain = (long) ((target - cur) / speed);
-        if (remain < 60L) {
-            remain = 60L;
-        }
-        // 【code 934 bug1】上限钳制：速度异常时剩余滚动也绝不超过 12s（双保险）。
-        if (remain > SCROLL_MAX_MS) {
-            remain = SCROLL_MAX_MS;
+        long remain = ScrollPace.remainMs(cur, target, sScrollSpeedPxPerMs);
+        if (remain <= 0L) {
+            return;   // 已到位（剩余 ≤ 2px）：再起一个动画只会多一次回调
         }
         LogGate.debug(TAG, " scroll continue: " + cur + "->" + target + "px in " + remain
-                + "ms speed=" + (int) (speed * 1000f) + "px/s");
+                + "ms speed=" + (int) (ScrollPace.speedOrFallback(sScrollSpeedPxPerMs) * 1000f)
+                + "px/s");
         animateScrollTo(cur, target, remain);
     }
 

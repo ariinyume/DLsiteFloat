@@ -298,4 +298,85 @@ public Win(long needMs, long sinceMs, boolean goneStill, boolean hasEvidence) {
         return new Dens(r.use, r.lockedDensity, r.lockedPxKey,
                 r.diffSinceMs, r.diffCount, r.event, r.samples);
     }
+
+    // ── ScrollPace / ScrollRetarget / ScrollGoal.plan（2026-11-04 拆「量 / 判」）──
+
+    /** 把 package-private 的 {@code ScrollPace.Pace} 摊平供断言。 */
+    public static final class Pace {
+        public final long durMs;
+        public final double speedPxPerMs;
+
+        public Pace(long durMs, double speedPxPerMs) {
+            this.durMs = durMs;
+            this.speedPxPerMs = speedPxPerMs;
+        }
+    }
+
+    public static Pace pace(int target, long lineDurMs) {
+        ScrollPace.Pace p = ScrollPace.forLine(target, lineDurMs);
+        return new Pace(p.durMs, p.speedPxPerMs);
+    }
+
+    public static long remainMs(int cur, int target, double speedPxPerMs) {
+        return ScrollPace.remainMs(cur, target, speedPxPerMs);
+    }
+
+    public static double speedOrFallback(double speedPxPerMs) {
+        return ScrollPace.speedOrFallback(speedPxPerMs);
+    }
+
+    /** 把 package-private 的 {@code ScrollRetarget.Decision} 摊平供断言；action 用枚举名，避免测试钉序号。 */
+    public static final class Retarget {
+        public final String action;
+        public final int liveTarget;
+        public final int seatX;
+
+        public Retarget(String action, int liveTarget, int seatX) {
+            this.action = action;
+            this.liveTarget = liveTarget;
+            this.seatX = seatX;
+        }
+    }
+
+    public static Retarget retarget(int cur, int liveTarget, int newTarget, boolean armed,
+                                    boolean hasAnimator, int hysteresisPx) {
+        ScrollRetarget.Decision d = ScrollRetarget.decide(cur, liveTarget, newTarget, armed,
+                hasAnimator, hysteresisPx);
+        return new Retarget(d.action.name(), d.liveTarget, d.seatX);
+    }
+
+    public static int noSeat() {
+        return ScrollRetarget.NO_SEAT;
+    }
+
+    /** 把 package-private 的 {@code ScrollGoal.Goal} 摊平供断言（只搬运、不换算）。 */
+    public static final class Plan {
+        public final int target;
+        public final boolean layoutRejected;
+        public final String measure;
+        public final String snapLog;
+        public final String nudgeLog;
+
+        public Plan(int target, boolean layoutRejected, String measure,
+                    String snapLog, String nudgeLog) {
+            this.target = target;
+            this.layoutRejected = layoutRejected;
+            this.measure = measure;
+            this.snapLog = snapLog;
+            this.nudgeLog = nudgeLog;
+        }
+    }
+
+    /**
+     * 用「造出来的 Metrics」跑 {@code ScrollGoal.plan} —— 这一步就是拆「量 / 判」的全部意义：
+     * 测试不需要 {@code Paint}，只要给一串假的字符边界。
+     */
+    public static Plan plan(int adv, int ink, int layout, boolean rejected, int rawLayoutW,
+                            int[] bounds, int viewW, int tailMargin, int coverMargin,
+                            int tolerance, int maxTailClip, int maxNudge) {
+        ScrollGoal.Metrics m = new ScrollGoal.Metrics(adv, ink, layout, rejected, rawLayoutW, bounds);
+        ScrollGoal.Goal g = ScrollGoal.plan(m, viewW, tailMargin, coverMargin, tolerance,
+                maxTailClip, maxNudge);
+        return new Plan(g.target, g.layoutRejected, g.measure, g.snapLog, g.nudgeLog);
+    }
 }
