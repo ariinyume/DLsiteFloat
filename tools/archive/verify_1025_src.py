@@ -346,9 +346,12 @@ def main():
     # 🔴 铁律 94：label 的日期段跟「构建当天」（MMDD.当日第几版），跨日就会变
     #   ⇒ 只守**形态**，绝不钉具体字面值（1025 轮跨了 10-18 / 10-19 两天，实踩）
     #   【code 1034】当日轮次进到两位数（1019.10）⇒ 尾段放宽为 \d+
+    # 【2026-11-04 修锚】label 的日期段是 **MMDD**：旧锚写死 `10\d\d\.\d+`（十月前缀），
+    #   11-04 一发版（label 1104.1）就假 FAIL —— 正是铁律 94 禁止的「把当天日期钉进判据」。
+    #   改成与 H3 同口径的**形态**判据：四位数字 + 点 + 序号，月份是哪个月不管。
     check('H4 履历块按「版本号不变 / code 升」口径收尾',
           has(gradle, 'versionName 保持 2.3.5') and has(gradle, '1025、label 推到 ')
-          and re.search(r"appVersionCodeLabel = '10\d\d\.\d+'", gradle) is not None)
+          and re.search(r"appVersionCodeLabel = '\d{4}\.\d+'", gradle) is not None)
     check('H5 上一轮 code 1024 在履历里可追溯', has(gradle, '1024'))
 
     print('\n── I 设置页 P1/P2（设计审查 §06）────────────────────────────')

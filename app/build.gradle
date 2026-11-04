@@ -41,7 +41,7 @@ plugins {
 //                    只是仓库内可读别名 ⇒ 改它**不必重新出包**。
 //                 ⚠️ 2026-10-14 回溯：1013~1017 都构建于 10-14，label 已由 `1008.30`
 //                    回填为 `1014.1`~`1014.5`；10-13 及更早的条目**保留旧值**（历史记录）。
-def appVersionTag = '2.4.3'
+def appVersionTag = '2.4.4'
 // ⚠️ 写成 int 字面量 925（不要写 0925 —— Groovy 可能按八进制/前导零解析）：
 //    versionCode 的**数值**是 925，管理器里显示 925，可读语义看 appVersionCodeLabel。
 // ── 版本履历（code 994 / label 1008.15）──
@@ -701,9 +701,23 @@ def appVersionTag = '2.4.3'
 //   ③ 亮度上限从 0.42 改卡「合成后 ≤ 0.30」（等价原色上限 0.75），否则半透明底色会被压得过暗。
 //   ④ 底色变透后白字在亮色封面上对比不足 ⇒ 胶囊文字加一层极淡暗影兜底。
 //   ⚠️ 口径同 1045/1046：versionName / tag 保持 2.4.3，versionCode 1046 → 1047、label 1029.1。
-def appVersionCode = 1047
-def appVersionCodeLabel = '1029.1'
-def appVersionName = '2.4.3'
+//
+// 【code 1048 / 2.4.4】两条真机 bug（顺带把「判定」从 hook 里抽成零状态纯函数内核）：
+//   ① 缓存到本地的音轨偶尔挂到**别的作品**的缓存字幕。真机日志：10:05 磁盘缓存 SKIPPED、
+//      10:07:57 预取 HIT work=RJ01552416 —— 两条离线兜底路径的**强弱颠倒**：磁盘缓存握着
+//      作品键却被「时长歧义」闸挡掉，预取池只有毫秒时长却留着 1039 的「全池唯一即采信」。
+//      修法：判定收进 CacheIdentity.decide 三闸（作品键强证据 / 跨作品歧义 / 磁盘 +
+//      播放列表指纹反证据），并保留「唯一候选且无反证据」这条兼容路（否则新下载作品
+//      离线没字幕会被治回来）；拒绝与推断分开留痕（REFUSE / INFER）。
+//   ② 宿主变浮窗后按钮整体低 166px。测量值来自 getLocationOnScreen（**屏幕**坐标），
+//      却被当成 decor 内坐标去算 bottomMargin；全屏时 decorTop=0 两者重合，所以这个
+//      错口径安稳活了十几版。修法：换算前减窗口原点，且窗口形态（decorTop / 屏宽 / 屏高）
+//      一变就**无条件强制重落位** —— 浮窗里宿主可能一个控件都不挪。
+//   ⚠️ 本轮**升语义版本号**（2.4.3 已于 10-29 随 code 1047 发布，同 code 不能再覆盖安装）：
+//      versionName / tag 2.4.4、versionCode 1047 → 1048、label 1029.1 → 1104.1。
+def appVersionCode = 1048
+def appVersionCodeLabel = '1104.1'
+def appVersionName = '2.4.4'
 
 android {
     namespace 'io.github.ariinyume.dlsitesoundfloat'

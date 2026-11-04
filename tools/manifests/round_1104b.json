@@ -2,8 +2,8 @@
   "round": "1104b-identity+window",
   "desc": "11-04 第二轮（未发版）：① 修「缓存到本地的音轨偶尔挂错缓存字幕」——把预取池那条只靠毫秒时长的宽松推断收进 CacheIdentity 纯函数内核，三闸（作品键强证据 / 跨作品歧义 / 磁盘+播放列表指纹反证据）；② 修「宿主变浮窗后按钮错位」——测量是屏幕坐标、LayoutParams 是 decor 内坐标，新增 decorTop 换算 + 窗口形态变化强制重落位。⚠️ 与 round_1104 一样只做源码层：本轮未发版，dex / aapt2 断言留到发版轮。",
   "checks": [
-    {"type": "version_lower_bound", "code": 1047, "name_min": "2.4.3",
-     "desc": "版本下界：code >= 1047、versionName >= 2.4.3（本轮不动版本号）"},
+    {"type": "version_lower_bound", "code": 1048, "name_min": "2.4.4",
+     "desc": "版本下界：code >= 1048、versionName >= 2.4.4（本轮发版，真升语义版本号）"},
     {"type": "version_label_form",
      "desc": "label 形态 MMDD.N（铁律 94：只守形态、不钉当天）"},
     {"type": "banner_self_report",
