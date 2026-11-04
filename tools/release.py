@@ -117,6 +117,18 @@ def check_tag_free(repo, tag):
     return True, "未被占用"
 
 
+def release_exists(repo, tag):
+    """release 是否存在 —— **与 tag 是否存在是两件事**。
+
+    正常发版路径是「先打 tag、再建 release」，所以源仓的 tag 在跑到这一步时
+    **一定已经存在**。用 tag 存活来判断该 create 还是 edit，会对着一个还不存在的
+    release 调 `gh release edit` ⇒ 404（2026-11-04 2.4.4 发版实际踩到）。
+    """
+    p = run([GH, "release", "view", tag, "--repo", repo, "--json", "tagName"],
+            check=False)
+    return p.returncode == 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="DLsiteFloat 双仓发版")
     ap.add_argument("--code", required=True, type=int, help="versionCode，十进制整数")
@@ -141,7 +153,15 @@ def main():
     # ---------- 1. 前置侦察 ----------
     say(INFO, "[1/6] 前置侦察：查版本号是否被占用")
     occupied = []
+    head = run(["git", "rev-parse", "HEAD"], check=False).stdout.strip()
     for repo, tag in ((SRC_REPO, src_tag), (XP_REPO, xp_tag)):
+        if repo == SRC_REPO:
+            # 源仓 tag 本来就该在发 release 之前打好（gh release create 需要 tag 存在）。
+            # 指向当前 HEAD 就是正常路径，不该被当成「重打 tag」而索要 --yes。
+            local = run(["git", "rev-parse", f"{tag}^{{commit}}"], check=False)
+            if local.returncode == 0 and local.stdout.strip() == head:
+                say(OK, f"{repo} :: {tag} 已指向当前 HEAD({head[:8]})，正常发版路径")
+                continue
         free, detail = check_tag_free(repo, tag)
         if free:
             say(OK, f"{repo} :: {tag} {detail}")
@@ -245,7 +265,8 @@ def main():
         (XP_REPO, xp_tag, t_xp),
     ]
     for repo, tag, title in jobs:
-        exists = not check_tag_free(repo, tag)[0]
+        # ⚠️ 判据是 **release** 是否存在，不是 tag 是否存在（见 release_exists 的说明）
+        exists = release_exists(repo, tag)
         verb = "edit" if exists else "create"
         if args.dry_run:
             say(WARN, f"[dry-run] gh release {verb} {tag} --repo {repo} "
