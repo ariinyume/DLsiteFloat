@@ -81,12 +81,15 @@ import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
  * <h3>── 为什么密钥也够用 ──
  * ziptree 请求本身就带 CloudFront 签名：
  * <pre>
- *   https://play.dl.dlsite.com/content/work/doujin/RJ01728000/RJ01727768/ziptree.json
+ *   https://&lt;cdn-host&gt;/…/RJ01727768/ziptree.json
  *       ?Key-Pair-Id=…&amp;Policy=…&amp;Signature=…
  * </pre>
+ * （【code 1049】宿主 2.23.x 的 {@code app.config} 已迁到 {@code playback.dlsound.jp} /
+ * {@code content.dlsound.jp} 等，旧字面量 {@code play.dl.dlsite.com} 不再出现；
+ * 主机名以拦到的 ziptree URL 为准，不写死。）
  * 而 {@code Policy} 解出来是<b>作品目录级通配</b>：
  * <pre>
- *   {"Statement":[{"Resource":"https://play.dl.dlsite.com/content/work/doujin/RJ01728000/RJ01727768/*", …}]}
+ *   {"Statement":[{"Resource":"https://&lt;cdn-host&gt;/…/RJ01727768/*", …}]}
  * </pre>
  * ⇒ 同一份 query 原样拼到 {@code optimized/<name>} 上就是合法请求，无需再申请令牌。
  * 真机日志里那 20 条 {@code optimized/*.json} 与 ziptree 用的是同一个 {@code Key-Pair-Id}。
@@ -207,7 +210,7 @@ public final class ZiptreePrefetch {
     /** 一部作品的预取包。 */
     static final class Pack {
         final String workno;
-        /** 目录前缀，**以 / 结尾**，如 {@code https://play.dl.dlsite.com/.../RJ01727768/}。 */
+        /** 目录前缀，**以 / 结尾**，如 {@code https://<cdn-host>/.../RJ01727768/}。 */
         final String baseUrl;
         /** 原样的 {@code ?Key-Pair-Id=…&Policy=…&Signature=…}（空串 = 没有签名，放弃）。 */
         final String query;
@@ -864,7 +867,8 @@ public final class ZiptreePrefetch {
                     conn = (HttpURLConnection) u.openConnection();
                     conn.setConnectTimeout(10000);
                     conn.setReadTimeout(15000);
-                    conn.setRequestProperty("Referer", "https://play.dl.dlsite.com/");
+                    // 【code 1049】Referer 跟 ziptree 同源，勿写死旧 CDN 主机名。
+                    conn.setRequestProperty("Referer", refererOf(pack.baseUrl));
                     int code = conn.getResponseCode();
                     if (code != HttpURLConnection.HTTP_OK) {
                         XposedCompat.log(TAG + " dl fail http=" + code + " " + t.jsonName
@@ -888,6 +892,35 @@ public final class ZiptreePrefetch {
                 }
             }
         });
+    }
+
+    /**
+     * 【code 1049】从 ziptree / CDN 目录前缀推出 Referer 源站。
+     *
+     * <p>宿主 2.23.x 起 CDN 主机名已迁到 {@code *.dlsound.jp} 一族，旧写死的
+     * {@code https://play.dl.dlsite.com/} 在包内串池里已消失。预取请求必须跟
+     * <b>拦到的那份 ziptree URL 同源</b>，CloudFront 签名才不会因 Referer 错主机被拒。
+     *
+     * <p>解析失败时回落 {@code https://play.dlsite.com/}（2.23.1 {@code app.config}
+     * 的 {@code PLAY_API_URL}），比已经不存在的旧 CDN 字面量更稳。
+     *
+     * <p>纯函数，可单测。
+     */
+    static String refererOf(String baseUrl) {
+        if (baseUrl == null || baseUrl.length() == 0) {
+            return "https://play.dlsite.com/";
+        }
+        try {
+            URL u = new URL(baseUrl);
+            String scheme = u.getProtocol();
+            String host = u.getHost();
+            if (scheme == null || scheme.length() == 0 || host == null || host.length() == 0) {
+                return "https://play.dlsite.com/";
+            }
+            return scheme + "://" + host + "/";
+        } catch (Throwable e) {
+            return "https://play.dlsite.com/";
+        }
     }
 
     private static byte[] readAll(InputStream in, int limit) {

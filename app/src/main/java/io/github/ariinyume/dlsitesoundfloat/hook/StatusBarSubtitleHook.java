@@ -119,81 +119,18 @@ public class StatusBarSubtitleHook {
             "com.oplus.systemui.statusbar.OplusStatusBarView"
     };
 
-    // 注入锚点资源名：ColorOS 优先，回退 AOSP（start_side_container / start_side_content）。
-    private static final String[] ANCHOR_IDS = {
-            "status_bar_start_side_content_for_fake",
-            "status_bar_start_side_container",
-            "status_bar_start_side_content"
-    };
+    // 【code 1056 / B2】OEM id 目录 → {@link StatusBarOemHunt}
+    private static final String[] ANCHOR_IDS = StatusBarOemHunt.ANCHOR_IDS;
+    private static final String[] CLOCK_IDS = StatusBarOemHunt.CLOCK_IDS;
+    private static final String[] NOTIF_AREA_IDS = StatusBarOemHunt.NOTIF_AREA_IDS;
+    private static final String[] SEEDING_IDS = StatusBarOemHunt.SEEDING_IDS;
+    private static final String[] SIDE_CONTAINER_IDS = StatusBarOemHunt.SIDE_CONTAINER_IDS;
+    private static final String[] CUTOUT_IDS = StatusBarOemHunt.CUTOUT_IDS;
+    private static final String[] FLUID_IDS = StatusBarOemHunt.FLUID_IDS;
+    private static final String[] FLUID_HINTS = StatusBarOemHunt.FLUID_HINTS;
 
-    // 时钟：字体/颜色同步源，也是字幕显示期间要遮挡的目标。
-    private static final String[] CLOCK_IDS = {
-            "clock", "status_bar_clock", "oplus_clock", "status_bar_clock_view"
-    };
-
-    // 左侧通知图标区：字幕显示期间要遮挡的目标，同时是「通知数」的来源。
-    private static final String[] NOTIF_AREA_IDS = {
-            "notification_icon_area",
-            "notification_icons",
-            "status_bar_notification_icons",
-            "status_bar_notification_icon_area",
-            "notification_icon_area_inner"
-    };
-
-    /**
-     * 流体云 / 实时活动胶囊**容器**的资源名 —— 实机 dump 已经实锤：
-     * {@code seeding_card_container}（类名 {@code CapsulePluginContainer}）就是 ColorOS 16 上
-     * 那颗胶囊的容器，base.apk 的 {@code updateLyricWidth} 用的也正是它。
-     * 命中后取**容器内最左可见子视图**的左边界（-2dp）当字幕右界。
-     */
-    private static final String[] SEEDING_IDS = {
-            "seeding_card_container",
-            "ongoing_activity_chip_primary",
-            "ongoing_activity_chip_secondary"
-    };
-
-    /** 起始区容器（锚点所在侧）的右边界 —— 字幕右界的**上限**。 */
-    private static final String[] SIDE_CONTAINER_IDS = {
-            "status_bar_start_side_container"
-    };
-
-    /** 挖孔占位视图：可见时其左边界也参与收缩右界。 */
-    private static final String[] CUTOUT_IDS = {
-            "cutout_space_view"
-    };
-
-    /** 胶囊与字幕之间留的空隙（base.apk 用 2dp）。 */
     /** 流体云前留白（dp）。【code 936】对齐 coloros-mod 的 LYRIC_GAP_BEFORE_FLUID_DP=4（原 2dp 只有它一半，贴得太紧）。 */
     private static final float FLUID_GAP_DP = 4f;
-
-    /**
-     * 流体云（ColorOS 状态栏中间的胶囊：录屏指示器 / 实时通知 / 音乐…）候选**资源名**。
-     * 命中即用它左边界卡住字幕右边界；全部落空时退回 {@link #findFluidByGeometry()}。
-     * 注意：ColorOS 16 上真正的容器名是 {@link #SEEDING_IDS}，这里是**非 ColorOS 兜底**。
-     */
-    private static final String[] FLUID_IDS = {
-            "status_bar_fluid_cloud",
-            "fluid_cloud",
-            "fluid_cloud_view",
-            "oplus_fluid_cloud",
-            "status_bar_center_side_content",
-            "status_bar_center_side_content_for_fake",
-            "status_bar_center_side",
-            "status_bar_center_content",
-            "status_bar_middle_content",
-            "status_bar_middle_content_for_fake",
-            "status_bar_live_notification",
-            "live_notification_view",
-            "status_bar_capsule",
-            "capsule_view",
-            "status_bar_ongoing_activity"
-    };
-
-    /** 流体云候选**类名特征**（资源名全落空时用）。 */
-    private static final String[] FLUID_HINTS = {
-            "CapsulePluginContainer", "FluidCloud", "Capsule", "OngoingActivity",
-            "LiveNotification", "LiveText", "PromptContainer", "CenterSide", "Fluid"
-    };
 
     // 徽标 / 布局尺寸（dp / sp）
     // 【1.21.13 问题 1】整体缩小 15%：13dp → 11.05dp、9sp → 7.65sp（都 ×0.85）。
@@ -994,26 +931,27 @@ public class StatusBarSubtitleHook {
     }
 
     private static View findAnchor(Context ctx, View root) {
-        for (String name : ANCHOR_IDS) {
+        // 【code 1056 / B2】裁决标签 → {@link StatusBarOemHunt}；View 查找仍在本方法。
+        String hitName = StatusBarOemHunt.firstHitAnchorName(ANCHOR_IDS, name -> {
             int id = resId(name);
-            if (id != 0) {
-                View v = root.findViewById(id);
-                if (v != null) {
-                    sAnchorHit = "id:" + name;
-                    return v;
-                }
-            }
+            return id != 0 && root.findViewById(id) != null;
+        });
+        if (hitName != null) {
+            StatusBarOemHunt.AnchorDecision d = StatusBarOemHunt.decideAnchor(hitName, null);
+            sAnchorHit = d.hitLabel;
+            return root.findViewById(resId(hitName));
         }
-        // 兜底：用时钟的父容器当锚点
         View clock = sClockViews.isEmpty() ? null : sClockViews.get(0);
         if (clock == null) {
             clock = findSystemView(root, CLOCK_IDS, "Clock");
         }
         if (clock != null && clock.getParent() instanceof View) {
-            sAnchorHit = "fallback:parentOf(" + describe(clock, CLOCK_IDS) + ")";
+            StatusBarOemHunt.AnchorDecision d = StatusBarOemHunt.decideAnchor(null,
+                    describe(clock, CLOCK_IDS));
+            sAnchorHit = d.hitLabel;
             return (View) clock.getParent();
         }
-        sAnchorHit = "MISSING";
+        sAnchorHit = StatusBarOemHunt.decideAnchor(null, null).hitLabel;
         return null;
     }
 
@@ -1025,14 +963,9 @@ public class StatusBarSubtitleHook {
         if (v == null) {
             return "null";
         }
-        int vid = v.getId();
-        for (String n : names) {
-            int rid = resId(n);
-            if (rid != 0 && rid == vid) {
-                return n;
-            }
-        }
-        return v.getClass().getSimpleName() + "#0x" + Integer.toHexString(vid);
+        // 【code 1056 / B2】→ {@link StatusBarOemHunt#describeLabel}
+        return StatusBarOemHunt.describeLabel(v.getId(), names,
+                name -> resId(name), v.getClass().getSimpleName());
     }
 
     /**
@@ -1062,21 +995,9 @@ public class StatusBarSubtitleHook {
             sb.append(" cutout=").append(cutout == null ? "none" : describe(cutout, CUTOUT_IDS));
             LogGate.debug(TAG, sb.toString());
 
-            String miss = "";
-            if (sAnchorHit.equals("MISSING")) {
-                miss += "anchor,";
-            } else if (sAnchorHit.startsWith("fallback")) {
-                miss += "anchor(兜底),";
-            }
-            if (sClockViews.isEmpty()) {
-                miss += "clock,";
-            }
-            if (sNotifViews.isEmpty()) {
-                miss += "notif,";
-            }
-            if (seeding == null) {
-                miss += "seeding,";
-            }
+            // 【code 1056 / B2】缺项 CSV → {@link StatusBarOemHunt#missingCompatCsv}
+            String miss = StatusBarOemHunt.missingCompatCsv(sAnchorHit,
+                    !sClockViews.isEmpty(), !sNotifViews.isEmpty(), seeding != null);
             if (miss.isEmpty()) {
                 XposedCompat.log(TAG + " compat OK: 四关全命中（仅指 id/类名探测成功，未做实机视觉验证）");
             } else {
@@ -1253,25 +1174,33 @@ public class StatusBarSubtitleHook {
                     return;
                 }
                 try {
-                    if (StatusBarSubtitleBridge.ACTION_SCOPE_PING.equals(i.getAction())) {
+                    // 【code 1057 / B2】分类 / LINE 解析 → {@link StatusBarIntentRouter}
+                    StatusBarIntentRouter.Kind kind = StatusBarIntentRouter.classify(i.getAction());
+                    if (kind == StatusBarIntentRouter.Kind.SCOPE_PING) {
                         // 【code 941】能收到 PING = 本进程（SystemUI）已被注入本模块
                         // = 用户勾选了 SystemUI 作用域。回一条 PONG 让 App 侧确认。
                         answerScopePing(c);
                         return;
                     }
-                    if (StatusBarSubtitleBridge.ACTION_ENABLED.equals(i.getAction())) {
+                    if (kind == StatusBarIntentRouter.Kind.ENABLED) {
                         sEnabled = i.getBooleanExtra(StatusBarSubtitleBridge.EXTRA_ENABLED, false);
-                        if (!sEnabled) {
+                        if (StatusBarIntentRouter.shouldHideOnEnabled(sEnabled)) {
                             hideSubtitle();
                         }
                         return;
                     }
-                    if (StatusBarSubtitleBridge.ACTION_LINE.equals(i.getAction())) {
+                    if (kind == StatusBarIntentRouter.Kind.LINE) {
                         // LINE 随包携带开关态 / 行时长 / 播放态：SystemUI 重启后首条字幕即可恢复
-                        sEnabled = i.getBooleanExtra(StatusBarSubtitleBridge.EXTRA_ENABLED, sEnabled);
-                        long dur = i.getLongExtra(StatusBarSubtitleBridge.EXTRA_DURATION_MS, 0L);
-                        boolean playing = i.getBooleanExtra(StatusBarSubtitleBridge.EXTRA_PLAYING, true);
-                        showLine(i.getStringExtra(StatusBarSubtitleBridge.EXTRA_LINE), dur, playing);
+                        boolean enabledPresent = i.hasExtra(StatusBarSubtitleBridge.EXTRA_ENABLED);
+                        StatusBarIntentRouter.LinePayload p = StatusBarIntentRouter.parseLine(
+                                enabledPresent,
+                                i.getBooleanExtra(StatusBarSubtitleBridge.EXTRA_ENABLED, false),
+                                sEnabled,
+                                i.getLongExtra(StatusBarSubtitleBridge.EXTRA_DURATION_MS, 0L),
+                                i.getBooleanExtra(StatusBarSubtitleBridge.EXTRA_PLAYING, true),
+                                i.getStringExtra(StatusBarSubtitleBridge.EXTRA_LINE));
+                        sEnabled = p.enabled;
+                        showLine(p.line, p.durationMs, p.playing);
                     }
                 } catch (Throwable t) {
                     XposedCompat.log(TAG + " onReceive failed: " + t);
@@ -2025,27 +1954,28 @@ public class StatusBarSubtitleHook {
                 }
             }
 
-            if (limit != Integer.MAX_VALUE && limit > left && limit < right) {
-                right = limit;
-            }
-            int avail = right - left;
-            if (avail >= dp(MIN_LINE_W_DP)) {
-                if (limit != Integer.MAX_VALUE && right == limit) {
-                    width = avail;
-                    why = "max " + avail + "px (by " + who + " left=" + (limit + base) + ")";
+            // 【code 1058 / B2】可用宽收紧 → {@link WidthSettlePolicy#resolveAvail}
+            WidthSettlePolicy.Avail av = WidthSettlePolicy.resolveAvail(
+                    left, right, limit, dp(MIN_LINE_W_DP),
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            if (av.widthPx != ViewGroup.LayoutParams.MATCH_PARENT) {
+                width = av.widthPx;
+                if (av.usedLimit) {
+                    why = "max " + av.availPx + "px (by " + who
+                            + " left=" + (limit + base) + ")";
                 } else {
-                    why = "max " + avail + "px (side container only)";
-                    width = avail;
+                    why = "max " + av.availPx + "px (side container only)";
                 }
-            } else {
-                why = "candidate too close (" + avail + "px) -> keep full width";
+            } else if (av.availPx < dp(MIN_LINE_W_DP)) {
+                why = "candidate too close (" + av.availPx + "px) -> keep full width";
             }
         } catch (Throwable t) {
             why = "probe failed: " + t;
         }
 
-        if (!force && sAppliedLineWidth != Integer.MIN_VALUE
-                && Math.abs(width - sAppliedLineWidth) < WIDTH_HYSTERESIS_PX) {
+        // 【code 1058 / B2】迟滞早退 → {@link WidthSettlePolicy#shouldSkipProbe}
+        if (WidthSettlePolicy.shouldSkipProbe(
+                force, width, sAppliedLineWidth, WIDTH_HYSTERESIS_PX)) {
             return; // 迟滞：1~2px 的抖动不重排
         }
         // 【code 927 问题 1 的配套】宽度即将改变 ⇒ 把「已落地」标记复位。
@@ -2084,22 +2014,17 @@ public class StatusBarSubtitleHook {
         if (width == Integer.MIN_VALUE || sLineView == null) {
             return;
         }
-        // 【code 934 bug1】宽度迟滞：差值 <24px 视为无变化（首次落地不受限）。
-        //   实测 seeding 最左子视图在 448~454 间抖 6px，每次落地都触发 retarget = 闪动。
-        if (sAppliedLineWidth != Integer.MIN_VALUE
-                && Math.abs(width - sAppliedLineWidth) < WIDTH_HYSTERESIS_PX) {
-            // 【code 933 bug1 修复】连续两条等宽字幕时宽度无变化，原 early-return 让
-            // sWidthSettled 永远停在 false（applyFluidBoundary 开头已复位、此处不置位），
-            // 于是 startScroll 的 width not settled 闸一直挡着 -> 长字幕(textW>viewW)永不滚动。
-            // 修正：宽度无变化即视为已 settle（当前应用的本就是正确满宽），并补起滚。
+        // 【code 1058 / B2】pending 迟滞分支 → {@link WidthSettlePolicy#pendingDecision}
+        // 【code 934 bug1】差值 <24px 视为无变化（首次落地不受限）。
+        // 【code 933 bug1】无变化仍须 settle + 补起滚，否则长字幕永不滚动。
+        if (WidthSettlePolicy.pendingDecision(
+                width, sAppliedLineWidth, WIDTH_HYSTERESIS_PX)
+                == WidthSettlePolicy.PendingAction.NO_CHANGE_SETTLE) {
             sWidthSettled = true;
             if (!sScrollArmed) {
                 startScroll();
             } else {
-                // 【2.2.0 半字根修】这里**没有改宽度**（差值在迟滞窗口内被丢弃）
-                // ⇒ 重算目标必须用**实际生效的** sAppliedLineWidth，
-                //   绝不能用那个被丢掉的 width（否则目标差最多 WIDTH_HYSTERESIS_PX≈24px，
-                //   正好是「最后一个字只出现一半」的量级）。
+                // 【2.2.0 半字根修】没用 pending 宽 retarget，只用实际生效宽。
                 retargetScrollForNewWidth(sAppliedLineWidth);
             }
             return;
@@ -2547,14 +2472,14 @@ public class StatusBarSubtitleHook {
             @Override
             public void run() {
                 try {
-                    if (sLineView != view || sAnimator != null) {
-                        return;   // 视图已被重建（或已起新动画）→ 这一拍作废
-                    }
-                    if (sLiveTargetPx > 0 || sLineView.getScrollX() != 0) {
-                        return;   // 已经安排了滚动 / 已在滚 —— 别插手
+                    // 【code 1059 / B2】入口闸 / 是否补起滚 → {@link ScrollFitRecheck}
+                    if (ScrollFitRecheck.shouldSkipPostedFitRecheck(
+                            sLineView == view, sAnimator != null,
+                            sLiveTargetPx, sLineView != null ? sLineView.getScrollX() : 0)) {
+                        return;
                     }
                     int real = computeScrollTarget(-1);   // 显式用真实 getWidth()/getLayout()
-                    if (real > TARGET_HYSTERESIS_PX) {
+                    if (ScrollFitRecheck.shouldStartAfterFitRecheck(real, TARGET_HYSTERESIS_PX)) {
                         LogGate.debug(TAG, " fit recheck: does NOT fit -> real target="
                                 + real + "px (start scroll, tail was clipped)");
                         sLiveTargetPx = real;
@@ -2605,21 +2530,21 @@ public class StatusBarSubtitleHook {
                     if (gen != sScrollGen || sLineView == null) {
                         return;   // 已被换代（cancelScroll / 到线自停 / 起了新一段）→ 不是自然跑完
                     }
-                    // 【2.2.0 半字根修·兜底】动画自然跑完的那一刻，这一帧的布局**一定已经落地**
-                    //   ⇒ 用真实宽度（显式传 -1 强制走 getWidth()/getLayout()）再核一次目标。
-                    //   起滚时若因「宽度刚写、getWidth 还是旧值」把目标算小了（最多差半个字），
-                    //   这里按**原速度**补上剩余距离 —— 保证末尾必然完整露出来。
+                    // 【2.2.0 半字根修·兜底】动画自然跑完后再核真实目标。
+                    // 【code 1059 / B2】裁决 → {@link ScrollFitRecheck#afterAnimationEnd}
                     int realTarget = computeScrollTarget(-1);
-                    if (realTarget > sLiveTargetPx + 2) {
+                    ScrollFitRecheck.AfterEndAction end =
+                            ScrollFitRecheck.afterAnimationEnd(realTarget, sLiveTargetPx,
+                                    sLineView.getScrollX(), ScrollFitRecheck.SETTLE_SLACK_PX);
+                    if (end == ScrollFitRecheck.AfterEndAction.RETARGET_CONTINUE) {
                         LogGate.debug(TAG, " scroll recheck after settle: "
                                 + sLiveTargetPx + "->" + realTarget + "px (tail was clipped)");
                         sLiveTargetPx = realTarget;
                         continueScrollToLiveTarget();
                         return;
                     }
-                    // 【1.21.11 问题 1】目标变大（胶囊出现把右界推窄）→ 本段自然跑完后，
-                    // 按原速度续滚剩余距离。速度恒定，只是分两段跑。
-                    if (sLineView.getScrollX() < sLiveTargetPx - 2) {
+                    // 【1.21.11 问题 1】目标变大后按原速续滚剩余。
+                    if (end == ScrollFitRecheck.AfterEndAction.CONTINUE_REMAINING) {
                         continueScrollToLiveTarget();
                     }
             }

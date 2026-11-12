@@ -14,6 +14,7 @@
 ```
 tools/
 ├── run_all_verify.py        ← 唯一汇总入口（自动配包 + 在册调度归档脚本）
+├── host_adapter_scan.py     ← 【code 1050 / A3】新宿主离线适配体检（解包/apk/apks）
 ├── verify_layer.py          ← 原语层 + 清单 runner（新轮次的标准姿势）
 ├── manifests/round_*.json   ← 新轮次的判据清单
 ├── audit_criteria.py        ← 判据画像（四口径分档，发版前自查）
@@ -27,6 +28,18 @@ tools/
     ├── geom/                ← 几何黄金向量（code 993/994）
     └── patches/             ← 64 个一次性补丁脚本（未入库，纯本机现场记录）
 ```
+
+### 宿主适配体检（A3）
+
+```bash
+# 已解包目录（含 dex/ + bundle/，或 walk 得到 classes*.dex + index.android.bundle）
+python tools/host_adapter_scan.py ../../_host231
+
+# 或直接喂 base.apk / .apks
+python tools/host_adapter_scan.py path/to/DLsiteSound_2.23.1.apks --out ../../_host_scan_out
+```
+
+静态闸门 PASS 后：真机看 `AdapterHealth` → 改 `HostInfo.VERIFIED_SET` → 写 `_host*/ADAPTER_CHECK_*.md`。
 
 🔴 **归档 ≠ 退役**。`run_all_verify.py` 的 `SCRIPTS` 清单仍登记那 61 个脚本，
 `locate()` 先找顶层、再找 `archive/` ⇒ **62 席回归链一条没少**（实测 61 PASS + 1 DEGRADED）。

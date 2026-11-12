@@ -331,4 +331,126 @@ public class ScrollKernelTest {
         assertEquals("adv=882 ink=882 layout=882 calcW=371", g.measure);
         assertFalse(g.layoutRejected);
     }
+
+    // ══════════════════════════════════════════════════════════════
+    // WidthSettlePolicy（code 1058 / B2）—— 宽度迟滞 / settle / 可用宽
+    // ══════════════════════════════════════════════════════════════
+
+    private static final int WIDTH_HYST = 24;
+    private static final int FULL_W = -1; // MATCH_PARENT
+
+    /** 【934】|8| &lt; 24 ⇒ 非 force 早退；force 仍可重算。 */
+    @Test
+    public void widthSkipProbeWithinHysteresis() {
+        assertTrue(TestAccessBridge.widthSkipProbe(false, 341, 349, WIDTH_HYST));
+        assertFalse(TestAccessBridge.widthSkipProbe(true, 341, 349, WIDTH_HYST));
+        assertFalse(TestAccessBridge.widthSkipProbe(
+                false, 341, TestAccessBridge.widthUnset(), WIDTH_HYST));
+    }
+
+    /** 【933】迟滞丢弃 pending ⇒ NO_CHANGE_SETTLE（调用方仍须 settle + 补起滚）。 */
+    @Test
+    public void widthPendingNoChangeSettle() {
+        assertEquals("NO_CHANGE_SETTLE",
+                TestAccessBridge.widthPendingAction(341, 349, WIDTH_HYST));
+        assertEquals("APPLY_NEW",
+                TestAccessBridge.widthPendingAction(320, 349, WIDTH_HYST));
+        assertEquals("APPLY_NEW",
+                TestAccessBridge.widthPendingAction(
+                        349, TestAccessBridge.widthUnset(), WIDTH_HYST));
+    }
+
+    /** 真机向量：left=113 / right=581 / limit=454 / min≈167 ⇒ width=341。 */
+    @Test
+    public void widthResolveAvailUsesLimit() {
+        Object[] a = TestAccessBridge.widthResolveAvail(113, 581, 454, 167, FULL_W);
+        assertEquals(341, a[0]);
+        assertEquals(true, a[1]);
+        assertEquals(341, a[2]);
+    }
+
+    /** avail 过窄 ⇒ 回落满宽哨兵。 */
+    @Test
+    public void widthResolveAvailTooNarrowKeepsFull() {
+        Object[] a = TestAccessBridge.widthResolveAvail(113, 581, 163, 167, FULL_W);
+        assertEquals(FULL_W, a[0]);
+        assertEquals(false, a[1]);
+        assertEquals(50, a[2]);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // LineLeftGate（code 940；1058 补黄金向量）
+    // ══════════════════════════════════════════════════════════════
+
+    /** 【940】首采样必须拿常量锚：251 vs 113 超出 tol ⇒ 拒收。 */
+    @Test
+    public void lineLeftRejectsUnstableFirstSample() {
+        Object[] d = TestAccessBridge.lineLeftDecide(
+                251, 581, -1, 0, -1, 113, 60, 3);
+        assertEquals(false, d[0]);
+        assertEquals(-1, d[1]);
+        assertEquals(1, d[2]);
+        assertEquals(251, d[3]);
+        assertNotNull(d[4]);
+    }
+
+    /** 落在容差内 ⇒ 采信并清 streak。 */
+    @Test
+    public void lineLeftAcceptsNearAnchor() {
+        Object[] d = TestAccessBridge.lineLeftDecide(
+                110, 581, 113, 2, 200, 113, 60, 3);
+        assertEquals(true, d[0]);
+        assertEquals(110, d[1]);
+        assertEquals(0, d[2]);
+        assertEquals(-1, d[3]);
+        assertNull(d[4]);
+    }
+
+    /** 连续 3 拍停在新位置 ⇒ relock。 */
+    @Test
+    public void lineLeftRelocksAfterSustainedOffset() {
+        Object[] d = TestAccessBridge.lineLeftDecide(
+                200, 581, 113, 2, 200, 113, 60, 3);
+        assertEquals(true, d[0]);
+        assertEquals(200, d[1]);
+        assertEquals(0, d[2]);
+        assertNotNull(d[4]);
+        assertTrue(((String) d[4]).contains("relocked"));
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ScrollFitRecheck（code 1059 / B2）—— layout / 动画末尾复核
+    // ══════════════════════════════════════════════════════════════
+
+    /** 视图换代或已有动画 / 已安排滚动 ⇒ 跳过 posted fit recheck。 */
+    @Test
+    public void fitRecheckSkipsWhenBusyOrRebuilt() {
+        assertTrue(TestAccessBridge.fitSkipPosted(false, false, 0, 0));
+        assertTrue(TestAccessBridge.fitSkipPosted(true, true, 0, 0));
+        assertTrue(TestAccessBridge.fitSkipPosted(true, false, 100, 0));
+        assertTrue(TestAccessBridge.fitSkipPosted(true, false, 0, 5));
+        assertFalse(TestAccessBridge.fitSkipPosted(true, false, 0, 0));
+    }
+
+    /** real 超过迟滞 ⇒ 原先「放得下」是错的，要补起滚。 */
+    @Test
+    public void fitRecheckStartsWhenRealExceedsHysteresis() {
+        assertTrue(TestAccessBridge.fitShouldStart(20, TARGET_HYSTERESIS_PX));
+        assertFalse(TestAccessBridge.fitShouldStart(TARGET_HYSTERESIS_PX, TARGET_HYSTERESIS_PX));
+        assertFalse(TestAccessBridge.fitShouldStart(0, TARGET_HYSTERESIS_PX));
+    }
+
+    /** 动画末：real 更大 ⇒ RETARGET；scroll 落后 ⇒ CONTINUE；否则 NONE。 */
+    @Test
+    public void fitRecheckAfterAnimationEndBranches() {
+        int slack = TestAccessBridge.fitSettleSlack();
+        assertEquals("RETARGET_CONTINUE",
+                TestAccessBridge.fitAfterEnd(310, 300, 300, slack));
+        assertEquals("CONTINUE_REMAINING",
+                TestAccessBridge.fitAfterEnd(300, 300, 290, slack));
+        assertEquals("NONE",
+                TestAccessBridge.fitAfterEnd(301, 300, 300, slack));
+        assertEquals("NONE",
+                TestAccessBridge.fitAfterEnd(300, 300, 299, slack));
+    }
 }

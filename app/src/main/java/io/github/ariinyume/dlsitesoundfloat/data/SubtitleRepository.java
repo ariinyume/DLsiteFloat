@@ -25,16 +25,12 @@ import android.net.NetworkCapabilities;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.text.TextUtils;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
-import java.util.Locale;
 
 import io.github.ariinyume.dlsitesoundfloat.config.RemoteConfig;
 import io.github.ariinyume.dlsitesoundfloat.util.LineSource;
@@ -532,7 +528,6 @@ public class SubtitleRepository implements LineSource {
 
     private final List<Runnable> observers = new ArrayList<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final SimpleDateFormat timeFormat;
     /**
      * 【code 1007】磁盘缓存的**串行写线程**。
      *
@@ -548,8 +543,6 @@ public class SubtitleRepository implements LineSource {
             });
 
     private SubtitleRepository() {
-        timeFormat = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US);
-        timeFormat.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
     }
 
     public static synchronized SubtitleRepository getInstance() {
@@ -766,6 +759,7 @@ public class SubtitleRepository implements LineSource {
         int falseNegativeCueCount = 0;
         // 【code 1007】字幕最大结束时间（秒）—— 磁盘缓存做「时长补盖」时的时间轴交叉校验用。
         double maxEndSec = 0d;
+        // 【code 1053 / A2】时间解析 / cue 装配 → {@link CueStore}。
         for (int i = 0; i < webvtt.length(); i++) {
             JSONObject cue = webvtt.getJSONObject(i);
             String start = cue.optString("start_time", "00:00:00.000");
@@ -777,11 +771,9 @@ public class SubtitleRepository implements LineSource {
                     lineList.add(lines.getString(j));
                 }
             }
-            double endSec = parseTime(end);
-            if (endSec > maxEndSec) {
-                maxEndSec = endSec;
-            }
-            newCues.add(new SubtitleCue(parseTime(start), endSec, lineList));
+            SubtitleCue parsed = CueStore.cueOf(start, end, lineList);
+            maxEndSec = CueStore.maxEndSec(maxEndSec, parsed.endTime);
+            newCues.add(parsed);
         }
         boolean reopened = false;
         // 【1.21.16 问题 1】本次是否撤销了「软裁决」降级显示
@@ -833,15 +825,9 @@ public class SubtitleRepository implements LineSource {
             cuesLoadedAtMs = SystemClock.uptimeMillis();
             cuesArrivedDuringRebuild = playlistRebuiltAtMs != 0L;
             // v18：重建「字幕行精确匹配集」，供 isKnownSubtitleText() 做 O(1) 精确判定
+            // 【code 1053 / A2】匹配集装配 → {@link CueStore#exactLineSet}。
             subtitleLineSet.clear();
-            for (SubtitleCue c : newCues) {
-                for (String line : c.subtitles) {
-                    String nl = normalizeLine(line);
-                    if (!nl.isEmpty()) {
-                        subtitleLineSet.add(nl);
-                    }
-                }
-            }
+            subtitleLineSet.addAll(CueStore.exactLineSet(newCues));
             // 换曲后旧的索引/秒缓存作废；若当前播放位置已知，立刻重算一次
             currentCueIndex = -1;
             lastScannedSecond = Integer.MIN_VALUE;
@@ -924,18 +910,6 @@ public class SubtitleRepository implements LineSource {
             stageCacheToDisk(workKey, newCues.size(), maxEndSec);
         }
         notifyObservers();
-    }
-
-    private double parseTime(String t) {
-        try {
-            Date d = timeFormat.parse(t);
-            if (d != null) {
-                return d.getTime() / 1000.0;
-            }
-        } catch (Throwable e) {
-            // ignore
-        }
-        return 0;
     }
 
     // ======================================================================
@@ -1062,7 +1036,8 @@ public class SubtitleRepository implements LineSource {
                 floatingWindowOpen = true;
                 reopenedByTrack = true;
             }
-            if (ago <= PRELOAD_TOLERANCE_MS) {
+            // 【code 1051 / A2】保留 / 挂起 / 软硬 / grace 分级 → {@link TrackDecision}。
+            if (TrackDecision.keepRecentJson(ago, PRELOAD_TOLERANCE_MS)) {
                 // 刚加载过字幕 JSON：大概率就是新音轨的 → 保留
                 pendingTrackDecision = false;
                 pendingSoftSuspend = false;
@@ -1083,7 +1058,7 @@ public class SubtitleRepository implements LineSource {
                 //   导致挂起瞬间（实测 501ms 后）UI 就从正常跳到「无字幕」并关窗，
                 //   而 JSON 往往几百毫秒~十几秒后才到（日志实证 1.3s / 5.5s / 11.1s）。
                 //   手上没有 cues 时才按旧口径清镜像（真无字幕作品）。
-                pendingSoftSuspend = cueCount > 0;
+                pendingSoftSuspend = TrackDecision.softSuspend(cueCount > 0);
                 // 【code 960】**两种挂起都清掉抓屏镜像**。
                 //   原实现只在硬挂起（手上没 cues）时清，软挂起留着「继续显示」——
                 //   于是切到**真正无字幕**的音轨时，上一轨的字幕会一直挂在悬浮窗/状态栏上
@@ -1119,8 +1094,8 @@ public class SubtitleRepository implements LineSource {
                 //   ⇒ 走 15000ms 长窗 ⇒ 盘上明明有本轨缓存却干等 15s，Ari 体感「本地字幕用不了」。
                 // 【code 1040】预取池已就绪时同样不必苦等：JSON 是本地现成的，云端 1s 内
                 //   没来就先用预取，晚到的云端 JSON 仍会覆盖（loadFromJson 自愈路径不变）。
-                grace = (cueCount > 0 && !diskFallbackReady && !prefetchFallbackReady)
-                        ? NO_SUBTITLE_GRACE_MS_CACHED : NO_SUBTITLE_GRACE_MS;
+                grace = TrackDecision.graceMs(cueCount > 0, diskFallbackReady,
+                        prefetchFallbackReady, NO_SUBTITLE_GRACE_MS, NO_SUBTITLE_GRACE_MS_CACHED);
             }
         }
         XposedCompat.log("[DLsiteSoundFloat] track changed via " + where
@@ -1161,11 +1136,11 @@ public class SubtitleRepository implements LineSource {
             //   代价：JSON 在 5s 之后才到（实测 5.5s / 11.1s）的那些轨会「先关窗、JSON 到了再自动开回」，
             //   表现为一次轻微的窗口闪 —— 这是「错误内容一直挂着」与「偶尔闪一下」之间的取舍，
             //   本轮按 Ari 的指令选后者。
-            mainHandler.postDelayed(() -> provisionalEarlyClose(token),
-                    Math.min(NO_SUBTITLE_EARLY_CLOSE_MS, grace));
+            long earlyClose = TrackDecision.earlyCloseDelayMs(NO_SUBTITLE_EARLY_CLOSE_MS, grace);
+            mainHandler.postDelayed(() -> provisionalEarlyClose(token), earlyClose);
             if (pendingSoftSuspend) {
                 LogGate.debug("[DLsiteSoundFloat] [code 975] soft suspend -> display cleared,"
-                        + " window closes in " + Math.min(NO_SUBTITLE_EARLY_CLOSE_MS, grace)
+                        + " window closes in " + earlyClose
                         + "ms unless json arrives (cues=" + cueCount + " kept)");
             }
         }
@@ -2018,113 +1993,91 @@ public class SubtitleRepository implements LineSource {
             pendingStartPosMs = -1L;
             pendingSawPositionReset = false;
             pendingPosSamples = 0;
-            if (lastLoadJsonMs <= pendingBaselineLoadMs) {
-                // 等待期内没有任何新的字幕 JSON。**下结论前先怀疑一次「其实没换轨」**：
-                // 这 1 秒里播放位置若一直在往前走、从未回退，说明音频根本没重开新轨
-                // 【code 1021】等待窗由 3000ms 收到 1000ms（见 NO_SUBTITLE_GRACE_MS）：
-                //   窗口变短 ⇒ 这条「假换轨」判据能采到的位置样本也变少，但它本来就只在
-                //   **老信号路径**（非权威序号门）下参与，且要求看到位置**大幅回退**才敢判，
-                //   属于「宁可真换轨」的保守侧，缩短不会把它推到错误的一边。
-                // （典型场景：在**第一轨**按「上一首」，App 是 no-op，继续播第一轨）。
-                // 此时若照旧判定「无字幕」，就会清空 cues 并关掉悬浮窗 —— 这正是 v27 要修的 bug。
-                // ⚠️ v28 修正：v27 这里用「位置从未回退」当假换轨的判据，前提**不成立** ——
-                // 实测 54 次换轨里 52 次 pos=0ms（切轨瞬间位置就被清零），窗口内位置从 0
-                // 一路往上涨，永远满足「没回退」→ **所有真换轨都被误判成假换轨**，
-                // 于是切到无字幕音轨时字幕不切、继续播旧字幕（问题 2）。
-                // 现在改成**严格要求观察到"位置确实大幅回退"**才算假换轨；
-                // 否则按真换轨处理（照旧判「无字幕」），把默认行为改回正确的一侧。
-                // 【973】indexVerified（权威序号门）时**不做**这两条假换轨兜底：
-                //   序号变了就是换了轨，而兜底是为老信号路径写的；在真换轨上误判会直接
-                //   撤销挂起 ⇒ 上一轨的 cue 又变成可渲染 ⇒ 用户报的 bug 原样复现。
-                //   （真机 2026-10-07 两份日志里 SPURIOUS 从未触发，佐证它在序号门上本就不参与。）
-                if (!indexVerified && pendingSawPositionReset) {
-                    spurious = true;
-                    // 撤销挂起。**不**用 playbackPositionMs 重算字幕行 ——
-                    // 那个值在换轨瞬间会被清零/残留旧值，据其重算会跳回已播过的字幕（问题 1）。
-                    // 保留原有 currentCueIndex，交给后续正常的位置回调推进。
-                    lastScannedSecond = Integer.MIN_VALUE;
-                    previousTrackCuesHidden = false;   // 【973】没换轨 ⇒ 旧 cues 仍是本轨的
-                } else if (!indexVerified && samples > 0
-                        && pendingStartPosMs > POSITION_RESET_TOLERANCE_MS
-                        && playbackPositionMs >= 0
-                        && playbackPositionMs > pendingStartPosMs) {
-                    // 位置基准明显大于 0（说明基线取到的是"旧轨还在播"的位置），
-                    // 而当前位置比它还大 → 音频一直在往前走、从未重开 → 确实没换轨。
-                    spurious = true;
-                    lastScannedSecond = Integer.MIN_VALUE;
-                    previousTrackCuesHidden = false;   // 【973】同上
-                } else {
-                    // 等待期内没有任何新的字幕 JSON → 该音轨没有字幕
-                    // 【1.21.16 问题 1】这里原来无条件 `cues = new ArrayList<>()`，
-                    // 把「10s 内没等到 JSON」当成「该音轨无字幕」的**永久**结论。
-                    // 实测 JSON 延迟能到 11973ms，且 R6 是「同一作品 3.5s 前刚有 49 cues」，
-                    // 所以有 cues 在手时**绝不能销毁数据** —— 改成软裁决：只让显示层降级。
-                    noSubtitles = true;
-                    // 【1.21.15 问题 1】留个时间戳：这次裁决若被后来的 JSON 打脸，
-                    // 加载字幕时会把「假阴性」直接写进日志。
-                    lastNoSubtitleVerdictMs = SystemClock.uptimeMillis();
-                    if (cueCount > 0) {
-                        // **软裁决**：保留 cues / subtitleLineSet，只标记「本音轨按无字幕显示」。
-                        // 晚到的 JSON 一到就自动解除（见 loadFromJsonArrayInternal）。
-                        //
-                        // 【2.1.3 问题 1】软裁决也**不再**置 softNoSubtitles：
-                        //   本次挂起是「手上有 cues」的软挂起 —— 本作品已被证明有字幕，
-                        //   「没等到 JSON」不足以推翻这一点（实测冷请求可超 15s）。
-                        //   置位会让三处 UI 一起变「无字幕」，正是用户报的现象。
-                        //   现在降级为「保持数据 + 留时间戳取证」：JSON 到了
-                        //   loadFromJsonArrayInternal 会正常刷新，超时也不误报。
-                        //   （真判无字幕只在**手上没有 cues** 的硬裁决路径发生。）
-                        //
-                        // 【code 960】显示层**保持已清空**：进入软挂起时 currentSubtitles
-                        //   就已经清了（用例 7.2 —— 切到真正无字幕的轨时不留上一轨的字幕），
-                        //   这里再清一次只为口径明确（期间不会有新的抓屏镜像写入：
-                        //   setCurrentSubtitles 在待确认期间直接 return）。
-                        currentSubtitles = new ArrayList<>();
-                        currentCueIndex = -1;
-                        lastScannedSecond = Integer.MIN_VALUE;
-                        // 注意：**不**清 playbackPositionMs / lastFedMs —— 位置是位置，
-                        // 与「有没有字幕」无关；清了反而会让恢复后的首帧字幕落错行。
-                        // cues / subtitleLineSet 同样一个都不动（防假阴性）。
-                        heldSoftVerdict = true;
-                    } else {
-                        // 手上本来就没有任何 cues（这部作品压根没加载过字幕）→ 硬裁决，
-                        // 行为与旧版一致：清空 + 关窗。
-                        cues = new ArrayList<>();
-                        subtitleLineSet.clear();
-                        // 【980】数据真被销毁了 ⇒ 撤销「主人」印章（否则会拿空 cues 去「恢复」）
-                        cuesOwnerIdentity = 0L;
-                        // 【code 1004】选择键印章与「选择跑在身份前面」同生共死：数据没了就没有归属可谈。
-                        cuesOwnerSelection = 0L;
-                        cuesLoadedAheadOfIdentity = false;
-                        // 【code 1005】重建窗口的印章同样与数据同生共死（数据没了就没有归属可谈）。
-                        cuesArrivedDuringRebuild = false;
-                        cuesLoadedAtMs = 0L;
-                        // 【code 1006】作品键印章同样与数据同生共死。
-                        cuesWorkKey = null;
-                        workChangeKey = null;
-                        workChangeAtMs = 0L;
-                        currentSubtitles = new ArrayList<>();
-                        currentCueIndex = -1;
-                        lastScannedSecond = Integer.MIN_VALUE;
-                        playbackPositionMs = -1L;
-                        lastFedMs = -1L;
-                    }
-                    if (floatingWindowOpen) {
-                        // 【2.1.3 问题 1】曾让软挂起（手上有 cues）**留着窗口不关**：
-                        //   那时软挂起仍在显示上一轨字幕，关窗 = 字幕凭空消失。
-                        // 【code 960 折中】前提已变：显示层在挂起瞬间就清空了，
-                        //   等满整个裁决窗仍无 JSON，窗口里已经空了这么久 —— 这时收窗是净收益。
-                        //   所以软硬一律关窗（软挂起先不排 5s 提前收窗，就是为了不在
-                        //   JSON 5.5s/11.1s 到达的那些轨上闪一下，见 onTrackChanged 的注释）。
-                        //   autoClosedForNoSubtitle 照旧置位：万一 JSON 在裁决窗之后才到，
-                        //   loadFromJsonArrayInternal 的自动开回路径仍然接得住。
-                        floatingWindowOpen = false;
-                        autoClosedForNoSubtitle = true;
-                        closed = true;
-                    }
-                }
-            } else {
+            // 【code 1052 / A2】三岔口纯裁决 → {@link TrackDecision#resolvePending}。
+            // 必须用上面拷出来的样本（sawReset/samples/startPos/curPos），不能读已清零字段。
+            // 权威序号门 / 位置回退 / 「基线>0 且只增」口径见 TrackDecision 注释（v28+973）。
+            TrackDecision.PendingVerdict verdict = TrackDecision.resolvePending(
+                    TrackDecision.jsonArrivedDuringGrace(lastLoadJsonMs, pendingBaselineLoadMs),
+                    indexVerified, sawReset, samples, startPos, curPos,
+                    POSITION_RESET_TOLERANCE_MS);
+            if (verdict == TrackDecision.PendingVerdict.JSON_ARRIVED) {
                 subCount = cues.size();
+            } else if (verdict == TrackDecision.PendingVerdict.SPURIOUS) {
+                spurious = true;
+                // 撤销挂起。**不**用 playbackPositionMs 重算字幕行 ——
+                // 那个值在换轨瞬间会被清零/残留旧值，据其重算会跳回已播过的字幕（问题 1）。
+                // 保留原有 currentCueIndex，交给后续正常的位置回调推进。
+                lastScannedSecond = Integer.MIN_VALUE;
+                previousTrackCuesHidden = false;   // 【973】没换轨 ⇒ 旧 cues 仍是本轨的
+            } else {
+                // 等待期内没有任何新的字幕 JSON → 该音轨没有字幕
+                // 【1.21.16 问题 1】这里原来无条件 `cues = new ArrayList<>()`，
+                // 把「10s 内没等到 JSON」当成「该音轨无字幕」的**永久**结论。
+                // 实测 JSON 延迟能到 11973ms，且 R6 是「同一作品 3.5s 前刚有 49 cues」，
+                // 所以有 cues 在手时**绝不能销毁数据** —— 改成软裁决：只让显示层降级。
+                noSubtitles = true;
+                // 【1.21.15 问题 1】留个时间戳：这次裁决若被后来的 JSON 打脸，
+                // 加载字幕时会把「假阴性」直接写进日志。
+                lastNoSubtitleVerdictMs = SystemClock.uptimeMillis();
+                if (TrackDecision.softNoSubtitleVerdict(cueCount > 0)) {
+                    // **软裁决**：保留 cues / subtitleLineSet，只标记「本音轨按无字幕显示」。
+                    // 晚到的 JSON 一到就自动解除（见 loadFromJsonArrayInternal）。
+                    //
+                    // 【2.1.3 问题 1】软裁决也**不再**置 softNoSubtitles：
+                    //   本次挂起是「手上有 cues」的软挂起 —— 本作品已被证明有字幕，
+                    //   「没等到 JSON」不足以推翻这一点（实测冷请求可超 15s）。
+                    //   置位会让三处 UI 一起变「无字幕」，正是用户报的现象。
+                    //   现在降级为「保持数据 + 留时间戳取证」：JSON 到了
+                    //   loadFromJsonArrayInternal 会正常刷新，超时也不误报。
+                    //   （真判无字幕只在**手上没有 cues** 的硬裁决路径发生。）
+                    //
+                    // 【code 960】显示层**保持已清空**：进入软挂起时 currentSubtitles
+                    //   就已经清了（用例 7.2 —— 切到真正无字幕的轨时不留上一轨的字幕），
+                    //   这里再清一次只为口径明确（期间不会有新的抓屏镜像写入：
+                    //   setCurrentSubtitles 在待确认期间直接 return）。
+                    currentSubtitles = new ArrayList<>();
+                    currentCueIndex = -1;
+                    lastScannedSecond = Integer.MIN_VALUE;
+                    // 注意：**不**清 playbackPositionMs / lastFedMs —— 位置是位置，
+                    // 与「有没有字幕」无关；清了反而会让恢复后的首帧字幕落错行。
+                    // cues / subtitleLineSet 同样一个都不动（防假阴性）。
+                    heldSoftVerdict = true;
+                } else {
+                    // 手上本来就没有任何 cues（这部作品压根没加载过字幕）→ 硬裁决，
+                    // 行为与旧版一致：清空 + 关窗。
+                    cues = new ArrayList<>();
+                    subtitleLineSet.clear();
+                    // 【980】数据真被销毁了 ⇒ 撤销「主人」印章（否则会拿空 cues 去「恢复」）
+                    cuesOwnerIdentity = 0L;
+                    // 【code 1004】选择键印章与「选择跑在身份前面」同生共死：数据没了就没有归属可谈。
+                    cuesOwnerSelection = 0L;
+                    cuesLoadedAheadOfIdentity = false;
+                    // 【code 1005】重建窗口的印章同样与数据同生共死（数据没了就没有归属可谈）。
+                    cuesArrivedDuringRebuild = false;
+                    cuesLoadedAtMs = 0L;
+                    // 【code 1006】作品键印章同样与数据同生共死。
+                    cuesWorkKey = null;
+                    workChangeKey = null;
+                    workChangeAtMs = 0L;
+                    currentSubtitles = new ArrayList<>();
+                    currentCueIndex = -1;
+                    lastScannedSecond = Integer.MIN_VALUE;
+                    playbackPositionMs = -1L;
+                    lastFedMs = -1L;
+                }
+                if (floatingWindowOpen) {
+                    // 【2.1.3 问题 1】曾让软挂起（手上有 cues）**留着窗口不关**：
+                    //   那时软挂起仍在显示上一轨字幕，关窗 = 字幕凭空消失。
+                    // 【code 960 折中】前提已变：显示层在挂起瞬间就清空了，
+                    //   等满整个裁决窗仍无 JSON，窗口里已经空了这么久 —— 这时收窗是净收益。
+                    //   所以软硬一律关窗（软挂起先不排 5s 提前收窗，就是为了不在
+                    //   JSON 5.5s/11.1s 到达的那些轨上闪一下，见 onTrackChanged 的注释）。
+                    //   autoClosedForNoSubtitle 照旧置位：万一 JSON 在裁决窗之后才到，
+                    //   loadFromJsonArrayInternal 的自动开回路径仍然接得住。
+                    floatingWindowOpen = false;
+                    autoClosedForNoSubtitle = true;
+                    closed = true;
+                }
             }
             // 【code 942】提前收窗收错了（其实没换轨）-> 立刻开回来，并撤销这份记忆：
             // 否则窗口会被错杀到下一次字幕加载，且那时可能把用户已手动关掉的窗口擅自打开。
@@ -2409,19 +2362,19 @@ public class SubtitleRepository implements LineSource {
     @Override
     public boolean shouldShowNoSubtitles() {
         synchronized (lock) {
-            if (cues.isEmpty() || softNoSubtitles) {
-                return true;
-            }
-            // 软挂起：cues 在手 ⇒ 维持正常显示，不降级
-            return pendingTrackDecision && !pendingSoftSuspend;
+            // 【code 1053 / A2】显隐口径 → {@link DisplayContract#shouldShowNoSubtitles}。
+            return DisplayContract.shouldShowNoSubtitles(
+                    cues.isEmpty(), softNoSubtitles, pendingTrackDecision, pendingSoftSuspend);
         }
     }
 
     public List<String> getCurrentSubtitles() {
         synchronized (lock) {
             // 【973】previousTrackCuesHidden 也按「空」返回：上一轨的 cue 一律不参与渲染
-            return (softNoSubtitles || previousTrackCuesHidden
-                    || (pendingTrackDecision && !pendingSoftSuspend))
+            // 【code 1053 / A2】→ {@link DisplayContract#hideCurrentSubtitles}。
+            return DisplayContract.hideCurrentSubtitles(
+                    softNoSubtitles, previousTrackCuesHidden,
+                    pendingTrackDecision, pendingSoftSuspend)
                     ? new ArrayList<>() : new ArrayList<>(currentSubtitles);
         }
     }
@@ -2440,35 +2393,25 @@ public class SubtitleRepository implements LineSource {
     public String statusBarLine() {
         List<SubtitleCue> cues = getCues();
         int idx = findCurrentCueIndex();
+        String joined = "";
         if (cues != null && !cues.isEmpty() && idx >= 0 && idx < cues.size()) {
-            return joinCue(cues.get(idx));
+            joined = DisplayContract.joinCue(cues.get(idx));
         }
-        List<String> cur = getCurrentSubtitles();
-        if (cur != null && !cur.isEmpty()) {
-            return TextUtils.join(" ", cur).toString();
-        }
-        return "";
+        // 【code 1053 / A2】拼行优先级 → {@link DisplayContract#statusBarLine}。
+        return DisplayContract.statusBarLine(joined, getCurrentSubtitles());
     }
 
     /** 把一条 cue 的多条字幕用空格合并成单行（与 FloatingSubtitleView.joinSubtitles 等价）。 */
     private static String joinCue(SubtitleCue cue) {
-        if (cue == null || cue.subtitles == null) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (String s : cue.subtitles) {
-            if (sb.length() > 0) {
-                sb.append(' ');
-            }
-            sb.append(s);
-        }
-        return sb.toString();
+        return DisplayContract.joinCue(cue);
     }
 
     public List<SubtitleCue> getCues() {
         synchronized (lock) {
             // 【973】previousTrackCuesHidden：数据保留，但一律按「空」返回（不参与渲染）
-            return (pendingTrackDecision || softNoSubtitles || previousTrackCuesHidden)
+            // 【code 1053 / A2】→ {@link DisplayContract#hideCues}。
+            return DisplayContract.hideCues(
+                    pendingTrackDecision, softNoSubtitles, previousTrackCuesHidden)
                     ? new ArrayList<>() : new ArrayList<>(cues);
         }
     }
@@ -2489,13 +2432,11 @@ public class SubtitleRepository implements LineSource {
      * 与 cue 行完全一致，用 equals 既准又快（走 HashSet）。
      */
     public boolean isKnownSubtitleText(String text) {
-        if (text == null) {
-            return false;
+        // 【code 1053 / A2】探针闸 → {@link CueStore#isPlausibleSubtitleProbe}。
+        if (!CueStore.isPlausibleSubtitleProbe(text, MAX_SUBTITLE_LINE_LEN)) {
+            return false;   // null / 空 / 超长（标题 / 简介 / 列表项文案）
         }
-        String t = normalizeLine(text);
-        if (t.isEmpty() || t.length() > MAX_SUBTITLE_LINE_LEN) {
-            return false;   // 超长的绝对不是字幕行（标题 / 简介 / 列表项文案）
-        }
+        String t = CueStore.normalizeLine(text);
         synchronized (lock) {
             if (pendingTrackDecision) {
                 return false;
@@ -2521,7 +2462,7 @@ public class SubtitleRepository implements LineSource {
     }
 
     private static String normalizeLine(String s) {
-        return s == null ? "" : s.trim().replaceAll("\\s+", " ");
+        return CueStore.normalizeLine(s);
     }
 
     /**
@@ -2544,7 +2485,9 @@ public class SubtitleRepository implements LineSource {
      */
     public List<String> selfComputedLines() {
         synchronized (lock) {
-            if (pendingTrackDecision || previousTrackCuesHidden || cues.isEmpty()) {
+            // 【code 1053 / A2】→ {@link DisplayContract#hideSelfComputed}。
+            if (DisplayContract.hideSelfComputed(
+                    pendingTrackDecision, previousTrackCuesHidden, cues.isEmpty())) {
                 return new ArrayList<>();
             }
             int idx = currentCueIndex;

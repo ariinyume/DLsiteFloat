@@ -99,7 +99,7 @@ final class HeartbeatPolicy {
      *   <li>结论刚刚变化 → 快速跟踪一段（{@code settleStreak} 次）后转常规。</li>
      * </ol>
      *
-     * @param verdict             本趟扫描结论（{@code SubtitleViewHook} 的 verdict 常量）
+     * @param verdict             本趟扫描结论（{@code PlayerPageScanner} 的 verdict 常量）
      * @param ambiguous           本趟是否为过渡态
      * @param ambiguousRechecks   已用掉的过渡态复检次数（{@code sAmbiguousRechecks}）
      * @param maxAmbiguousRechecks {@code MAX_AMBIGUOUS_RECHECKS}

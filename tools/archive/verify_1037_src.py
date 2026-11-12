@@ -138,7 +138,7 @@ def body_of(code, sig):
 CACHE = strip_comments(rd('data/SubtitleCache.java'))
 ABTN = strip_comments(rd('hook/ActivityButtonHook.java'))
 ZPF = strip_comments(rd('hook/ZiptreePrefetch.java'))
-SVH = strip_comments(rd('hook/SubtitleViewHook.java'))
+SVH = strip_comments(rd('hook/PlayerPageScanner.java'))
 PPH = strip_comments(rd('hook/PlayerPositionHook.java'))
 MOD = strip_comments(rd('DlsiteSoundSubtitleModule.java'))
 GRADLE = rd(os.path.join(ROOT, 'app', 'build.gradle'), base=ROOT)

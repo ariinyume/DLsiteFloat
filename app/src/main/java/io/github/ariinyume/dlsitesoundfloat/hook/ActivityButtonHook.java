@@ -100,7 +100,7 @@ import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
  *   · 播放页**入场**时主滑条会从屏幕底部一路滑到 64%，途中必然穿过 82% 那条绝对位置判据线，
  *     于是被误判成「底部 mini-player 滑条」→ 判 OTHER → 按钮被误隐藏（误隐藏时长 0.16s~1.6s 不等）；
  *   · 播放页**退场**时更极端：`bottom=y=2759(99%)`，滑条**还完整在屏内**，纯纵坐标根本拦不住。
- * 修法（三管齐下，扫描端见 {@link SubtitleViewHook}）：
+ * 修法（三管齐下，扫描端见 {@link PlayerPageScanner}）：
  *   1) **OTHER 去抖**：{@link #HIDE_ON_OTHER_STREAK} 1 → 2，且证据需持续
  *      {@link #HIDE_ON_OTHER_PROOF_MS} —— 单帧假阳性不再能把按钮打掉；
  *   2) **页面容器可见面积**门（在扫描端）：页面正在滑入/滑出时容器占比骤降 → 该滑条不作数；
@@ -169,7 +169,7 @@ import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
  * 先否掉「绑位置」与「注入控件行」两条路，再给出正解：
  *
  *   ⛔ **绑位置**：v31 已证伪（见上），位置不是延迟来源。
- *   ⛔ **注入宿主控件行**：1.20.9 打了一次真实视图树 dump（`SubtitleViewHook#dumpViewTree`），
+ *   ⛔ **注入宿主控件行**：1.20.9 打了一次真实视图树 dump（`PlayerPageScanner#dumpViewTree`），
  *      结论是**技术上不可行** —— RN 的 `ReactViewGroup` 在 `onInterceptTouchEvent()` 里
  *      **无条件拦截**触摸（它用 JSTouchDispatcher 自己重做命中测试，只认带 React tag 的视图），
  *      塞进去的原生 View **收不到点击**，按钮会变成纯装饰。
@@ -1568,7 +1568,7 @@ public class ActivityButtonHook {
     private static Boolean sLastProbeAlive = null;
 
     /**
-     * v33 诊断：本次进程是否已经打过一次视图树（见 {@link SubtitleViewHook#dumpViewTree}）。
+     * v33 诊断：本次进程是否已经打过一次视图树（见 {@link PlayerPageScanner#dumpViewTree}）。
      * 用途是定位「播放器传输控件行」，供下一版把开关按钮**注入**进去。
      * 只打一次 —— 整棵树有几百个 View，每次进播放页都打会淹掉日志。
      */
@@ -1650,7 +1650,7 @@ public class ActivityButtonHook {
                 if (anchor == null) {
                     return;
                 }
-                boolean alive = SubtitleViewHook.isEffectivelyVisible(anchor);
+                boolean alive = PlayerPageScanner.isEffectivelyVisible(anchor);
                 boolean flipped = sLastProbeAlive == null || sLastProbeAlive != alive;
                 sLastProbeAlive = alive;
                 if (!flipped && alive) {
@@ -3197,7 +3197,7 @@ public class ActivityButtonHook {
             sQuietScanSkips = 0; // 【code 933 精简】不再逐扫描打日志（170 行/会话）
         }
 
-        int verdict = SubtitleViewHook.PAGE_UNKNOWN;
+        int verdict = PlayerPageScanner.PAGE_UNKNOWN;
         boolean ambiguous = false;
         try {
             ViewGroup decor = (ViewGroup) activity.getWindow().getDecorView();
@@ -3207,7 +3207,7 @@ public class ActivityButtonHook {
 
             // 一次性新鲜扫描：收集「屏上命中字幕库的文本」+ 播放页/列表页的结构证据 + 播放页锚点。
             // 不读取任何历史标记，不可见子树直接跳过。
-            SubtitleViewHook.ScanResult scan = SubtitleViewHook.scan(decor, repo);
+            PlayerPageScanner.ScanResult scan = PlayerPageScanner.scan(decor, repo);
             repo.setCurrentSubtitles(scan.liveLines);
             // 【v57】缓存主滑条中心 y —— 按钮组要靠它算「进度条上方」的位置。
             // 只取这一个数（scan 的契约是「绝不跨帧保留」，所以不留整个对象）。
@@ -3229,22 +3229,25 @@ public class ActivityButtonHook {
             //    沿用上一次稳定值（下面 `if` 不成立即天然保持 sLastSliderCy 不变）。
             //    关键差别：这只影响「按钮摆在哪」，**不影响「按钮出不出现」**
             //    （出现与否由 verdict 决定，而 verdict 只看 hasMainSlider）。
-            if (scan.hasMainSlider && scan.mainSliderY > 0 && scan.mainSliderStable) {
+            // 【code 1050 / A1】采信闸抽到 {@link GeomSnapshotPolicy}（零状态纯函数）。
+            if (GeomSnapshotPolicy.acceptSliderCenter(
+                    scan.hasMainSlider, scan.mainSliderY, scan.mainSliderStable)) {
                 sLastSliderCy = scan.mainSliderY;
                 sLastSliderH = scan.mainSliderH;
                 // 【code 1045】时间行底边（宿主 2.22.1 起「进度条下方」落位的基准线）。
                 //   与滑条中心**同一个稳定门**下才采信 —— 两个基准线必须同源，
                 //   否则会出现「滑条是上一帧、时间行是这一帧」的混合态。
-                if (scan.timeLabelBottom > 0) {
+                if (GeomSnapshotPolicy.acceptTimeLabelBottom(true, scan.timeLabelBottom)) {
                     sLastTimeLabelBottom = scan.timeLabelBottom;
                 }
             }
             // 【code 923 几何 3】滑条右缘 x（= 左缘 x + 宽度）—— 按钮右缘要跟它对齐。
-            if (scan.hasMainSlider && scan.mainSliderW > 0 && scan.mainSliderX >= 0) {
+            if (GeomSnapshotPolicy.acceptSliderRight(
+                    scan.hasMainSlider, scan.mainSliderX, scan.mainSliderW)) {
                 sLastSliderRightPx = scan.mainSliderX + scan.mainSliderW;
             }
             // 【code 923 几何 4】简介行底边 y —— 与滑条中心一起决定按钮的垂直中点。
-            if (scan.descLineBottom > 0) {
+            if (GeomSnapshotPolicy.acceptDescBottom(scan.descLineBottom)) {
                 sLastDescBottomY = scan.descLineBottom;
             }
             // 【code 924】诊断：为什么中点不生效？三种可能各对应一个不同的数字——
@@ -3273,8 +3276,9 @@ public class ActivityButtonHook {
             // 窗口形态变了（浮窗进出 / 分屏 / 转屏 / 被拖动）⇒ 几何必须**无条件**重落位：
             //   § 只看「滑条/时间行动没动」是看不出来的 —— 浮窗里宿主可能一个控件都不挪，
             //   只是整个窗口换了位置或换了大小（真机 10:11:05→10:11:16 这段就是这样）。
-            boolean windowMoved = decorTop != sPlacedDecorTop
-                    || screenW != sLastScreenW || screenH != sLastScreenH;
+            boolean windowMoved = GeomSnapshotPolicy.windowMoved(
+                    decorTop, screenW, screenH,
+                    sPlacedDecorTop, sLastScreenW, sLastScreenH);
             sDecorTopScreen = decorTop;
             sLastScreenW = screenW;
             sLastScreenH = screenH;
@@ -3313,7 +3317,7 @@ public class ActivityButtonHook {
             ambiguous = scan.hasMainSlider && scan.hasBottomSlider;
 
             switch (verdict) {
-                case SubtitleViewHook.PAGE_PLAYER: {
+                case PlayerPageScanner.PAGE_PLAYER: {
                     sNotPlayerStreak = 0;
                     sNotPlayerSinceMs = 0L;
                     resetAnchorTracking();
@@ -3346,7 +3350,7 @@ public class ActivityButtonHook {
                     break;
                 }
 
-                case SubtitleViewHook.PAGE_OTHER: {
+                case PlayerPageScanner.PAGE_OTHER: {
                     // v35 先问一句：**页面是不是只是被拖开了？**
                     // 拖动播放页时下层列表页会从缝里露出来，它那条底部 mini-player 滑条会被当成
                     // 「已离开播放页」的正面证据 —— 实测 2.4s 的上下拖动里出现过**连续 6 次 OTHER**
@@ -3370,11 +3374,11 @@ public class ActivityButtonHook {
                     if (sNotPlayerSinceMs == 0L) {
                         sNotPlayerSinceMs = now;
                     }
-                    if (sNotPlayerStreak < HIDE_ON_OTHER_STREAK
-                            || now - sNotPlayerSinceMs < HIDE_ON_OTHER_PROOF_MS) {
-                        // v26 去抖：必须「连续 2 次采样」且「证据持续 ≥250ms」才隐藏。
-                        // 页面过渡动画期间播放页自己的主滑条会被误判成 mini-player 滑条，
-                        // 这一层确认窗就是专门吃这种短促假阳性的。
+                    // 【code 1050 / A1】去抖闸 → {@link OtherHidePolicy#shouldHide}。
+                    //   v26：必须「连续 2 次采样」且「证据持续 ≥250ms」才隐藏。
+                    //   页面过渡动画期间主滑条会被误判成 mini-player，确认窗吃短促假阳性。
+                    if (!OtherHidePolicy.shouldHide(sNotPlayerStreak, sNotPlayerSinceMs, now,
+                            HIDE_ON_OTHER_STREAK, HIDE_ON_OTHER_PROOF_MS)) {
                         break;
                     }
                     sLastDecision = Boolean.FALSE;
@@ -3570,7 +3574,7 @@ public class ActivityButtonHook {
             String sig = scan.evidenceSignature();
             if (!sig.equals(sLastEvidenceSig)) {
                 sLastEvidenceSig = sig;
-                LogGate.debug(TAG, " verdict=" + SubtitleViewHook.verdictName(verdict)
+                LogGate.debug(TAG, " verdict=" + PlayerPageScanner.verdictName(verdict)
                         + " | " + scan.describe(screenW, screenH));
             }
 
@@ -3596,7 +3600,7 @@ public class ActivityButtonHook {
                 && sButtonGroup.getVisibility() == View.VISIBLE;
         HeartbeatPolicy.Beat b = HeartbeatPolicy.decide(
                 verdict, ambiguous, sAmbiguousRechecks, MAX_AMBIGUOUS_RECHECKS,
-                verdict == SubtitleViewHook.PAGE_PLAYER, buttonVisible,
+                verdict == PlayerPageScanner.PAGE_PLAYER, buttonVisible,
                 sLastVerdict, sStableStreak,
                 AMBIGUOUS_RECHECK_MS, HEARTBEAT_FAST_MS, HEARTBEAT_MS, SETTLE_STREAK);
         sAmbiguousRechecks = b.ambiguousRechecks;
@@ -3619,7 +3623,7 @@ public class ActivityButtonHook {
         if (ref == null) {
             return false;
         }
-        return SubtitleViewHook.isEffectivelyVisible(ref.get());
+        return PlayerPageScanner.isEffectivelyVisible(ref.get());
     }
 
     /**
@@ -3678,7 +3682,7 @@ public class ActivityButtonHook {
      *
      * @return true = 本轮已推迟（调用方直接 break，维持现状）
      */
-    private static boolean deferHideOnEmptyScan(long now, SubtitleViewHook.ScanResult scan) {
+    private static boolean deferHideOnEmptyScan(long now, PlayerPageScanner.ScanResult scan) {
         // 四道门判据已抽至 EmptyScanPolicy（零状态内核，见其铁律）；此处只留副作用。
         boolean degenerate = scan != null && EmptyScanPolicy.isDegenerate(
                 scan.hasMainSlider, scan.hasBottomSlider, scan.anchorRef != null,
@@ -3704,7 +3708,7 @@ public class ActivityButtonHook {
     private static float anchorAreaRatio(int screenW, int screenH) {
         WeakReference<View> ref = sPlayerAnchor;
         View v = ref == null ? null : ref.get();
-        return SubtitleViewHook.visibleAreaRatio(v, screenW, screenH);
+        return PlayerPageScanner.visibleAreaRatio(v, screenW, screenH);
     }
 
     /**
@@ -3902,13 +3906,11 @@ public class ActivityButtonHook {
         if (sLastSliderCy <= 0) {
             return;   // 几何还没到手：保持现状（兜底位），等下一次几何更新再来
         }
-        if (!force
-                && Math.abs(sLastSliderCy - sPlacedGeoSliderCy) <= GEO_SNAPSHOT_DEADZONE_PX
-                && Math.abs(sLastDescBottomY - sPlacedGeoDescBottom) <= GEO_SNAPSHOT_DEADZONE_PX
-                && Math.abs(sLastSliderRightPx - sPlacedGeoSliderRight) <= GEO_SNAPSHOT_DEADZONE_PX
-                // 【code 1045】新落位的基准线变了也要重算（否则时间行一换行，按钮就赖着不动）。
-                && Math.abs(sLastTimeLabelBottom - sPlacedGeoTimeLabelBottom)
-                        <= GEO_SNAPSHOT_DEADZONE_PX) {
+        // 【code 1050 / A1】快照迟滞闸 → {@link GeomSnapshotPolicy#geoUnchanged}。
+        if (!force && GeomSnapshotPolicy.geoUnchanged(
+                sLastSliderCy, sLastDescBottomY, sLastSliderRightPx, sLastTimeLabelBottom,
+                sPlacedGeoSliderCy, sPlacedGeoDescBottom, sPlacedGeoSliderRight,
+                sPlacedGeoTimeLabelBottom, GEO_SNAPSHOT_DEADZONE_PX)) {
             return;   // 几何没变（含 settle 期小抖动）：不折腾（避免每帧 setLayoutParams 造成布局回环）
         }
         try {

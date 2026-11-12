@@ -167,8 +167,7 @@ public class SettingsActivity extends AppCompatActivity {
     private static final String TAG = "DLsiteFloat:Settings";
 
     /** 【code 1015 / 2.3.2】状态卡连点解锁：需要几次、相邻两次点击的最长间隔。 */
-    private static final int STATUS_TAP_REQUIRED = 5;
-    private static final long STATUS_TAP_WINDOW_MS = 3000L;
+    // 【code 1056 / B1】连点常量 → {@link SettingsExperimentalLogic#TAP_REQUIRED} / TAP_WINDOW_MS
 
     /**
      * 悬浮窗面板顶部的预览不透明度（0–255）。
@@ -929,9 +928,8 @@ public class SettingsActivity extends AppCompatActivity {
 
     /** 把只由滑块表达的浮点参数对齐到滑块的刻度。 */
     private static void quantize(SubtitleConfig c) {
-        c.activeScale = Math.round(c.activeScale * 10f) / 10f;
-        c.lineSpacingDp = Math.round(c.lineSpacingDp * 2f) / 2f;
-        c.wrapExtraSpacingDp = Math.round(c.wrapExtraSpacingDp * 2f) / 2f;
+        // 【code 1055 / B1】→ {@link SettingsDraftPolicy#quantize}
+        SettingsDraftPolicy.quantize(c);
     }
 
     /** 语言切换 / 重建行之后必须调一次，把静态文案与状态卡重新刷一遍。 */
@@ -2359,14 +2357,14 @@ public class SettingsActivity extends AppCompatActivity {
      * 草稿值都不受影响（三组从一开始就已经建好，只是藏着）。
      */
     private void selectAppearancePage(int page) {
-        if (page < 0 || page > 2) {
-            page = 0;
-        }
+        // 【code 1057 / B1】页签下标 → {@link SettingsAppearanceLogic#clampPage}
+        page = SettingsAppearanceLogic.clampPage(page);
         mAppearancePage = page;
         LinearLayout[] pages = {mGroupMain, mGroupInactive, mGroupTypo};
         for (int i = 0; i < pages.length; i++) {
             if (pages[i] != null) {
-                pages[i].setVisibility(i == page ? View.VISIBLE : View.GONE);
+                pages[i].setVisibility(SettingsAppearanceLogic.pageVisible(i, page)
+                        ? View.VISIBLE : View.GONE);
             }
         }
         // 【code 1026】三个面各自以「恢复默认」按钮行收尾；底距只能在**本面可见时**量
@@ -2387,7 +2385,7 @@ public class SettingsActivity extends AppCompatActivity {
             if (b == null) {
                 continue;
             }
-            boolean on = i == page;
+            boolean on = SettingsAppearanceLogic.tabSelected(i, page);
             b.setBackgroundTintList(colorStateList(on ? onBg : offBg));
             b.setTextColor(colorStateList(on ? onFg : offFg));
         }
@@ -2985,11 +2983,11 @@ public class SettingsActivity extends AppCompatActivity {
      */
     private void onExperimentalToggled(boolean enabled) {
         mDraft.experimentalEnabled = enabled;
-        if (!enabled) {
-            // 卡内所有子功能关掉（配置层的不变式也在 clamp() 里兜一道，这里让 UI 同步）
-            mDraft.subtitleCacheEnabled = false;
-        }
-        applyExperimentalChildEnabled(enabled);
+        // 【code 1056 / B1】总闸 → 缓存子开关草稿值：{@link SettingsExperimentalLogic#cacheEnabledAfterMasterToggle}
+        mDraft.subtitleCacheEnabled = SettingsExperimentalLogic.cacheEnabledAfterMasterToggle(
+                enabled, mDraft.subtitleCacheEnabled);
+        applyExperimentalChildEnabled(
+                SettingsExperimentalLogic.childControlsEnabled(enabled));
         applyExperimentalVisibility();
         markDirty();
     }
@@ -3030,7 +3028,9 @@ public class SettingsActivity extends AppCompatActivity {
      *     「卡片在用户保存配置后不显示」那条）。
      */
     private void applyExperimentalVisibility() {
-        boolean show = mDraft.experimentalEnabled || mSaved.experimentalEnabled;
+        // 【code 1056 / B1】→ {@link SettingsExperimentalLogic#shouldShowCard}
+        boolean show = SettingsExperimentalLogic.shouldShowCard(
+                mDraft.experimentalEnabled, mSaved.experimentalEnabled);
         // 【code 1031】记录「原来是隐藏的」——卡片从 GONE 转 VISIBLE 之后必须重新校准
         //   底部留白，否则会带着上一次「高度为 0 时算出的 margin」一起显示出来。
         boolean wasHidden = mCardExperimental != null
@@ -3060,36 +3060,30 @@ public class SettingsActivity extends AppCompatActivity {
     /**
      * 【code 1015 / 2.3.2】状态卡的**隐藏**解锁入口：连续点击五次开启「实验性功能」。
      *
-     * <p>时间窗 {@link #STATUS_TAP_WINDOW_MS}：五次点击必须落在「相邻两次间隔不超过 3 秒」的
+     * <p>时间窗 {@link SettingsExperimentalLogic#TAP_WINDOW_MS}：五次点击必须落在「相邻两次间隔不超过 3 秒」的
      * 连续序列里（中途停顿超过 3 秒即清零重数），免得把用户几个月里的偶然几次点击累计成解锁。
      *
      * <p>解锁只改**草稿**并立即把卡片显示出来，仍需用户点「保存设置」才写入配置 ——
      * 与其余配置行完全一致，不给隐藏入口开特例。
      */
     private void onStatusCardClicked() {
-        // 【code 1016 / 需求 4】已经打开过实验性功能 ⇒ 这个手势已经没有用了，
-        //   直接给一条明确反馈，而不是静默不理（Ari：「弹消息条：你已经打开实验性功能，
-        //   无需进行此操作」）。连点计数一并清零，免得退出实验功能时残留旧计数。
-        if (mDraft.experimentalEnabled) {
-            mStatusTapCount = 0;
+        // 【code 1056 / B1】连点 FSM → {@link SettingsExperimentalLogic#onStatusTap}
+        long now = android.os.SystemClock.uptimeMillis();
+        SettingsExperimentalLogic.UnlockResult r = SettingsExperimentalLogic.onStatusTap(
+                mDraft.experimentalEnabled,
+                new SettingsExperimentalLogic.TapState(mStatusTapCount, mStatusTapLastMs),
+                now);
+        mStatusTapCount = r.next.count;
+        mStatusTapLastMs = r.next.lastMs;
+        if (r.outcome == SettingsExperimentalLogic.UnlockOutcome.ALREADY_ON) {
             toast(Strings.EXPERIMENTAL_ALREADY_ON.get(mLang));
             return;
         }
-        long now = android.os.SystemClock.uptimeMillis();
-        if (now - mStatusTapLastMs > STATUS_TAP_WINDOW_MS) {
-            mStatusTapCount = 0;
-        }
-        mStatusTapLastMs = now;
-        mStatusTapCount++;
-        if (mStatusTapCount < STATUS_TAP_REQUIRED) {
+        if (r.outcome == SettingsExperimentalLogic.UnlockOutcome.PROGRESS) {
             return;
         }
-        mStatusTapCount = 0;
-        if (mDraft.experimentalEnabled) {
-            return; // 已经是开的：五次点击不做事（避免无谓地标脏）
-        }
+        // UNLOCKED
         mDraft.experimentalEnabled = true;
-        // 打开总闸 ⇒ 子功能恢复可用（「字幕缓存」的值沿用用户上一次的设置）
         applyExperimentalChildEnabled(true);
         applyExperimentalVisibility();
         markDirty();
@@ -3568,7 +3562,9 @@ public class SettingsActivity extends AppCompatActivity {
      * ① 先建开关行、{@link #beginRow} 对首行不插占位，故 index 0 恒为开关行。
      */
     private void applyLiquidGlassBlurVisibility() {
-        final int vis = (mDraft != null && mDraft.liquidGlass) ? View.VISIBLE : View.GONE;
+        // 【code 1057 / B1】子行显隐 → {@link SettingsLiquidGlassLogic#childrenVisible}
+        final int vis = SettingsLiquidGlassLogic.childrenVisible(
+                mDraft != null && mDraft.liquidGlass) ? View.VISIBLE : View.GONE;
         final LinearLayout parent = mGroupLiquidGlass;
         if (parent == null) {
             return;
@@ -3633,8 +3629,9 @@ public class SettingsActivity extends AppCompatActivity {
      *    {@code mDraft.floatWindowColor}，关掉液态玻璃后原色立即恢复显示。
      */
     private void applyPanelColorLock() {
-        final boolean locked = mDraft != null && mDraft.liquidGlass;
-        final float alpha = locked ? 0.38f : 1f;
+        // 【code 1057 / B1】置灰 / 可点 → {@link SettingsLiquidGlassLogic}
+        final boolean liquidOn = mDraft != null && mDraft.liquidGlass;
+        final float alpha = SettingsLiquidGlassLogic.panelColorAlpha(liquidOn);
         if (mPanelColorLabel != null) {
             mPanelColorLabel.setAlpha(alpha);
         }
@@ -3642,7 +3639,8 @@ public class SettingsActivity extends AppCompatActivity {
             mPanelColorBody.setAlpha(alpha);
         }
         if (mSwatchPanelColor != null) {
-            mSwatchPanelColor.setInteractive(!locked);
+            mSwatchPanelColor.setInteractive(
+                    SettingsLiquidGlassLogic.panelColorInteractive(liquidOn));
         }
     }
 
@@ -4649,16 +4647,8 @@ public class SettingsActivity extends AppCompatActivity {
      * ─────────────────────────────────────────────────────────────────────
      */
     private boolean isDirty() {
-        String draftLang = mDraft.uiLanguage;
-        String savedLang = mSaved.uiLanguage;
-        try {
-            // 把两侧语言对齐成同一个值（取草稿的），再比「除语言外的参数」
-            mDraft.uiLanguage = savedLang;
-            return !mDraft.sameParametersAs(mSaved);
-        } finally {
-            mDraft.uiLanguage = draftLang;
-            mSaved.uiLanguage = savedLang;
-        }
+        // 【code 1055 / B1】语言中立脏态 → {@link SettingsDraftPolicy#isDirty}
+        return SettingsDraftPolicy.isDirty(mDraft, mSaved);
     }
 
     /**
@@ -4686,15 +4676,15 @@ public class SettingsActivity extends AppCompatActivity {
      * （点了给「配置无变化」，行为与 1025 一致，不静默）。
      */
     private void updateSaveBar() {
-        boolean dirty = isDirty();
-        int sections = dirty ? Math.max(1, dirtySectionCount()) : 0;
+        // 【code 1055 / B1】脏态 / 分区读数 → {@link SettingsDraftPolicy#saveBarState}
+        SettingsDraftPolicy.SaveBarState bar = SettingsDraftPolicy.saveBarState(mDraft, mSaved);
         if (mDirtyDot != null) {
-            mDirtyDot.setVisibility(dirty ? View.VISIBLE : View.GONE);
+            mDirtyDot.setVisibility(bar.dirty ? View.VISIBLE : View.GONE);
         }
         if (mDirtyLabel != null) {
-            mDirtyLabel.setVisibility(dirty ? View.VISIBLE : View.GONE);
-            if (dirty) {
-                mDirtyLabel.setText(Strings.UNSAVED_COUNT.format(mLang, sections));
+            mDirtyLabel.setVisibility(bar.dirty ? View.VISIBLE : View.GONE);
+            if (bar.dirty) {
+                mDirtyLabel.setText(Strings.UNSAVED_COUNT.format(mLang, bar.sectionDisplayCount));
             }
         }
     }
@@ -4711,54 +4701,8 @@ public class SettingsActivity extends AppCompatActivity {
      * （{@link #updateSaveBar()} 里有 {@code Math.max(1, …)} 兜底，但那是兜底不是借口）。
      */
     private int dirtySectionCount() {
-        int n = 0;
-        // ① 字幕面（原「颜色」面）：颜色 / 阴影 / 不透明度 / 放大倍数
-        if (mDraft.subtitleColor != mSaved.subtitleColor
-                || mDraft.shadowColor != mSaved.shadowColor
-                || mDraft.shadowStrength != mSaved.shadowStrength
-                || mDraft.shadowRadius != mSaved.shadowRadius
-                || mDraft.activeHighlight != mSaved.activeHighlight
-                || Math.abs(mDraft.activeScale - mSaved.activeScale) > 0.0001f) {
-            n++;
-        }
-        // ② 行态面：模糊与缩放两组（各含「启用」开关）
-        if (mDraft.inactiveBlurEnabled != mSaved.inactiveBlurEnabled
-                || mDraft.inactiveBlurSteps != mSaved.inactiveBlurSteps
-                || mDraft.inactiveScaleEnabled != mSaved.inactiveScaleEnabled
-                || mDraft.inactiveScalePct != mSaved.inactiveScalePct) {
-            n++;
-        }
-        // ③ 排版面：对齐 / 行距 / 折行 / 悬浮窗颜色（字重已从界面移除但字段仍在）
-        if (!eq(mDraft.fontWeight, mSaved.fontWeight)
-                || !eq(mDraft.textAlign, mSaved.textAlign)
-                || Math.abs(mDraft.lineSpacingDp - mSaved.lineSpacingDp) > 0.0001f
-                || Math.abs(mDraft.wrapExtraSpacingDp - mSaved.wrapExtraSpacingDp) > 0.0001f
-                || mDraft.floatWindowColor != mSaved.floatWindowColor
-                || mDraft.subtitleFontFollowSystem != mSaved.subtitleFontFollowSystem) {
-            n++;
-        }
-        // ④ 液态玻璃卡
-        if (mDraft.liquidGlass != mSaved.liquidGlass
-                || mDraft.liquidGlassBlurPct != mSaved.liquidGlassBlurPct
-                || mDraft.liquidGlassPanelLum != mSaved.liquidGlassPanelLum
-                || mDraft.liquidGlassTransparency != mSaved.liquidGlassTransparency
-                || mDraft.liquidGlassBackdropLum != mSaved.liquidGlassBackdropLum) {
-            n++;
-        }
-        // ⑤ 「其他」卡与实验性总开关
-        if (mDraft.statusbarSubtitleEnabled != mSaved.statusbarSubtitleEnabled
-                || mDraft.keepScreenOn != mSaved.keepScreenOn
-                || mDraft.hotReload != mSaved.hotReload
-                || mDraft.debugLog != mSaved.debugLog
-                || mDraft.subtitleCacheEnabled != mSaved.subtitleCacheEnabled
-                || mDraft.experimentalEnabled != mSaved.experimentalEnabled) {
-            n++;
-        }
-        return n;
-    }
-
-    private static boolean eq(String a, String b) {
-        return a == null ? b == null : a.equals(b);
+        // 【code 1055 / B1】→ {@link SettingsDraftPolicy#dirtySectionCount}
+        return SettingsDraftPolicy.dirtySectionCount(mDraft, mSaved);
     }
 
     /**
@@ -4905,7 +4849,8 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void handleBack() {
-        if (!isDirty()) {
+        // 【code 1055 / B1】退出确认闸 → {@link SettingsDraftPolicy#shouldConfirmUnsaved}
+        if (!SettingsDraftPolicy.shouldConfirmUnsaved(mDraft, mSaved)) {
             finish();
             return;
         }

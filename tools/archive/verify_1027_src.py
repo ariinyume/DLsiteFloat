@@ -95,7 +95,7 @@ def main():
     sync = read(jp('hook', 'HostLineSync.java'))
     health = read(jp('hook', 'AdapterHealth.java'))
     net = read(jp('hook', 'NetworkHook.java'))
-    viewhook = read(jp('hook', 'SubtitleViewHook.java'))
+    viewhook = read(jp('hook', 'PlayerPageScanner.java'))
     # SRC = app/src/main ⇒ app/build.gradle 在两级之上
     gradle = read(os.path.join(SRC, '..', '..', 'build.gradle'))
     module = read(jp('DlsiteSoundSubtitleModule.java'))

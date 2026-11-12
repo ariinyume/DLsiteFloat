@@ -715,8 +715,72 @@ def appVersionTag = '2.4.4'
 //      一变就**无条件强制重落位** —— 浮窗里宿主可能一个控件都不挪。
 //   ⚠️ 本轮**升语义版本号**（2.4.3 已于 10-29 随 code 1047 发布，同 code 不能再覆盖安装）：
 //      versionName / tag 2.4.4、versionCode 1047 → 1048、label 1029.1 → 1104.1。
-def appVersionCode = 1048
-def appVersionCodeLabel = '1104.1'
+//
+// 【code 1049 / 2.4.4】宿主 2.23.1 入白名单 + 预取 Referer 跟 CDN 同源：
+//   ① HostInfo.VERIFIED_VERSION → 2.23.1；VERIFIED_SET 增 2.23.0 / 2.23.1（离线体检
+//      _host231/ADAPTER_CHECK_2.23.1.md：静态锚点全过；2.23.0→2.23.1 仅 Pickup UI +
+//      MEDIA_BUTTON，原生适配面等价）。
+//   ② ZiptreePrefetch 不再写死 play.dl.dlsite.com Referer（2.23.x 包内已无该字面量），
+//      改为 refererOf(baseUrl) 跟拦到的 ziptree 同源；失败回落 play.dlsite.com。
+//   ③ 架构优化清单沉淀到工作区 docs/架构优化清单-20261110.md。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1048 → 1049、label 1110.1。
+//
+// 【code 1050 / 2.4.4】架构优化清单 P0 开工（A3 + A1）：
+//   ① A3：tools/host_adapter_scan.py —— 宿主离线适配体检固定入口（解包/apk/apks）。
+//   ② A1：GeomSnapshotPolicy（滑条/时间行采信、窗口形态、快照迟滞）+ OtherHidePolicy
+//      （PAGE_OTHER 去抖）从 ActivityButtonHook 抽出，黄金向量进 GoldenVectorTest。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1049 → 1050、label 1111.1。
+//
+// 【code 1051 / 2.4.4】架构优化 A2 首批（TrackDecision）：
+//   ① 真机 100419 日志确认 1050 主路径健康后，从 SubtitleRepository.onTrackChanged
+//      抽出 TrackDecision（keepRecentJson / softSuspend / graceMs / earlyCloseDelayMs）。
+//   ② 黄金向量钉 1s/15s grace 矩阵与 early-close min(5s, grace)；CueStore /
+//      DisplayContract / resolvePendingTrack 副作用本轮不动。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1050 → 1051、label 1111.2。
+//
+// 【code 1052 / 2.4.4】架构优化 A2 续（假换轨纯裁决）：
+//   ① 真机 103612 确认 1051 健康后，从 resolvePendingTrack 抽出
+//      resolvePending / isSpuriousChange / jsonArrivedDuringGrace / softNoSubtitleVerdict。
+//   ② 接线改用挂起期样本副本（修「先清零字段再判」的死代码顺序）；权威序号门宿主行为不变。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1051 → 1052、label 1111.3。
+//
+// 【code 1053 / 2.4.4】架构优化 A2 收口（CueStore + DisplayContract）：
+//   ① 真机 112617 确认 1052 健康后，抽出 CueStore（parseTime/normalize/cue/lineSet）
+//      与 DisplayContract（shouldShowNoSubtitles/hide*/join/statusBarLine）。
+//   ② Repository 摄入与显隐读路径接线；时间解析不再依赖 SimpleDateFormat 字段。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1052 → 1053、label 1111.4。
+//
+// 【code 1054 / 2.4.4】架构优化 P1 首批（B3 扫描器改名）：
+//   ① 真机 175651 确认 1053 健康后，SubtitleViewHook → PlayerPageScanner（名实相符）。
+//   ② 旧类名留 @Deprecated 转发壳；archive verify_*_src 改读新文件。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1053 → 1054、label 1111.5。
+//
+// 【code 1055 / 2.4.4】架构优化 P1/B1 首刀（SettingsDraftPolicy）：
+//   ① 功能面确认后，从 SettingsActivity 抽出草稿/保存栏纯裁决（quantize / isDirty /
+//      dirtySectionCount / saveBarState / shouldConfirmUnsaved）；视图与 Dialog 未搬。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1054 → 1055、label 1112.1。
+//
+// 【code 1056 / 2.4.4】架构优化 P1：B1 续 + B2 开工：
+//   ① B1：SettingsExperimentalLogic（连点解锁 FSM / 显隐 / 总闸→缓存）。
+//   ② B2：StatusBarOemHunt（OEM id 目录 + 锚点裁决 / describe / compat CSV）。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1055 → 1056、label 1112.2。
+//
+// 【code 1057 / 2.4.4】架构优化 P1：B1 Appearance/LiquidGlass + B2 IntentRouter + B4 Channels：
+//   ① B1：SettingsAppearanceLogic / SettingsLiquidGlassLogic（页签索引 + 液态玻璃门控）。
+//   ② B2：StatusBarIntentRouter（广播分类 + LINE 载荷解析；滚动内核未搬）。
+//   ③ B4：Protocol.Channel / Channels / channelOf（action 按通道分组目录）。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1056 → 1057、label 1112.3。
+//
+// 【code 1058 / 2.4.4】架构优化 P1/B2：WidthSettlePolicy + LineLeftGate 黄金向量：
+//   ① WidthSettlePolicy：宽度迟滞 / pending settle / resolveAvail。
+//   ② LineLeftGate 补 ScrollKernel 黄金向量（940 抽出后此前无单测）。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1057 → 1058、label 1112.4。
+//
+// 【code 1059 / 2.4.4】架构优化 P1/B2：ScrollFitRecheck：
+//   ① fit recheck 入口闸 / 是否补起滚；动画末 afterAnimationEnd 三分支。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1058 → 1059、label 1112.5。
+def appVersionCode = 1059
+def appVersionCodeLabel = '1112.5'
 def appVersionName = '2.4.4'
 
 android {

@@ -251,6 +251,82 @@ public final class Protocol {
     /** SystemUI 包名（LSPosed 作用域声明之一）。 */
     public static final String SYSTEMUI_PKG = "com.android.systemui";
 
+    /**
+     * 【code 1057 / B4】按**业务通道**分组的 action 目录（字面量仍是上方常量，不改值）。
+     *
+     * <p>用途：读契约时知道「这条广播属于哪条管道」；禁止把不同通道的 extra 混用。
+     */
+    public enum Channel {
+        /** 设置页 ↔ 各注入进程：配置变更 / 重启 SystemUI / 宿主探测。 */
+        SETTINGS,
+        /** App ↔ SystemUI：状态栏字幕行 / 开关 / 双击关闭。 */
+        STATUSBAR,
+        /** App ↔ SystemUI：作用域 PING/PONG。 */
+        SCOPE,
+        /** 设置页 ↔ 宿主：字幕缓存清理 / 统计 / 预取清理。 */
+        CACHE,
+        /** 设置页 ↔ 宿主：HostFont 描述与分片。 */
+        HOST_FONT,
+        UNKNOWN
+    }
+
+    /** 通道分组表（只读目录；{@link #selfCheck} 仍以扁平列表为准）。 */
+    public static final class Channels {
+        public static final String[] SETTINGS = {
+                ACTION_CONFIG_CHANGED, ACTION_RESTART_SYSUI,
+                ACTION_HOST_PING, ACTION_HOST_PONG,
+        };
+        public static final String[] STATUSBAR = {
+                ACTION_LINE, ACTION_ENABLED, ACTION_DISMISS_REQUEST,
+        };
+        public static final String[] SCOPE = {
+                ACTION_SCOPE_PING, ACTION_SCOPE_PONG,
+        };
+        public static final String[] CACHE = {
+                ACTION_SUBTITLE_CACHE_CLEAR, ACTION_SUBTITLE_CACHE_STATS_REQ,
+                ACTION_SUBTITLE_CACHE_STATS, ACTION_SUBTITLE_PREFETCH_CLEAR,
+        };
+        public static final String[] HOST_FONT = {
+                ACTION_HOST_FONT_REQ, ACTION_HOST_FONT_INFO, ACTION_HOST_FONT_CHUNK,
+        };
+
+        private Channels() {
+        }
+    }
+
+    /** 把 action 映射到 {@link Channel}（未知 / null ⇒ {@link Channel#UNKNOWN}）。 */
+    public static Channel channelOf(String action) {
+        if (action == null || action.isEmpty()) {
+            return Channel.UNKNOWN;
+        }
+        for (String a : Channels.SETTINGS) {
+            if (a.equals(action)) {
+                return Channel.SETTINGS;
+            }
+        }
+        for (String a : Channels.STATUSBAR) {
+            if (a.equals(action)) {
+                return Channel.STATUSBAR;
+            }
+        }
+        for (String a : Channels.SCOPE) {
+            if (a.equals(action)) {
+                return Channel.SCOPE;
+            }
+        }
+        for (String a : Channels.CACHE) {
+            if (a.equals(action)) {
+                return Channel.CACHE;
+            }
+        }
+        for (String a : Channels.HOST_FONT) {
+            if (a.equals(action)) {
+                return Channel.HOST_FONT;
+            }
+        }
+        return Channel.UNKNOWN;
+    }
+
     private Protocol() {
     }
 

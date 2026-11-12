@@ -26,7 +26,7 @@ import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
  * 【code 1024 / P1-5】**宿主上屏行**与**自算行**的一致性观测（只统计，不接管渲染）。
  *
  * <h3>── 权威行其实一直在手上 ──</h3>
- * {@code SubtitleViewHook} 抓屏时已经把宿主字幕控件上的文本读出来了 —— 判据是
+ * {@code PlayerPageScanner} 抓屏时已经把宿主字幕控件上的文本读出来了 —— 判据是
  * 「文本 ∈ 已加载的 cue 列表」（见 {@code SubtitleRepository#isKnownSubtitleText}），
  * 它现在只用于判定「这一屏有没有真字幕」。而「宿主**实际**在显示哪几句」与
  * 「我们自算该显示哪几句」是否一致，从来没有被量过。

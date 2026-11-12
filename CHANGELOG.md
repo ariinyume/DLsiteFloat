@@ -5126,3 +5126,94 @@ Skia 用平台默认字体，含中文回退链）。但 `setTypeface(null)` 恰
 versionName / tag 2.4.4、versionCode 1047 → 1048、label 1029.1 → 1104.1。
 
 **已知问题**：宿主 app 以浮窗形式呈现时，因页面布局位置不足，字幕开关按钮会压住播放控件。
+
+### 1110.1 code 1048 → 1049：宿主 2.23.1 入白名单 + 预取 Referer 同源
+
+- `HostInfo.VERIFIED_VERSION` → **2.23.1**；`VERIFIED_SET` 增 `2.23.0` / `2.23.1`
+  （离线体检 `_host231/ADAPTER_CHECK_2.23.1.md`：静态锚点全过；2.23.0→2.23.1 仅
+  Pickup UI + MEDIA_BUTTON，原生适配面等价）。
+- `ZiptreePrefetch` 不再写死 `play.dl.dlsite.com` Referer（2.23.x 包内已无该字面量），
+  改为 `refererOf(baseUrl)` 跟拦到的 ziptree CDN 同源；失败回落 `play.dlsite.com`。
+- 架构优化清单沉淀到工作区 `docs/架构优化清单-20261110.md`。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1048 → 1049、label 1110.1。
+
+### 1111.1 code 1049 → 1050：架构优化 P0（A3 + A1）
+
+- **A3** `tools/host_adapter_scan.py`：宿主离线适配体检固定入口（解包目录 / apk / apks）。
+- **A1** 从 `ActivityButtonHook` 抽出零状态纯函数并进黄金向量：
+  - `GeomSnapshotPolicy`：滑条/时间行采信、窗口形态变化、快照迟滞闸
+  - `OtherHidePolicy`：`PAGE_OTHER` 连续采样 + 时间窗去抖
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1049 → 1050、label 1111.1。
+  A2（`SubtitleRepository` 拆层）未做，仍按清单下一批。
+
+### 1111.2 code 1050 → 1051：架构优化 A2 首批（TrackDecision）
+
+- 真机 `LSPosed_20261111_100419`：code 1050 + 宿主 2.23.1 `verified=yes`，Health 主路径 HIT，无 Float 异常；功能面确认后开工 A2。
+- **A2 首批** 从 `SubtitleRepository.onTrackChanged` 抽出零状态 `TrackDecision`：
+  - `keepRecentJson` / `softSuspend` / `graceMs` / `earlyCloseDelayMs`
+  - 黄金向量钉 1s/15s grace 矩阵与 early-close `min(5s, grace)`
+- 未动：CueStore 摄入、DisplayContract、`resolvePendingTrack` 副作用、假换轨位置兜底。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1050 → 1051、label 1111.2。
+
+### 1111.3 code 1051 → 1052：架构优化 A2 续（假换轨纯裁决）
+
+- 真机 `LSPosed_20261111_103612`：code 1051 + 2.23.1 `verified=yes`，Health HIT，磁盘缓存换轨 RESUME，无异常。
+- **A2 续** `TrackDecision` 增补：
+  - `resolvePending` / `isSpuriousChange` / `jsonArrivedDuringGrace` / `softNoSubtitleVerdict`
+  - 黄金向量钉序号门跳过兜底、位置回退假换轨、基线≈0 真换轨不误杀
+- 接线改用挂起期样本副本（修「先清零字段再判」死代码）；当前宿主走权威序号门，行为面不变。
+- 未动：CueStore / DisplayContract。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1051 → 1052、label 1111.3。
+
+### 1111.4 code 1052 → 1053：架构优化 A2 收口（CueStore + DisplayContract）
+
+- 真机 `LSPosed_20261111_112617`：code 1052 + 2.23.1 `verified=yes`，Health HIT，磁盘缓存 RESUME，无异常。
+- **CueStore**：`parseTime` / `normalizeLine` / `cueOf` / `exactLineSet` / `isPlausibleSubtitleProbe`
+- **DisplayContract**：`shouldShowNoSubtitles` / `hideCurrentSubtitles` / `hideCues` /
+  `hideSelfComputed` / `joinCue` / `statusBarLine`
+- A2 清单三项（TrackDecision / CueStore / DisplayContract）纯函数层齐；Repository 仍持状态与 I/O。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1052 → 1053、label 1111.4。
+
+### 1111.5 code 1053 → 1054：架构优化 P1/B3（PlayerPageScanner）
+
+- 真机 `LSPosed_20261111_175651`：code 1053 + 2.23.1 `verified=yes`，Health HIT；会话内可见一次
+  FALSE NEGATIVE 遥测（JSON 晚裁决窗 9ms，自愈），功能面确认无问题。
+- **B3**：`SubtitleViewHook` → `PlayerPageScanner`（扫描器名实相符；真 hook 仍在
+  `ActivityButtonHook` / `StructureWatcher`）。旧类名保留 `@Deprecated` 转发壳。
+- `tools/archive/verify_*_src.py` 改读新文件名；dex 历史脚本不动。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1053 → 1054、label 1111.5。
+
+### 1112.1 code 1054 → 1055：架构优化 P1/B1 首刀（SettingsDraftPolicy）
+
+- 功能面确认后开工 B1：从 `SettingsActivity` 抽出草稿/保存栏零状态纯裁决
+  （`quantize` / `isDirty` / `dirtySectionCount` / `saveBarState` / `shouldConfirmUnsaved`）。
+- 钉：语言中立脏态（§6.3）、五分区未保存计数、quantize 刻度对齐；View / Dialog / 存盘未搬。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1054 → 1055、label 1112.1。
+
+### 1112.2 code 1055 → 1056：架构优化 P1（B1 续 + B2）
+
+- 真机 `LSPosed_20261112_153020`：code 1055 + 2.23.1 `verified=yes`，Health HIT，无异常。
+- **B1 续** `SettingsExperimentalLogic`：连点解锁 FSM / 卡片显隐 / 总闸→缓存子开关。
+- **B2** `StatusBarOemHunt`：OEM id 目录 + 锚点裁决 / describe / compat CSV；滚动与广播未搬。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1055 → 1056、label 1112.2。
+
+### 1112.3 code 1056 → 1057：架构优化 P1（B1 Appearance/LiquidGlass + B2 IntentRouter + B4）
+
+- 功能面确认后继续拆：**B1** `SettingsAppearanceLogic` / `SettingsLiquidGlassLogic`（页签索引 + 液态玻璃门控）。
+- **B2** `StatusBarIntentRouter`：广播分类 + LINE 载荷解析；滚动内核仍在 Hook。
+- **B4** `Protocol.Channel` / `Channels` / `channelOf`：action 按 SETTINGS/STATUSBAR/SCOPE/CACHE/HOST_FONT 分组。
+- 黄金向量补 Appearance / LiquidGlass / IntentRouter / channelOf；视图拆分未动。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1056 → 1057、label 1112.3。
+
+### 1112.4 code 1057 → 1058：架构优化 P1/B2（WidthSettlePolicy）
+
+- 真机 `LSPosed_20261112_175842`：code 1057 + 2.23.1 `verified=yes`；FALSE NEGATIVE 7ms 自愈。
+- **B2** `WidthSettlePolicy`：宽度迟滞早退 / pending `NO_CHANGE_SETTLE` / `resolveAvail`；接线 `applyFluidBoundary` / `applyPendingWidth`。
+- `LineLeftGate` 补 `ScrollKernelTest` 黄金向量（940 抽出后此前无单测）。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1057 → 1058、label 1112.4。
+
+### 1112.5 code 1058 → 1059：架构优化 P1/B2（ScrollFitRecheck）
+
+- 真机 `LSPosed_20261112_181749`：code 1058 + 2.23.1 `verified=yes`；Health 推进正常，本段无新 FALSE NEGATIVE。
+- **B2** `ScrollFitRecheck`：posted fit 入口闸 / 是否补起滚；动画末 `RETARGET_CONTINUE` / `CONTINUE_REMAINING` / `NONE`。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1058 → 1059、label 1112.5。

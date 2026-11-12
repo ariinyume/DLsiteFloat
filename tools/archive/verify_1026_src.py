@@ -147,7 +147,7 @@ def main():
           and 'SubtitleStyle.of(cfg, dm, ' not in fview
           and 'return SubtitleStyle.of(' in fview)
 
-    view = all_java.get('hook/SubtitleViewHook.java', '')
+    view = all_java.get('hook/PlayerPageScanner.java', '')
     check('J10 抓屏侧不再采样宿主样式（无 offer 调用）',
           'HostStyleProbe' not in view and '.offer(' not in view)
 

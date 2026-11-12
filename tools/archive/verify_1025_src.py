@@ -459,7 +459,7 @@ def main():
     check('I7 P1-5 观测改用纯自算行（不再是屏上镜像）',
           has(activity_code, 'HostLineSync.observe(r.liveLines, repo.selfComputedLines())')
           or has(read(os.path.join(SRC, 'java', 'io', 'github', 'ariinyume',
-                                   'dlsitesoundfloat', 'hook', 'SubtitleViewHook.java')),
+                                   'dlsitesoundfloat', 'hook', 'PlayerPageScanner.java')),
                  'repo.selfComputedLines()'))
     # I8 横幅自报本轮三项 —— 横幅是普通字符串字面量、整段进 dex 串池，
     #    内容不全会造成「发了版，日志里却读不出这版改了什么」。

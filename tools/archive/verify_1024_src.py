@@ -153,7 +153,7 @@ def main():
     style = read(jp('view/SubtitleStyle.java'))
     abtn = read(jp('hook/ActivityButtonHook.java'))
     sync = read(jp('hook/HostLineSync.java'))
-    viewhook = read(jp('hook/SubtitleViewHook.java'))
+    viewhook = read(jp('hook/PlayerPageScanner.java'))
     config = read(jp('config/SubtitleConfig.java'))
     remote = read(jp('config/RemoteConfig.java'))
     protocol = read(jp('config/Protocol.java'))

@@ -87,7 +87,7 @@ def main():
     module = f('DlsiteSoundSubtitleModule.java')
     netHook = f('hook/NetworkHook.java')
     posHook = f('hook/PlayerPositionHook.java')
-    viewHook = f('hook/SubtitleViewHook.java')
+    viewHook = f('hook/PlayerPageScanner.java')
     btnHook = f('hook/ActivityButtonHook.java')
     floatView = f('view/FloatingSubtitleView.java')
     i18n = f('util/I18n.java')

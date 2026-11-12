@@ -29,7 +29,7 @@ import io.github.ariinyume.dlsitesoundfloat.window.FloatingWindowManager;
 import io.github.ariinyume.dlsitesoundfloat.hook.NetworkHook;
 import io.github.ariinyume.dlsitesoundfloat.hook.PlayerPositionHook;
 import io.github.ariinyume.dlsitesoundfloat.hook.PlayerSourceHook;
-import io.github.ariinyume.dlsitesoundfloat.hook.SubtitleViewHook;
+import io.github.ariinyume.dlsitesoundfloat.hook.PlayerPageScanner;
 import io.github.ariinyume.dlsitesoundfloat.hook.StatusBarSubtitleHook;
 import io.github.ariinyume.dlsitesoundfloat.hook.StructureWatcher;
 import io.github.ariinyume.dlsitesoundfloat.util.StatusBarSubtitleBridge;
@@ -183,7 +183,18 @@ public class DlsiteSoundSubtitleModule extends XposedModule {
         //    下面这段 2.1.4 描述只用**功能性说法**（「按签名形状定位宿主对象」），
         //    绝不写出具体方法名或被移除的类名。
         // 版本核验锚点（**常开、只留这一行**）：详细变更历史已归入「调试日志」开关。
-        XposedCompat.log("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1048");
+        XposedCompat.log("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1059");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1059 （【code 1059 —— 架构优化 P1/B2：ScrollFitRecheck】① 真机 181749 确认 1058 健康后，抽出 fit recheck 入口闸/补起滚与动画末三分支零状态裁决。② View.post/动画未搬。③ 只升 code：versionName 保持 2.4.4，code 1058 → 1059，label 1112.5。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1058 （【code 1058 —— 架构优化 P1/B2：WidthSettlePolicy】① 真机 175842 确认 1057 健康后，抽出宽度迟滞/pending settle/resolveAvail 零状态裁决；LineLeftGate 补黄金向量。② View/Handler/滚动动画未搬。③ 只升 code：versionName 保持 2.4.4，code 1057 → 1058，label 1112.4。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1057 （【code 1057 —— 架构优化 P1：B1 Appearance/LiquidGlass + B2 IntentRouter + B4 Channels】① 功能面确认后，抽出 SettingsAppearanceLogic / SettingsLiquidGlassLogic（页签索引与液态玻璃门控）与 StatusBarIntentRouter（广播分类 + LINE 载荷）。② Protocol.Channel / Channels / channelOf 按通道分组 action。③ 视图拆分与滚动内核未搬。④ 只升 code：versionName 保持 2.4.4，code 1056 → 1057，label 1112.3。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1056 （【code 1056 —— 架构优化 P1：B1 续 + B2】① 真机 153020 确认 1055 健康后，抽出 SettingsExperimentalLogic（连点解锁/显隐/总闸→缓存）与 StatusBarOemHunt（OEM id 目录+锚点裁决）。② 视图拆分与滚动/广播未搬。③ 只升 code：versionName 保持 2.4.4，code 1055 → 1056，label 1112.2。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1055 （【code 1055 —— 架构优化 P1/B1：SettingsDraftPolicy】① 功能面确认后，从 SettingsActivity 抽出草稿/保存栏纯裁决（quantize/isDirty/dirtySectionCount/saveBarState/shouldConfirmUnsaved）并进黄金向量。② 视图与 Dialog 未搬。③ 只升 code：versionName 保持 2.4.4，code 1054 → 1055，label 1112.1。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1054 （【code 1054 —— 架构优化 P1/B3：PlayerPageScanner】① 真机 175651 确认 1053 健康后，SubtitleViewHook 改名 PlayerPageScanner（本类几乎不挂 hook，是播放页扫描器）。② 旧类名留 Deprecated 转发壳；archive verify_*_src 改读新文件。③ 只升 code：versionName 保持 2.4.4，code 1053 → 1054，label 1111.5。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1053 （【code 1053 —— 架构优化 A2 收口：CueStore + DisplayContract】① 真机 112617 确认 1052 健康后，抽出 CueStore（parseTime/normalize/cue/lineSet）与 DisplayContract（shouldShowNoSubtitles/hide*/join/statusBarLine）并进黄金向量。② Repository 摄入与显隐读路径接线。③ 只升 code：versionName 保持 2.4.4，code 1052 → 1053，label 1111.4。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1052 （【code 1052 —— 架构优化 A2 续：假换轨纯裁决】① 真机 103612 确认 1051 健康后，从 resolvePendingTrack 抽出 resolvePending / isSpuriousChange / softNoSubtitleVerdict。② 接线改用挂起期样本副本（修先清零再判的死代码）；权威序号门宿主行为不变。③ 只升 code：versionName 保持 2.4.4，code 1051 → 1052，label 1111.3。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1051 （【code 1051 —— 架构优化 A2 首批：TrackDecision】① 真机 100419 确认 1050 主路径健康后，从 SubtitleRepository.onTrackChanged 抽出 TrackDecision（keepRecentJson / softSuspend / graceMs / earlyCloseDelayMs）并进黄金向量。② CueStore / DisplayContract / resolvePendingTrack 副作用本轮不动。③ 只升 code：versionName 保持 2.4.4，code 1050 → 1051，label 1111.2。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1050 （【code 1050 —— 架构优化 P0：A3 宿主体检脚本 + A1 几何/OTHER 纯函数】① tools/host_adapter_scan.py 收进仓库，新宿主发版固定跑离线锚点闸门。② GeomSnapshotPolicy / OtherHidePolicy 从 ActivityButtonHook 抽出并进黄金向量。③ 只升 code：versionName 保持 2.4.4，code 1049 → 1050，label 1111.1。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1049 （【code 1049 —— 宿主 2.23.1 入白名单 + 预取 Referer 同源】① HostInfo 最新验证位升到 2.23.1，白名单增 2.23.0 / 2.23.1；依据离线体检 _host231：ReactSlider / AudioPlaylist / NetworkingModule / 状态 Map 键 / Hermes testID / ziptree.json 全 HIT，无 PlayIntegrity/Xposed 检测串。② 2.23.x CDN 字面量迁到 *.dlsound.jp，旧 play.dl.dlsite.com 已从包内消失；ZiptreePrefetch 的 Referer 改为跟拦到的 ziptree baseUrl 同源，失败回落 play.dlsite.com。③ 架构优化清单沉淀到工作区 docs。④ 只升 code：versionName 保持 2.4.4，code 1048 → 1049，label 1110.1。）");
         LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1048 （【code 1048 —— 两条真机 bug：缓存音轨挂错字幕 + 浮窗下按钮偏低】① 缓存到本地的音轨偶尔挂到别的作品的缓存字幕。真机 10:05 磁盘缓存 SKIPPED、10:07:57 预取池 HIT work=RJ01552416 —— 两条离线兜底路径的强弱颠倒：磁盘握着作品键却被时长歧义闸挡掉，预取池只有毫秒时长却留着上一版的「全池唯一即采信」。修法：判定收进零状态纯函数内核，三道闸（作品键强证据 / 跨作品歧义 / 磁盘与播放列表指纹反证据），并保留「唯一候选且无反证据」这条兼容路，拒绝与推断分开留痕。② 宿主变浮窗后按钮整体低 166px：测量值出自 getLocationOnScreen（屏幕坐标），却被当成 decor 内坐标去算底边距；全屏时窗口顶端贴 0、两者重合，所以这个错口径安稳活了十几版。修法：换算前减掉窗口原点，且窗口形态（顶端 / 屏宽 / 屏高）一变就无条件强制重落位 —— 浮窗里宿主可能一个控件都不挪。");
         LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.3 / code 1047 （【code 1047 —— 三项回归修复 + 按钮材质对齐】①按钮取色：包可见性判定按调用方清单算，宿主进程里查不到 MoriMod，改为用它已注册的广播接收器反推类加载器（本身就是装了且已勾作用域的证据）；液态玻璃分支此前未消费强调色，补齐。②字幕阴影：配置链路正常，是宿主进程里另一位全局美化模块在绘制路径上给每个文本视图重设阴影；新增字幕行视图，在落笔前把配置值重写一次。③预览字体：预览在模块进程、悬浮窗在宿主进程，全局字体替换只在宿主生效；新增字体请求与分片回传通道，宿主把真正在用的字体递给设置页。④按钮材质：底色改为强调色原色加四成不透明度、亮度上限改卡合成后，与宿主播放控件同一档；液态玻璃四档底色同步；底色变透后白字补一层淡暗影。⑤版本纪律：versionName 与 tag 保持 2.4.3，code 推到 1047，label 1029.1。");
         LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.3 / code 1044 （【code 1044 —— 新开关「字幕字体跟随系统设定」：悬浮窗字幕的字体从此可选】①背景 —— 宿主装了全局改字体的模块时，它接管的是字体工厂与画笔设定字体这两个入口，而本模块跑在宿主进程里，于是悬浮窗里的字幕也被一起换掉，用户没有选择权。②口径 —— 开关默认关，关时维持上一版行为，即悬浮窗字幕跟随宿主 App 当前字体；开时改用手机系统字体，不再受宿主换字体的影响。③范围 —— 只作用于悬浮窗内的字幕文字；播放页那三枚胶囊按钮（状态栏、悬浮窗、无字幕）保持跟随宿主字体不变，因为它们属于宿主界面。④实现 —— 系统字体的准确表达是画笔不指定字体，此时由平台按系统字体与中文回退链渲染；但直接设成空值恰好会被宿主改字体的钩子接管，所以改走画笔整份复制这条路，复制源是一支全新画笔，从而绕开被接管的入口。代价是字号颜色阴影会被一起清回默认，故落地顺序是先清后写。⑤粗细 —— 系统默认字体没有可选的粗体变体，改用合成加粗顶替，档位口径与跟随时一致：默认档活动行粗、非活动行常规，显式选档则两行一起变。⑥预览 —— 设置页预览与真窗共用同一份换算与同一套落地顺序，两边不会出现一套系统字体一套宿主字体。⑦兼容 —— 新增配置键缺失即回落为关，旧配置与覆盖安装的行为完全不变；无清单与组件变更，可直接覆盖安装。⑧版本纪律 —— 本轮按指令升语义版本号，label 同日递增到 1023.1。⑨履历追加式不覆盖 —— 历史段保持原样，本轮只在其上方新增一条，版本号 2.4.2 升 2.4.3、code 1043 升 1044。");
@@ -435,7 +446,7 @@ LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.3.5 / code 1035 （【code 1035 �
         NetworkHook.hook(cl, repo);
         PlayerPositionHook.hook(cl, repo);
         PlayerSourceHook.hook(cl, repo);
-        SubtitleViewHook.hook(cl, repo);
+        PlayerPageScanner.hook(cl, repo);
         ActivityButtonHook.hook(cl, repo);
         // v34：钩住宿主视图树的结构事件（挂载/卸载/显隐/转场），把按钮显隐从「600ms 轮询」
         // 改成「宿主一动就扫」。最后一个装 —— 它依赖 ActivityButtonHook 的静态状态。

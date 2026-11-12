@@ -54,18 +54,26 @@ public final class HostInfo {
     /**
      * 本模块**已验证**的宿主版本（最新一版）。
      *
-     * 【code 1045】2.22.0 → **2.22.1**：宿主把播放页的播放进度条整体上移，
-     * 播放页胶囊的落位由此改为「进度条下方」（见
-     * {@code CapsuleGeometry#capsuleBottomBelowSlider}），并按本值分版本走位。
-     * 2.22.0 仍在 {@link #VERIFIED_SET} 里（走原来的「进度条上方」落位），两者都算已验证。
+     * <ul>
+     *   <li>【code 1045】2.22.0 → **2.22.1**：宿主把播放页的播放进度条整体上移，
+     *       播放页胶囊的落位由此改为「进度条下方」（见
+     *       {@code CapsuleGeometry#capsuleBottomBelowSlider}），并按本值分版本走位。
+     *       2.22.0 仍在 {@link #VERIFIED_SET} 里（走原来的「进度条上方」落位）。</li>
+     *   <li>【code 1049】→ **2.23.1**：离线体检（{@code _host231/ADAPTER_CHECK_2.23.1.md}）
+     *       静态锚点全过；2.23.0→2.23.1 仅 Pickup UI + MEDIA_BUTTON 小补丁，原生适配面等价，
+     *       故 2.23.0 一并入列。CDN 字面量迁到 {@code *.dlsound.jp}，预取 Referer 改跟
+     *       ziptree 同源（见 {@code ZiptreePrefetch#refererOf}）。</li>
+     * </ul>
      */
-    public static final String VERIFIED_VERSION = "2.22.1";
+    public static final String VERIFIED_VERSION = "2.23.1";
 
     /**
      * 已验证白名单（精确匹配）。宿主每发一版都要重新做一次离线体检才可入列 ——
      * 白名单的意义是「这一版的宿主结构我们真的看过」，不是「尽量显得兼容」。
      */
-    private static final String[] VERIFIED_SET = {"2.22.0", VERIFIED_VERSION};
+    private static final String[] VERIFIED_SET = {
+            "2.22.0", "2.22.1", "2.23.0", VERIFIED_VERSION
+    };
 
     private static final String PREFS = "dlsitefloat_host";
     private static final String K_LAST_CODE = "last_version_code";

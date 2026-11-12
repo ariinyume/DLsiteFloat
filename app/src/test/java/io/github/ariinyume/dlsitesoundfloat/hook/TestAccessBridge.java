@@ -405,4 +405,139 @@ public Win(long needMs, long sinceMs, boolean goneStill, boolean hasEvidence) {
                 maxTailClip, maxNudge);
         return new Plan(g.target, g.layoutRejected, g.measure, g.snapLog, g.nudgeLog);
     }
+
+    // ── ZiptreePrefetch ────────────────────────────────────────────────
+
+    /** 【code 1049】预取 Referer 同源推导（纯函数）。 */
+    public static String prefetchRefererOf(String baseUrl) {
+        return ZiptreePrefetch.refererOf(baseUrl);
+    }
+
+    // ── GeomSnapshotPolicy / OtherHidePolicy（code 1050 / A1）──────────
+
+    public static boolean acceptSliderCenter(boolean hasMain, int y, boolean stable) {
+        return GeomSnapshotPolicy.acceptSliderCenter(hasMain, y, stable);
+    }
+
+    public static boolean acceptTimeLabelBottom(boolean sliderAccepted, int timeLabelBottom) {
+        return GeomSnapshotPolicy.acceptTimeLabelBottom(sliderAccepted, timeLabelBottom);
+    }
+
+    public static boolean acceptSliderRight(boolean hasMain, int x, int w) {
+        return GeomSnapshotPolicy.acceptSliderRight(hasMain, x, w);
+    }
+
+    public static boolean acceptDescBottom(int descBottom) {
+        return GeomSnapshotPolicy.acceptDescBottom(descBottom);
+    }
+
+    public static boolean windowMoved(int decorTop, int w, int h,
+            int placedTop, int lastW, int lastH) {
+        return GeomSnapshotPolicy.windowMoved(decorTop, w, h, placedTop, lastW, lastH);
+    }
+
+    public static boolean geoUnchanged(int cy, int desc, int right, int time,
+            int pCy, int pDesc, int pRight, int pTime, int deadzone) {
+        return GeomSnapshotPolicy.geoUnchanged(cy, desc, right, time,
+                pCy, pDesc, pRight, pTime, deadzone);
+    }
+
+    public static boolean otherShouldHide(int streak, long sinceMs, long nowMs,
+            int needStreak, long needProofMs) {
+        return OtherHidePolicy.shouldHide(streak, sinceMs, nowMs, needStreak, needProofMs);
+    }
+
+    // ── StatusBarOemHunt（code 1056 / B2）──────────────────────────────
+
+    public static String oemFirstHitAnchor(String[] presentNames) {
+        java.util.Set<String> set = new java.util.HashSet<>();
+        if (presentNames != null) {
+            for (String n : presentNames) {
+                set.add(n);
+            }
+        }
+        return StatusBarOemHunt.firstHitAnchorName(StatusBarOemHunt.ANCHOR_IDS, set::contains);
+    }
+
+    public static String oemDecideAnchorLabel(String firstHit, String clockDescribe) {
+        return StatusBarOemHunt.decideAnchor(firstHit, clockDescribe).hitLabel;
+    }
+
+    public static String oemDescribeLabel(int viewId, String[] candidates,
+            java.util.Map<String, Integer> nameToId, String className) {
+        return StatusBarOemHunt.describeLabel(viewId, candidates,
+                n -> nameToId.getOrDefault(n, 0), className);
+    }
+
+    public static String oemMissingCompat(String anchorHit, boolean clock, boolean notif,
+            boolean seeding) {
+        return StatusBarOemHunt.missingCompatCsv(anchorHit, clock, notif, seeding);
+    }
+
+    // ── StatusBarIntentRouter（code 1057 / B2）─────────────────────────
+
+    public static String intentKind(String action) {
+        return StatusBarIntentRouter.classify(action).name();
+    }
+
+    public static boolean intentShouldHideOnEnabled(boolean enabled) {
+        return StatusBarIntentRouter.shouldHideOnEnabled(enabled);
+    }
+
+    public static Object[] intentParseLine(boolean enabledPresent, boolean enabledExtra,
+            boolean prevEnabled, long durationMs, boolean playing, String line) {
+        StatusBarIntentRouter.LinePayload p = StatusBarIntentRouter.parseLine(
+                enabledPresent, enabledExtra, prevEnabled, durationMs, playing, line);
+        return new Object[]{p.enabled, p.durationMs, p.playing, p.line};
+    }
+
+    // ── WidthSettlePolicy（code 1058 / B2）─────────────────────────────
+
+    public static boolean widthSkipProbe(boolean force, int proposed, int applied, int hyst) {
+        return WidthSettlePolicy.shouldSkipProbe(force, proposed, applied, hyst);
+    }
+
+    public static String widthPendingAction(int pending, int applied, int hyst) {
+        return WidthSettlePolicy.pendingDecision(pending, applied, hyst).name();
+    }
+
+    public static Object[] widthResolveAvail(int left, int right, int limit, int minAvail,
+            int fullSentinel) {
+        WidthSettlePolicy.Avail a = WidthSettlePolicy.resolveAvail(
+                left, right, limit, minAvail, fullSentinel);
+        return new Object[]{a.widthPx, a.usedLimit, a.availPx};
+    }
+
+    public static int widthUnset() {
+        return WidthSettlePolicy.UNSET;
+    }
+
+    // ── LineLeftGate（code 940 抽出；1058 补黄金向量）──────────────────
+
+    public static Object[] lineLeftDecide(int real, int right, int acc, int streak, int prev,
+            int anchorFallback, int tol, int relockStreak) {
+        LineLeftGate.Decision d = LineLeftGate.decide(real, right, acc, streak, prev,
+                anchorFallback, tol, relockStreak);
+        return new Object[]{d.accepted, d.acc, d.streak, d.prev, d.log};
+    }
+
+    // ── ScrollFitRecheck（code 1059 / B2）──────────────────────────────
+
+    public static boolean fitSkipPosted(boolean sameView, boolean hasAnimator,
+            int liveTarget, int scrollX) {
+        return ScrollFitRecheck.shouldSkipPostedFitRecheck(
+                sameView, hasAnimator, liveTarget, scrollX);
+    }
+
+    public static boolean fitShouldStart(int realTarget, int hysteresisPx) {
+        return ScrollFitRecheck.shouldStartAfterFitRecheck(realTarget, hysteresisPx);
+    }
+
+    public static String fitAfterEnd(int realTarget, int liveTarget, int scrollX, int slack) {
+        return ScrollFitRecheck.afterAnimationEnd(realTarget, liveTarget, scrollX, slack).name();
+    }
+
+    public static int fitSettleSlack() {
+        return ScrollFitRecheck.SETTLE_SLACK_PX;
+    }
 }

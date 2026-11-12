@@ -134,7 +134,7 @@
 
 ## Tested on
 
-- Software version: DLsiteSound 2.22.1
+- Software version: DLsiteSound **2.23.1** (verified set also includes 2.22.0 / 2.22.1 / 2.23.0)
 
 - Device 1: OnePlus 15, ColorOS 17.0.0.105, KernelSU 3.3.1 (32680-5) · kernel 6.12 · LSPosed 2.2.1 (7912)
 - Device 2: OnePlus 12, ColorOS 16.0.10.501, SukiSU 4.2.1 (40994-5) · kernel 6.1 · LSPosed 2.2.1 (7912)

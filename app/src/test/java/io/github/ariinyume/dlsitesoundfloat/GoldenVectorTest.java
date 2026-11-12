@@ -25,9 +25,28 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import io.github.ariinyume.dlsitesoundfloat.config.Protocol;
+import io.github.ariinyume.dlsitesoundfloat.config.Protocol;
+import io.github.ariinyume.dlsitesoundfloat.config.SubtitleConfig;
+import io.github.ariinyume.dlsitesoundfloat.data.CueStore;
+import io.github.ariinyume.dlsitesoundfloat.data.DisplayContract;
 import io.github.ariinyume.dlsitesoundfloat.data.PlaylistKey;
+import io.github.ariinyume.dlsitesoundfloat.data.SubtitleCue;
+import io.github.ariinyume.dlsitesoundfloat.data.TrackDecision;
+import io.github.ariinyume.dlsitesoundfloat.hook.PlayerPageScanner;
 import io.github.ariinyume.dlsitesoundfloat.hook.TestAccessBridge;
+import io.github.ariinyume.dlsitesoundfloat.ui.SettingsAppearanceLogic;
+import io.github.ariinyume.dlsitesoundfloat.ui.SettingsDraftPolicy;
+import io.github.ariinyume.dlsitesoundfloat.ui.SettingsExperimentalLogic;
+import io.github.ariinyume.dlsitesoundfloat.ui.SettingsLiquidGlassLogic;
 import io.github.ariinyume.dlsitesoundfloat.util.HostInfo;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
 
 import org.junit.Test;
 
@@ -237,6 +256,100 @@ public class GoldenVectorTest {
                 HostInfo.versionAtLeast("2.22.1-rc1", 2, 22, 1));
         assertFalse(HostInfo.versionAtLeast("", 2, 22, 1));
         assertFalse(HostInfo.versionAtLeast(null, 2, 22, 1));
+
+        // 【code 1049】2.23.1 已入白名单最新位；布局闸仍是 ≥2.22.1。
+        assertEquals("2.23.1", HostInfo.VERIFIED_VERSION);
+        assertTrue(HostInfo.versionAtLeast("2.23.1", 2, 22, 1));
+    }
+
+    /**
+     * 【code 1049】预取 Referer 必须跟 ziptree CDN 同源，不能写死旧
+     * {@code play.dl.dlsite.com}（2.23.x 包内已无该字面量）。
+     */
+    @Test
+    public void prefetchReferer_followsCdnHost() {
+        assertEquals("https://playback.dlsound.jp/",
+                TestAccessBridge.prefetchRefererOf(
+                        "https://playback.dlsound.jp/content/work/doujin/RJ01728000/RJ01727768/"));
+        assertEquals("https://content.dlsound.jp/",
+                TestAccessBridge.prefetchRefererOf(
+                        "https://content.dlsound.jp/content/work/doujin/RJ01728000/RJ01727768/"));
+        // 旧 CDN 仍可能出现在历史缓存路径上 —— 同源推导继续认它。
+        assertEquals("https://play.dl.dlsite.com/",
+                TestAccessBridge.prefetchRefererOf(
+                        "https://play.dl.dlsite.com/content/work/doujin/RJ01728000/RJ01727768/"));
+        assertEquals("解析失败回落 PLAY_API_URL",
+                "https://play.dlsite.com/", TestAccessBridge.prefetchRefererOf(null));
+        assertEquals("https://play.dlsite.com/", TestAccessBridge.prefetchRefererOf(""));
+        assertEquals("https://play.dlsite.com/", TestAccessBridge.prefetchRefererOf("not-a-url"));
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // 一½、GeomSnapshotPolicy / OtherHidePolicy（code 1050 / A1）
+    // ══════════════════════════════════════════════════════════════
+
+    /** 【code 1050】滑条中心采信：必须有滑条 + y>0 + 稳定。 */
+    @Test
+    public void geomSnapshot_acceptSliderCenter() {
+        assertTrue(TestAccessBridge.acceptSliderCenter(true, 1593, true));
+        assertFalse("不稳定 = RN settle，不采信",
+                TestAccessBridge.acceptSliderCenter(true, 1593, false));
+        assertFalse(TestAccessBridge.acceptSliderCenter(false, 1593, true));
+        assertFalse(TestAccessBridge.acceptSliderCenter(true, 0, true));
+        assertFalse(TestAccessBridge.acceptSliderCenter(true, -1, true));
+    }
+
+    /** 【code 1050】时间行与滑条同源；滑条未采信时时间行也不能进。 */
+    @Test
+    public void geomSnapshot_acceptTimeLabel() {
+        assertTrue(TestAccessBridge.acceptTimeLabelBottom(true, 1703));
+        assertFalse(TestAccessBridge.acceptTimeLabelBottom(true, 0));
+        assertFalse(TestAccessBridge.acceptTimeLabelBottom(false, 1703));
+    }
+
+    /** 【code 1050】窗口形态变化（浮窗进出）必须 force 重落位。 */
+    @Test
+    public void geomSnapshot_windowMoved() {
+        assertFalse(TestAccessBridge.windowMoved(0, 1272, 2772, 0, 1272, 2772));
+        assertTrue("decorTop 变了",
+                TestAccessBridge.windowMoved(291, 1272, 2200, 0, 1272, 2772));
+        assertTrue("屏宽变了",
+                TestAccessBridge.windowMoved(0, 1080, 2772, 0, 1272, 2772));
+    }
+
+    /**
+     * 【code 1050】快照迟滞：8px settle 抖动不算变；时间行换行必须算变。
+     * deadzone 取与生产相同的 12（{@code GEO_SNAPSHOT_DEADZONE_PX}）。
+     */
+    @Test
+    public void geomSnapshot_geoUnchangedDeadzone() {
+        final int dz = 12;
+        assertTrue("8px settle 在迟滞内",
+                TestAccessBridge.geoUnchanged(1807, 1522, 1200, 1703,
+                        1799, 1522, 1200, 1703, dz));
+        assertFalse("时间行底边跳 40px → 必须重算",
+                TestAccessBridge.geoUnchanged(1593, 1522, 1200, 1743,
+                        1593, 1522, 1200, 1703, dz));
+        assertFalse("滑条中心跳过迟滞",
+                TestAccessBridge.geoUnchanged(1820, 1522, 1200, 1703,
+                        1799, 1522, 1200, 1703, dz));
+    }
+
+    /** 【code 1050】OTHER 去抖：streak=2 且 ≥250ms 才 hide（v26 真机口径）。 */
+    @Test
+    public void otherHide_streakAndProofWindow() {
+        final int needStreak = 2;
+        final long needProof = 250L;
+        assertFalse("since 未初始化",
+                TestAccessBridge.otherShouldHide(2, 0L, 1000L, needStreak, needProof));
+        assertFalse("只有 1 次采样",
+                TestAccessBridge.otherShouldHide(1, 1000L, 1300L, needStreak, needProof));
+        assertFalse("时间窗不够（200ms < 250ms）",
+                TestAccessBridge.otherShouldHide(2, 1000L, 1200L, needStreak, needProof));
+        assertTrue("2 次 + 250ms",
+                TestAccessBridge.otherShouldHide(2, 1000L, 1250L, needStreak, needProof));
+        assertTrue("6 次连续 OTHER（拖动假阳性场景的反面：时间够就该 hide）",
+                TestAccessBridge.otherShouldHide(6, 1000L, 1275L, needStreak, needProof));
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -815,6 +928,405 @@ public class GoldenVectorTest {
         TestAccessBridge.Poke d = poke(40_000L, 39_000L, 39_000L, 39_000L, 0L, 0);
         assertTrue(d.allow);
         assertEquals(40_000L, d.lastPokeMs);
+    }
+
+    // ==================================================================
+    // TrackDecision（code 1051 / A2：换轨挂起窗分级）
+    // ------------------------------------------------------------------
+    // 钉住生产常量口径：标准 1000 / 缓存长窗 15000 / 提前收窗 cap 5000 /
+    // 预加载容差 3500。数值与 SubtitleRepository 字段同源；改那边必须改这里。
+    // ==================================================================
+
+    private static final long TD_GRACE = 1000L;
+    private static final long TD_GRACE_CACHED = 15000L;
+    private static final long TD_EARLY_CLOSE = 5000L;
+    private static final long TD_PRELOAD = 3500L;
+
+    /** 【code 1051】刚到的 JSON（≤3500ms）保留；更早的进挂起。 */
+    @Test
+    public void trackDecision_keepRecentJson() {
+        assertTrue(TrackDecision.keepRecentJson(0L, TD_PRELOAD));
+        assertTrue(TrackDecision.keepRecentJson(345L, TD_PRELOAD)); // 真机正常延迟
+        assertTrue(TrackDecision.keepRecentJson(TD_PRELOAD, TD_PRELOAD));
+        assertFalse("3501ms 已超预加载容差 → 必须挂起",
+                TrackDecision.keepRecentJson(TD_PRELOAD + 1L, TD_PRELOAD));
+        assertFalse(TrackDecision.keepRecentJson(Long.MAX_VALUE, TD_PRELOAD));
+    }
+
+    /** 【code 1051】软挂起 = 手上已有 cues。 */
+    @Test
+    public void trackDecision_softSuspend() {
+        assertTrue(TrackDecision.softSuspend(true));
+        assertFalse(TrackDecision.softSuspend(false));
+    }
+
+    /**
+     * 【code 1051】grace 矩阵：有 cues 且无本地垫背 → 15s；否则 1s。
+     * 钉 code 1014（磁盘）与 code 1040（预取）两条短窗出口。
+     */
+    @Test
+    public void trackDecision_graceMatrix() {
+        assertEquals("有 cues、无盘无预取 → 长窗",
+                TD_GRACE_CACHED,
+                TrackDecision.graceMs(true, false, false, TD_GRACE, TD_GRACE_CACHED));
+        assertEquals("有 cues、磁盘就绪 → 短窗",
+                TD_GRACE,
+                TrackDecision.graceMs(true, true, false, TD_GRACE, TD_GRACE_CACHED));
+        assertEquals("有 cues、预取就绪 → 短窗（code 1040）",
+                TD_GRACE,
+                TrackDecision.graceMs(true, false, true, TD_GRACE, TD_GRACE_CACHED));
+        assertEquals("无 cues → 短窗",
+                TD_GRACE,
+                TrackDecision.graceMs(false, false, false, TD_GRACE, TD_GRACE_CACHED));
+    }
+
+    /** 【code 1051】提前收窗 = min(5s, grace)；短窗时与裁决同刻。 */
+    @Test
+    public void trackDecision_earlyCloseDelay() {
+        assertEquals(TD_GRACE,
+                TrackDecision.earlyCloseDelayMs(TD_EARLY_CLOSE, TD_GRACE));
+        assertEquals(TD_EARLY_CLOSE,
+                TrackDecision.earlyCloseDelayMs(TD_EARLY_CLOSE, TD_GRACE_CACHED));
+        assertEquals(TD_EARLY_CLOSE,
+                TrackDecision.earlyCloseDelayMs(TD_EARLY_CLOSE, TD_EARLY_CLOSE));
+    }
+
+    private static final long TD_POS_RESET = 1000L; // POSITION_RESET_TOLERANCE_MS
+
+    /** 【code 1052】宽限内 JSON 是否更新于挂起基线。 */
+    @Test
+    public void trackDecision_jsonArrivedDuringGrace() {
+        assertTrue(TrackDecision.jsonArrivedDuringGrace(2000L, 1000L));
+        assertFalse(TrackDecision.jsonArrivedDuringGrace(1000L, 1000L));
+        assertFalse(TrackDecision.jsonArrivedDuringGrace(999L, 1000L));
+    }
+
+    /**
+     * 【code 1052】假换轨：权威序号门一律不认；老信号才看位置回退 / 「基线>0 只增」。
+     * 钉 v28（禁止「从未回退」误杀真换轨）+ code 973（序号门跳过兜底）。
+     */
+    @Test
+    public void trackDecision_spuriousChange() {
+        assertFalse("序号门 ⇒ 永不 SPURIOUS",
+                TrackDecision.isSpuriousChange(true, true, 5, 60_000L, 61_000L, TD_POS_RESET));
+        assertTrue("老信号 + 观察到大幅回退",
+                TrackDecision.isSpuriousChange(false, true, 2, 60_000L, 0L, TD_POS_RESET));
+        assertTrue("老信号 + 基线远大于 0 且只增（第一轨按上一首 no-op）",
+                TrackDecision.isSpuriousChange(false, false, 3, 60_000L, 61_500L, TD_POS_RESET));
+        assertFalse("老信号但基线≈0（真换轨清零后只涨）⇒ 不算假换轨",
+                TrackDecision.isSpuriousChange(false, false, 3, 0L, 800L, TD_POS_RESET));
+        assertFalse("老信号但无位置样本",
+                TrackDecision.isSpuriousChange(false, false, 0, 60_000L, 61_000L, TD_POS_RESET));
+    }
+
+    /** 【code 1052】resolvePending 三岔口。 */
+    @Test
+    public void trackDecision_resolvePendingForks() {
+        assertEquals(TrackDecision.PendingVerdict.JSON_ARRIVED,
+                TrackDecision.resolvePending(true, false, true, 2, 60_000L, 0L, TD_POS_RESET));
+        assertEquals(TrackDecision.PendingVerdict.SPURIOUS,
+                TrackDecision.resolvePending(false, false, true, 2, 60_000L, 0L, TD_POS_RESET));
+        assertEquals(TrackDecision.PendingVerdict.NO_SUBTITLES,
+                TrackDecision.resolvePending(false, true, true, 2, 60_000L, 0L, TD_POS_RESET));
+        assertEquals(TrackDecision.PendingVerdict.NO_SUBTITLES,
+                TrackDecision.resolvePending(false, false, false, 3, 0L, 800L, TD_POS_RESET));
+    }
+
+    /** 【code 1052】无字幕软裁决 = 手上仍有 cues。 */
+    @Test
+    public void trackDecision_softNoSubtitleVerdict() {
+        assertTrue(TrackDecision.softNoSubtitleVerdict(true));
+        assertFalse(TrackDecision.softNoSubtitleVerdict(false));
+    }
+
+    // ==================================================================
+    // CueStore / DisplayContract（code 1053 / A2：摄入 + 显隐口径）
+    // ==================================================================
+
+    /** 【code 1053】时间串解析：对齐旧 SDF(UTC) 的秒数口径。 */
+    @Test
+    public void cueStore_parseTime() {
+        assertEquals(0d, CueStore.parseTime("00:00:00.000"), 1e-9);
+        assertEquals(1d + 2d / 1000d, CueStore.parseTime("00:00:01.002"), 1e-9);
+        assertEquals(3723.5d, CueStore.parseTime("01:02:03.500"), 1e-9);
+        assertEquals(0d, CueStore.parseTime(null), 0d);
+        assertEquals(0d, CueStore.parseTime("bad"), 0d);
+        assertEquals(0d, CueStore.parseTime("99:99:99"), 0d);
+    }
+
+    /** 【code 1053】行归一化 + 精确匹配集 + 探针闸。 */
+    @Test
+    public void cueStore_normalizeAndLineSet() {
+        assertEquals("", CueStore.normalizeLine(null));
+        assertEquals("a b", CueStore.normalizeLine("  a   b  "));
+        SubtitleCue c = CueStore.cueOf("00:00:01.000", "00:00:02.000",
+                Arrays.asList("  hello  ", "", "  world  "));
+        assertEquals(1d, c.startTime, 1e-9);
+        assertEquals(2d, c.endTime, 1e-9);
+        assertEquals(2d, CueStore.maxEndSec(1d, 2d), 0d);
+        Set<String> set = CueStore.exactLineSet(Collections.singletonList(c));
+        assertTrue(set.contains("hello"));
+        assertTrue(set.contains("world"));
+        assertFalse(set.contains(""));
+        assertTrue(CueStore.isPlausibleSubtitleProbe("hi", 60));
+        assertFalse(CueStore.isPlausibleSubtitleProbe(null, 60));
+        assertFalse("超长标题不是字幕行",
+                CueStore.isPlausibleSubtitleProbe(
+                        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 60));
+    }
+
+    /**
+     * 【code 1053】显隐唯一口径：软挂起不降级；硬挂起 / 软裁决 / 空 cues 降级。
+     * 钉 2.1.3 + 1.21.16。
+     */
+    @Test
+    public void displayContract_shouldShowNoSubtitles() {
+        assertTrue(DisplayContract.shouldShowNoSubtitles(true, false, false, false));
+        assertTrue(DisplayContract.shouldShowNoSubtitles(false, true, false, false));
+        assertTrue("硬挂起 → 无字幕",
+                DisplayContract.shouldShowNoSubtitles(false, false, true, false));
+        assertFalse("软挂起 → 维持正常显示",
+                DisplayContract.shouldShowNoSubtitles(false, false, true, true));
+        assertFalse(DisplayContract.shouldShowNoSubtitles(false, false, false, false));
+    }
+
+    /** 【code 1053】973 隔离：上一轨 hidden 时镜像 / cues / 自算都空。 */
+    @Test
+    public void displayContract_hideGates() {
+        assertTrue(DisplayContract.hideCurrentSubtitles(false, true, false, false));
+        assertTrue(DisplayContract.hideCues(false, false, true));
+        assertTrue(DisplayContract.hideSelfComputed(false, true, false));
+        assertTrue("待确认不论软硬都藏 cues 列表",
+                DisplayContract.hideCues(true, false, false));
+        assertFalse(DisplayContract.hideCurrentSubtitles(false, false, true, true));
+    }
+
+    /** 【code 1053】状态栏拼行：cue 优先，否则镜像，否则空串。 */
+    @Test
+    public void displayContract_statusBarLine() {
+        SubtitleCue cue = new SubtitleCue(0, 1, Arrays.asList("甲", "乙"));
+        assertEquals("甲 乙", DisplayContract.joinCue(cue));
+        assertEquals("甲 乙",
+                DisplayContract.statusBarLine(DisplayContract.joinCue(cue),
+                        Collections.singletonList("镜像")));
+        assertEquals("镜 像",
+                DisplayContract.statusBarLine("", Arrays.asList("镜", "像")));
+        assertEquals("", DisplayContract.statusBarLine("", null));
+        assertEquals("", DisplayContract.statusBarLine(null, Collections.<String>emptyList()));
+    }
+
+    /** 【code 1054 / B3】页面三态常量与 verdictName 钉在 PlayerPageScanner。 */
+    @Test
+    public void playerPageScanner_verdictNames() {
+        assertEquals(0, PlayerPageScanner.PAGE_UNKNOWN);
+        assertEquals(1, PlayerPageScanner.PAGE_PLAYER);
+        assertEquals(2, PlayerPageScanner.PAGE_OTHER);
+        assertEquals("UNKNOWN", PlayerPageScanner.verdictName(PlayerPageScanner.PAGE_UNKNOWN));
+        assertEquals("PLAYER", PlayerPageScanner.verdictName(PlayerPageScanner.PAGE_PLAYER));
+        assertEquals("OTHER", PlayerPageScanner.verdictName(PlayerPageScanner.PAGE_OTHER));
+    }
+
+    // ==================================================================
+    // SettingsDraftPolicy（code 1055 / B1：草稿态 / 保存栏）
+    // ==================================================================
+
+    /** 【code 1055】副本相等 ⇒ 不脏；仅语言不同也不脏（§6.3）。 */
+    @Test
+    public void settingsDraft_langNeutralDirty() {
+        SubtitleConfig saved = new SubtitleConfig();
+        SettingsDraftPolicy.quantize(saved);
+        SubtitleConfig draft = saved.copy();
+        assertFalse(SettingsDraftPolicy.isDirty(draft, saved));
+        assertEquals(0, SettingsDraftPolicy.unsavedSectionDisplayCount(draft, saved));
+        assertFalse(SettingsDraftPolicy.shouldConfirmUnsaved(draft, saved));
+
+        draft.uiLanguage = "zh-CN";
+        saved.uiLanguage = "ja";
+        assertTrue("sameParametersAs 会因语言不同而为 false",
+                !draft.sameParametersAs(saved));
+        assertFalse("设置页脏态必须排除 uiLanguage",
+                SettingsDraftPolicy.isDirty(draft, saved));
+    }
+
+    /** 【code 1055】改颜色 = 1 区；再改液态玻璃 = 2 区；读数至少 1。 */
+    @Test
+    public void settingsDraft_sectionCountAndSaveBar() {
+        SubtitleConfig saved = new SubtitleConfig();
+        SettingsDraftPolicy.quantize(saved);
+        SubtitleConfig draft = saved.copy();
+        draft.subtitleColor = saved.subtitleColor ^ 0x00FFFFFF;
+        assertTrue(SettingsDraftPolicy.isDirty(draft, saved));
+        assertEquals(1, SettingsDraftPolicy.dirtySectionCount(draft, saved));
+        SettingsDraftPolicy.SaveBarState bar = SettingsDraftPolicy.saveBarState(draft, saved);
+        assertTrue(bar.dirty);
+        assertEquals(1, bar.sectionDisplayCount);
+
+        draft.liquidGlass = !saved.liquidGlass;
+        assertEquals(2, SettingsDraftPolicy.dirtySectionCount(draft, saved));
+        assertEquals(2, SettingsDraftPolicy.unsavedSectionDisplayCount(draft, saved));
+    }
+
+    /** 【code 1055】quantize 把 activeScale 对齐到 0.1 刻度后两侧相等 ⇒ 不脏。 */
+    @Test
+    public void settingsDraft_quantizeAlignsSliderScale() {
+        SubtitleConfig saved = new SubtitleConfig();
+        saved.activeScale = 1.05f;
+        SettingsDraftPolicy.quantize(saved);
+        assertEquals(1.1f, saved.activeScale, 0.0001f);
+        SubtitleConfig draft = saved.copy();
+        draft.activeScale = 1.05f;
+        SettingsDraftPolicy.quantize(draft);
+        assertFalse(SettingsDraftPolicy.isDirty(draft, saved));
+    }
+
+    // ==================================================================
+    // SettingsExperimentalLogic（code 1056 / B1 续）
+    // ==================================================================
+
+    @Test
+    public void experimental_alreadyOn() {
+        SettingsExperimentalLogic.UnlockResult r = SettingsExperimentalLogic.onStatusTap(
+                true, new SettingsExperimentalLogic.TapState(3, 1000L), 2000L);
+        assertEquals(SettingsExperimentalLogic.UnlockOutcome.ALREADY_ON, r.outcome);
+        assertEquals(0, r.next.count);
+    }
+
+    @Test
+    public void experimental_windowBreakAndUnlock() {
+        SettingsExperimentalLogic.TapState s = SettingsExperimentalLogic.TapState.zero();
+        long t = 10_000L;
+        for (int i = 0; i < 4; i++) {
+            SettingsExperimentalLogic.UnlockResult r =
+                    SettingsExperimentalLogic.onStatusTap(false, s, t);
+            assertEquals(SettingsExperimentalLogic.UnlockOutcome.PROGRESS, r.outcome);
+            s = r.next;
+            t += 500L;
+        }
+        // 停顿 > 3s ⇒ 计数清零后从 1 再起
+        SettingsExperimentalLogic.UnlockResult broken =
+                SettingsExperimentalLogic.onStatusTap(false, s, t + 3001L);
+        assertEquals(SettingsExperimentalLogic.UnlockOutcome.PROGRESS, broken.outcome);
+        assertEquals(1, broken.next.count);
+
+        // 连续 5 次解锁；间隔恰好 3000 仍累计
+        s = SettingsExperimentalLogic.TapState.zero();
+        t = 20_000L;
+        SettingsExperimentalLogic.UnlockOutcome last = null;
+        for (int i = 0; i < 5; i++) {
+            SettingsExperimentalLogic.UnlockResult r =
+                    SettingsExperimentalLogic.onStatusTap(false, s, t);
+            last = r.outcome;
+            s = r.next;
+            t += SettingsExperimentalLogic.TAP_WINDOW_MS; // == 仍累计
+        }
+        assertEquals(SettingsExperimentalLogic.UnlockOutcome.UNLOCKED, last);
+        assertEquals(0, s.count);
+    }
+
+    @Test
+    public void experimental_showAndCacheRules() {
+        assertTrue(SettingsExperimentalLogic.shouldShowCard(true, false));
+        assertTrue(SettingsExperimentalLogic.shouldShowCard(false, true));
+        assertFalse(SettingsExperimentalLogic.shouldShowCard(false, false));
+        assertFalse(SettingsExperimentalLogic.cacheEnabledAfterMasterToggle(false, true));
+        assertTrue(SettingsExperimentalLogic.cacheEnabledAfterMasterToggle(true, true));
+        assertFalse(SettingsExperimentalLogic.cacheEnabledAfterMasterToggle(true, false));
+        assertTrue(SettingsExperimentalLogic.childControlsEnabled(true));
+        assertFalse(SettingsExperimentalLogic.childControlsEnabled(false));
+    }
+
+    // ==================================================================
+    // StatusBarOemHunt（code 1056 / B2）
+    // ==================================================================
+
+    @Test
+    public void oemHunt_anchorOrderAndFallback() {
+        assertEquals("status_bar_start_side_content_for_fake",
+                TestAccessBridge.oemFirstHitAnchor(new String[]{
+                        "status_bar_start_side_content_for_fake",
+                        "status_bar_start_side_container"}));
+        assertEquals("status_bar_start_side_container",
+                TestAccessBridge.oemFirstHitAnchor(new String[]{
+                        "status_bar_start_side_container"}));
+        assertEquals("id:status_bar_start_side_content",
+                TestAccessBridge.oemDecideAnchorLabel("status_bar_start_side_content", null));
+        assertEquals("fallback:parentOf(clock)",
+                TestAccessBridge.oemDecideAnchorLabel(null, "clock"));
+        assertEquals("MISSING", TestAccessBridge.oemDecideAnchorLabel(null, null));
+    }
+
+    @Test
+    public void oemHunt_describeAndMissingCsv() {
+        Map<String, Integer> map = new HashMap<>();
+        map.put("clock", 0x100);
+        assertEquals("clock",
+                TestAccessBridge.oemDescribeLabel(0x100, new String[]{"clock", "oplus_clock"},
+                        map, "TextClock"));
+        assertEquals("TextClock#0x101",
+                TestAccessBridge.oemDescribeLabel(0x101, new String[]{"clock"}, map, "TextClock"));
+        assertTrue(TestAccessBridge.oemMissingCompat("MISSING", true, true, true)
+                .contains("anchor,"));
+        assertTrue(TestAccessBridge.oemMissingCompat("fallback:parentOf(clock)", true, false, true)
+                .contains("anchor(兜底),"));
+        assertTrue(TestAccessBridge.oemMissingCompat("fallback:parentOf(clock)", true, false, true)
+                .contains("notif,"));
+        assertEquals("", TestAccessBridge.oemMissingCompat("id:clock", true, true, true));
+    }
+
+    // ==================================================================
+    // SettingsAppearance / LiquidGlass / IntentRouter / Protocol.Channel
+    // （code 1057 / B1+B2+B4）
+    // ==================================================================
+
+    @Test
+    public void appearance_clampAndVisibility() {
+        assertEquals(0, SettingsAppearanceLogic.clampPage(-1));
+        assertEquals(0, SettingsAppearanceLogic.clampPage(99));
+        assertEquals(2, SettingsAppearanceLogic.clampPage(2));
+        assertTrue(SettingsAppearanceLogic.pageVisible(1, 1));
+        assertFalse(SettingsAppearanceLogic.pageVisible(0, 1));
+        assertTrue(SettingsAppearanceLogic.tabSelected(2, 2));
+    }
+
+    @Test
+    public void liquidGlass_lockRules() {
+        assertTrue(SettingsLiquidGlassLogic.childrenVisible(true));
+        assertFalse(SettingsLiquidGlassLogic.childrenVisible(false));
+        assertEquals(0.38f, SettingsLiquidGlassLogic.panelColorAlpha(true), 0.0001f);
+        assertEquals(1f, SettingsLiquidGlassLogic.panelColorAlpha(false), 0.0001f);
+        assertFalse(SettingsLiquidGlassLogic.panelColorInteractive(true));
+        assertTrue(SettingsLiquidGlassLogic.panelColorInteractive(false));
+    }
+
+    @Test
+    public void statusBarIntentRouter_classifyAndLine() {
+        assertEquals("SCOPE_PING", TestAccessBridge.intentKind(Protocol.ACTION_SCOPE_PING));
+        assertEquals("ENABLED", TestAccessBridge.intentKind(Protocol.ACTION_ENABLED));
+        assertEquals("LINE", TestAccessBridge.intentKind(Protocol.ACTION_LINE));
+        assertEquals("IGNORE", TestAccessBridge.intentKind("nope"));
+        assertTrue(TestAccessBridge.intentShouldHideOnEnabled(false));
+        assertFalse(TestAccessBridge.intentShouldHideOnEnabled(true));
+        Object[] keepPrev = TestAccessBridge.intentParseLine(
+                false, false, true, 1200L, true, "你好");
+        assertEquals(true, keepPrev[0]);
+        assertEquals(1200L, keepPrev[1]);
+        assertEquals(true, keepPrev[2]);
+        assertEquals("你好", keepPrev[3]);
+        Object[] override = TestAccessBridge.intentParseLine(
+                true, false, true, 0L, false, null);
+        assertEquals(false, override[0]);
+        assertEquals("", override[3]);
+    }
+
+    @Test
+    public void protocol_channelOf() {
+        assertEquals(Protocol.Channel.SETTINGS, Protocol.channelOf(Protocol.ACTION_CONFIG_CHANGED));
+        assertEquals(Protocol.Channel.STATUSBAR, Protocol.channelOf(Protocol.ACTION_LINE));
+        assertEquals(Protocol.Channel.SCOPE, Protocol.channelOf(Protocol.ACTION_SCOPE_PING));
+        assertEquals(Protocol.Channel.CACHE, Protocol.channelOf(Protocol.ACTION_SUBTITLE_CACHE_STATS));
+        assertEquals(Protocol.Channel.HOST_FONT, Protocol.channelOf(Protocol.ACTION_HOST_FONT_CHUNK));
+        assertEquals(Protocol.Channel.UNKNOWN, Protocol.channelOf(null));
+        assertNull(Protocol.selfCheck());
     }
 
     // ==================================================================
