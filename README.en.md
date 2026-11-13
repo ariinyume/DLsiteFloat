@@ -4,8 +4,8 @@
 
 > An LSPosed / Xposed module that pins a **floating subtitle window** synced with playback progress onto the **playback page** of DLsiteSound (the DLsite audio app), and can also mirror subtitles to the **system status bar** (injected inside the SystemUI process).
 
-- Current version: **2.4.3** (`DLsiteFloat-2.4.2-code1047-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
-- 📦 Download APK: [Releases · v2.4.3](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.3)
+- Current version: **2.4.5** (`DLsiteFloat-2.4.5-code1066-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
+- 📦 Download APK: [Releases · v2.4.5](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.5)
 - 📝 Development progress: [DLsiteFloat 插件开发进度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh) (in Chinese)
 - ⭐ Xposed repository: [DLsiteFloat - DLsiteSound floating window / status bar subtitle module](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -37,6 +37,7 @@
 
 ---
 
+
 ## Features
 
 - **Two pill buttons on the playback page**: two MD3 pill buttons sit side by side above the playback control bar — on the left `Status ON / Status OFF` (**the whole button disappears when there are no subtitles**), on the right `Popup ON / Popup OFF / No Sub`.
@@ -60,11 +61,11 @@
 
 - **Visual settings page**: the module ships its own settings page; changes take effect as soon as you tap "Save settings".
   - **Three cards + three tabs**: the subtitle appearance settings are merged into **one** card, and the card is split into three tabs — **`Subtitles` / `Line state` / `Layout`** — switching only changes visibility, so no control is rebuilt and unsaved changes are not lost; "Liquid glass", "Experimental features" and "More" remain separate cards.
-  - **Status card (sticky)**: the three states — "whether the module is active / whether SystemUI is authorized / whether DLsiteSound is running" — each get their own guidance, and the whole page is disabled while the module is inactive; the card also shows the **host version and whether it has been verified** (e.g. "Host 2.22.0 · verified"); it **sticks to the top** while you scroll the page. **Tapping the status card five times in a row** unlocks the hidden "Experimental features" card — see below.
+  - **Status card (sticky)**: the three states — "whether the module is active / whether SystemUI is authorized / whether DLsiteSound is running" — each get their own guidance, and the whole page is disabled while the module is inactive; the card also shows the **host version and whether it has been verified** (e.g. "Host 2.23.1 · verified"); it **sticks to the top** while you scroll the page. **Tapping the status card five times in a row** unlocks the hidden "Experimental features" card — see below. Adapter health summaries are written to the **LSPosed debug log** (no small print on the status card).
   - **Save and undo**: the bottom save bar **floats** permanently and shows "N unsaved changes"; after saving, the snackbar offers a **one-tap undo of the last save**; leaving the page with unsaved changes asks for confirmation (Save / Discard / Cancel).
-  - **Main subtitle / active line**: subtitle color, shadow color, shadow strength, shadow radius, active line opacity, active line scale.
-  - **Inactive lines**: blur inactive lines + blur radius, scale inactive lines + scale ratio.
-  - **Typography**: alignment (left / center / right), line spacing, extra spacing for wrapped lines inside a long subtitle, panel color.
+  - **Main subtitle / active line**: subtitle color, shadow color, shadow strength, shadow radius, active line opacity, active line scale (up to ×1.8), and a **bold font** toggle.
+  - **Inactive lines**: blur inactive lines + blur radius, scale inactive lines + scale ratio (×0.5–×1.8), **inactive line opacity** (20%–100%).
+  - **Typography**: alignment (left / center / right), panel color.
   - **Palette**: each of the three palettes — subtitle color / shadow color / panel color — keeps **6 colours + palette** (white, black, green, orange, cyan, purple).
   - **Reset split per tab**: each of the three tabs has its own "Reset subtitle colours to defaults / Reset line state to defaults / Reset layout to defaults", which **only resets the settings inside that tab**.
   - **Live preview panel**: the preview re-renders in sync while you tweak the parameters; it can be collapsed into three lines, and long subtitles and automatic wrapping are rendered with the real layout.
@@ -86,7 +87,7 @@
 
 - **Subtitle alignment by playback progress**: subtitle lines are aligned against the player's (`ExoPlayer` / expo audio) real playback progress.
 
-- **Automatic subtitle capture**: intercepts DLsiteSound's network responses (okhttp3) and scans the response body directly for `webvtt` / `subtitles` subtitle JSON, parsing it on the spot — it **does not rely on URL keywords**, so it still works with obfuscated or repackaged okhttp3. The subtitle source is DLsiteSound's official `play.dl.dlsitesound.com/.../optimized/xxx.json`, delivered per audio track.
+- **Automatic subtitle capture**: intercepts DLsiteSound's network responses (okhttp3) and scans the response body directly for `webvtt` / `subtitles` subtitle JSON, parsing it on the spot — it **does not rely on URL keywords**, so it still works with obfuscated or repackaged okhttp3. The subtitle source is DLsiteSound's official CDN (from 2.23.x mostly `*.dlsound.jp/.../optimized/xxx.json`), delivered per audio track; prefetch Referer follows the same origin as the intercepted URL.
 
 - **Offline subtitle cache (belongs to Experimental features)**: any audio track you have **played online** has its subtitles cached on the device automatically — so they still show up **with no network / in airplane mode / without a proxy**. The cache stores only the **subtitle text** delivered by the official server (one entry per audio track); it involves no audio content whatsoever.
   - **Only tracks you have already played**: a track whose subtitles were never captured online still has none when you are offline.
@@ -128,7 +129,6 @@
 
 
 ---
-
 
 
 

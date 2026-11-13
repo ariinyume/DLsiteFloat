@@ -4,8 +4,8 @@
 
 > 一個 LSPosed / Xposed 模組，在 DLsiteSound（DLsite 音訊 App）的**播放頁**上掛一個與播放進度同步的**懸浮字幕窗**；同時支援將字幕鏡像到**系統狀態欄**（在 SystemUI 程序內注入）。
 
-- 目前版本：**2.4.3**（`DLsiteFloat-2.4.2-code1047-debug.apk`，套件名稱 `io.github.ariinyume.dlsitesoundfloat`）
-- 📦 下載 APK：[Releases · v2.4.3](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.3)
+- 目前版本：**2.4.5**（`DLsiteFloat-2.4.5-code1066-debug.apk`，套件名稱 `io.github.ariinyume.dlsitesoundfloat`）
+- 📦 下載 APK：[Releases · v2.4.5](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.5)
 - 📝 開發進度：[DLsiteFloat 外掛開發進度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh)
 - ⭐ Xposed 倉庫：[DLsiteFloat - DLsiteSound 懸浮窗/狀態欄字幕模組](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -17,25 +17,26 @@
 
 **一般懸浮窗預設樣式**：主字幕顏色 白色、陰影顏色 黑色、陰影強度 50%、陰影半徑 10%、活動行不透明度 100%、主字幕放大倍數 x1.0、非活動行模糊半徑 3.0px、非活動行縮放比例 90%、置中對齊、字幕間行距 0dp、長字幕內換行額外行距 0dp、懸浮窗顏色 黑色。
 
-![image](https://github.com/user-attachments/assets/87581cce-27fb-496f-8c2a-0525d7990b73)
+<img width="1849" height="632" alt="image" src="https://github.com/user-attachments/assets/87581cce-27fb-496f-8c2a-0525d7990b73" />
 
 ---
 
 **液態玻璃懸浮窗預設樣式**：所有液態玻璃相關設定項（環境背景亮度、通透度、明暗度、模糊強度）預設為 50%，其他字幕設定與一般懸浮窗設定一致。
 
-![image](https://github.com/user-attachments/assets/ee410bb1-50c2-46fe-ade0-265b78effea4)
+<img width="1849" height="618" alt="image" src="https://github.com/user-attachments/assets/ee410bb1-50c2-46fe-ade0-265b78effea4" />
 
 ---
 
 **狀態欄字幕樣式**
 
-![image](https://github.com/user-attachments/assets/acfe391e-d4f1-42fd-81f5-4605421df5a6)
+<img width="464.5" height="178" alt="image" src="https://github.com/user-attachments/assets/acfe391e-d4f1-42fd-81f5-4605421df5a6" />
 
 ---
 
 ⚠ 注意：以上用於效果預覽的文字內容本人未獲得任何授權，如有不妥請聯絡我刪除。
 
 ---
+
 
 ## 功能特點
 
@@ -60,11 +61,11 @@
 
 - **視覺化設定頁**：模組自帶設定頁，改完點「儲存設定」即時生效。
   - **三張卡 + 三個頁籤**：字幕外觀合成**一張**卡，卡內按 **`字幕` / `行態` / `排版`** 三個頁籤切換 —— 切換只改可見性，不重建控制項、不丟未儲存的變更；「液態玻璃」「實驗性功能」「其他」仍是獨立卡片。
-  - **狀態卡（吸頂）**：「模組是否已啟用 / SystemUI 是否已授權 / DLsiteSound 是否在跑」三種狀態各給對應指引，未啟用時整頁控制項停用；卡內顯示**宿主版本與是否已驗證**（形如「宿主 2.22.0 · 已驗證」）；頁面下滑時**吸頂**常駐。**連續點擊狀態卡五次**可解鎖隱藏的「實驗性功能」卡，見下。
+  - **狀態卡（吸頂）**：「模組是否已啟用 / SystemUI 是否已授權 / DLsiteSound 是否在跑」三種狀態各給對應指引，未啟用時整頁控制項停用；卡內顯示**宿主版本與是否已驗證**（形如「宿主 2.23.1 · 已驗證」）；頁面下滑時**吸頂**常駐。**連續點擊狀態卡五次**可解鎖隱藏的「實驗性功能」卡，見下。適配自檢摘要改寫進 **LSPosed 偵錯日誌**（不在狀態卡掛小字）。
   - **儲存與撤銷**：底部儲存列**懸浮**常駐，並顯示「有 N 處未儲存」；儲存後提示條上可**一鍵撤銷上一次儲存**；有未儲存變更時離開會二次確認（儲存 / 不儲存 / 取消）。
-  - **主字幕 / 活動行**：主字幕顏色、陰影顏色、陰影強度、陰影半徑、活動行不透明度、主字幕放大倍數。
-  - **非活動行**：是否模糊非活動行 + 模糊半徑、是否縮放非活動行 + 縮放比例。
-  - **字幕排版**：對齊（靠左 / 置中 / 靠右）、字幕間行距、長字幕內換行額外行距、懸浮窗顏色。
+  - **主字幕 / 活動行**：主字幕顏色、陰影顏色、陰影強度、陰影半徑、活動行不透明度、主字幕放大倍數（上限 ×1.8）、**字型加粗**開關。
+  - **非活動行**：是否模糊非活動行 + 模糊半徑、是否縮放非活動行 + 縮放比例（×0.5–×1.8）、**非活動行不透明度**（20%–100%）。
+  - **字幕排版**：對齊（靠左 / 置中 / 靠右）、懸浮窗顏色。
   - **色板**：主字幕顏色 / 陰影顏色 / 懸浮窗顏色三處色板保留 **6 色 + 色板**（白、黑、綠、橙、青、紫）。
   - **恢復預設按頁籤拆開**：三個頁籤各有自己的「恢復字幕顏色預設設定 / 恢復行態預設設定 / 恢復排版預設設定」，**只重設本頁籤內的設定項**。
   - **即時預覽窗**：調參過程中預覽窗同步算繪；可摺疊成三行，長字幕與自動換行都按真實排版算繪。
@@ -86,7 +87,7 @@
 
 - **依播放進度對齊字幕**：以播放器（`ExoPlayer` / expo 音訊）真實播放進度為主軸對齊字幕行。
 
-- **自動擷取字幕**：攔截 DLsiteSound 的網路回應（okhttp3），直接掃描回應主體是否包含 `webvtt` / `subtitles` 字幕 JSON 並解析——**不依賴 URL 關鍵字**，對混淆/重打包的 okhttp3 也能作為後備。字幕來源為 DLsiteSound 官方 `play.dl.dlsitesound.com/.../optimized/xxx.json`，按音軌下發。
+- **自動擷取字幕**：攔截 DLsiteSound 的網路回應（okhttp3），直接掃描回應主體是否包含 `webvtt` / `subtitles` 字幕 JSON 並解析——**不依賴 URL 關鍵字**，對混淆/重打包的 okhttp3 也能作為後備。字幕來源為 DLsiteSound 官方 CDN（2.23.x 起多為 `*.dlsound.jp/.../optimized/xxx.json`），按音軌下發；預取 Referer 跟隨攔到的 URL 同源。
 
 - **字幕離線快取（屬於實驗性功能）**：**曾經線上播放過的音軌**，其字幕會自動快取到本機 —— 之後**斷網 / 飛航模式 / 不掛代理**時照常顯示。快取只保存官方下發的那份**字幕文字**（按音軌存），不涉及任何音訊內容。
   - **只對「已經播過」的音軌生效**：從未線上抓到過字幕的音軌，離線時仍然沒有字幕。
@@ -128,7 +129,6 @@
 
 
 ---
-
 
 
 
