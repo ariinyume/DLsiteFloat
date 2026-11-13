@@ -6,17 +6,17 @@
 用法
 ----
     # 已解包目录（含 dex/classes*.dex 与 bundle/index.android.bundle，或 assets/）
-    python tools/host_adapter_scan.py F:/WorkBuddyCache/DLSiteSound_Plus/_host231
+    python tools/host_adapter_scan.py path/to/_host231
 
     # 或直接喂 base.apk（会解到 <out>/_host_scan_tmp/）
-    python tools/host_adapter_scan.py path/to/base.apk --out F:/tmp/host231_scan
+    python tools/host_adapter_scan.py path/to/base.apk --out path/to/host231_scan
 
 退出码：0 = 静态闸门全过；1 = 有必过锚点 MISS；2 = 用法/路径错误。
 
-流水线（见 docs/架构优化清单-20261110.md §A3）
---------------------------------------------
+流水线
+------
 解包 → 本脚本串池锚点 →（可选）真机 AdapterHealth → 改 HostInfo.VERIFIED_SET
-  → 写 _host*/ADAPTER_CHECK_*.md
+  → 写 ADAPTER_CHECK_*.md
 """
 from __future__ import annotations
 

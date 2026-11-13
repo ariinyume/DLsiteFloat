@@ -102,6 +102,12 @@ public enum Strings {
             "No response from the DLsiteSound process. Open DLsiteSound once; if it still fails, "
                     + "make sure its scope is enabled in LSPosed and restart SystemUI"),
     /** PRD §12 E-02：SystemUI 未授权时重启按钮旁的提示（M2 的重启按钮会用到，先备好）。 */
+    /** 【code 1065 / C1】状态卡：适配自检摘要（宿主回执）。 */
+    HEALTH_LINE("适配自检 %1$s", "適配自檢 %1$s", "Adapter health %1$s"),
+    HEALTH_PENDING("适配自检：读取中…", "適配自檢：讀取中…", "Adapter health: loading…"),
+    HEALTH_UNAVAILABLE("适配自检：读不到（宿主未运行）",
+            "適配自檢：讀不到（宿主未運行）",
+            "Adapter health: unavailable (host not running)"),
     GUIDE_SYSTEMUI_OFF("重启前请先在 LSPosed 勾选 SystemUI 作用域",
             "重啟前請先在 LSPosed 勾選 SystemUI 作用域",
             "Enable the SystemUI scope in LSPosed before restarting"),
@@ -433,7 +439,10 @@ public enum Strings {
     BLUR_ENABLED("模糊非活动行", "模糊非活動行", "Blur inactive lines"),
     /** 滑块刻度是「×2 档」（1 档 = 0.5px），读数用 {@link #VALUE_PX} 直接显示 px。 */
     BLUR_RADIUS("模糊半径", "模糊半徑", "Blur radius"),
+    /** 【code 1063/1064】非活动行不透明度 20–100%，步长 5，默认 50%。 */
+    INACTIVE_HIGHLIGHT("非活动行不透明度", "非活動行不透明度", "Inactive line opacity"),
     INACTIVE_SCALE_ENABLED("缩放非活动行", "縮放非活動行", "Scale inactive lines"),
+    /** 【code 1063】读数改为 ×0.5–×1.8（底层仍存 inactive_scale_pct）。 */
     INACTIVE_SCALE_PCT("缩放比例", "縮放比例", "Scale ratio"),
     /** 【code 1026】行态面自己的「恢复默认」（只重置模糊与缩放这两组）。 */
     RESET_INACTIVE("恢复行态默认设置", "恢復行態預設設定", "Reset line state defaults"),
@@ -460,6 +469,8 @@ public enum Strings {
     SUP_FONT_FOLLOW_SYSTEM("开 ＝ 用手机系统字体；关 ＝ 用宿主 App 的字体",
             "開 ＝ 用手機系統字型；關 ＝ 用宿主 App 的字型",
             "On = phone system font; off = host app font"),
+    /** 【code 1063】字体加粗开关（默认关）。 */
+    FONT_BOLD("字体加粗", "字型加粗", "Bold font"),
     /** 【code 1026】排版面自己的「恢复默认」（含悬浮窗颜色这一项，它归这一面管）。 */
     RESET_TYPO("恢复字幕排版默认设置", "恢復字幕排版預設設定", "Reset typography defaults"),
     /** v1.4 §3.1.5：新增「悬浮窗颜色」行的标签（摆在换行额外行距下方）。 */

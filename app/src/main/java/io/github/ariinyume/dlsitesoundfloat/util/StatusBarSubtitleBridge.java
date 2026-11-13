@@ -307,6 +307,18 @@ public final class StatusBarSubtitleBridge {
         ctx.sendBroadcast(i);
     }
 
+    /**
+     * 【code 1066】本进程是否推过非空 LINE（给 AdapterHealth 宿主侧代理用）。
+     * STATUSBAR 的 HIT 记在 SystemUI 进程，宿主 HEALTH_REPLY 读不到；有过非空推送
+     * 即可证明跨进程通路在跑。
+     */
+    private static volatile boolean sDeliveredNonEmptyLine;
+
+    /** 见 {@link #sDeliveredNonEmptyLine}。 */
+    public static boolean hasDeliveredNonEmptyLine() {
+        return sDeliveredNonEmptyLine;
+    }
+
     /** 广播当前字幕行 + 行时长 + 播放态 + 开关态。 */
     public static void sendLine(Context ctx, String line, long durationMs, boolean playing) {
         if (ctx == null) {
@@ -320,6 +332,15 @@ public final class StatusBarSubtitleBridge {
         i.putExtra(EXTRA_DURATION_MS, durationMs);
         i.putExtra(EXTRA_PLAYING, playing);
         ctx.sendBroadcast(i);
+        if (line != null && !line.isEmpty()) {
+            sDeliveredNonEmptyLine = true;
+            try {
+                io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth.hit(
+                        io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth.Item.STATUSBAR,
+                        "host LINE delivered");
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     /**

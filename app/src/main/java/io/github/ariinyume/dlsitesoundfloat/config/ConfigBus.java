@@ -105,6 +105,13 @@ public final class ConfigBus {
     /** 【code 1024 / P1-5】上屏行比对：一句都没对上过几次。 */
     public static final String EXTRA_LINE_MISMATCHED = Protocol.EXTRA_LINE_MISMATCHED;
 
+    /** 【code 1065 / C1】设置页 → 宿主：AdapterHealth 查询。 */
+    public static final String ACTION_HEALTH_QUERY = Protocol.ACTION_HEALTH_QUERY;
+    /** 【code 1065 / C1】宿主 → 设置页：AdapterHealth 摘要。 */
+    public static final String ACTION_HEALTH_REPLY = Protocol.ACTION_HEALTH_REPLY;
+    /** 【code 1065 / C1】健康摘要 extra。 */
+    public static final String EXTRA_HEALTH_SUMMARY = Protocol.EXTRA_HEALTH_SUMMARY;
+
     /** 【code 1046】设置页 → DLsiteSound 进程：请报「悬浮窗真正用的字体」。 */
     public static final String ACTION_HOST_FONT_REQ = Protocol.ACTION_HOST_FONT_REQ;
     /** 【code 1046】DLsiteSound 进程 → 设置页：字体描述应答。 */
@@ -216,6 +223,8 @@ public final class ConfigBus {
             // 【code 1046】「悬浮窗真正用的字体」只有宿主进程读得到（MoriMod 的字体缓存
             //   落在宿主 filesDir，设置页受 SELinux 限制读不到）⇒ 描述与字节都由宿主递出。
             f.addAction(ACTION_HOST_FONT_REQ);
+            // 【code 1065 / C1】适配自检只活在宿主进程。
+            f.addAction(ACTION_HEALTH_QUERY);
         }
         BroadcastReceiver r = new BroadcastReceiver() {
             @Override
@@ -247,6 +256,10 @@ public final class ConfigBus {
                     }
                     if (ACTION_HOST_FONT_REQ.equals(action)) {
                         answerHostFont(c, tag, i);
+                        return;
+                    }
+                    if (ACTION_HEALTH_QUERY.equals(action)) {
+                        answerHealth(c, tag);
                         return;
                     }
                     if (ACTION_CONFIG_CHANGED.equals(action)) {
@@ -518,6 +531,43 @@ public final class ConfigBus {
         }
     }
 
+    /** 【code 1065 / C1 · 1066】宿主 → 设置页：AdapterHealth 摘要（日志为主，UI 不再展示）。 */
+    private static void answerHealth(Context ctx, String tag) {
+        if (ctx == null || !"host".equals(tag)) {
+            return;
+        }
+        try {
+            boolean cuesOn = false;
+            try {
+                io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository repo =
+                        io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository.getInstance();
+                if (repo != null && repo.hasSubtitles()) {
+                    String line = repo.statusBarLine();
+                    cuesOn = line != null && !line.isEmpty();
+                    if (!cuesOn) {
+                        cuesOn = true; // 有 cue 库即字幕链路已通（当前句可能刚好空白）
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+            io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth.noteHostEvidence(
+                    io.github.ariinyume.dlsitesoundfloat.util.StatusBarSubtitleBridge
+                            .hasDeliveredNonEmptyLine(),
+                    cuesOn,
+                    io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.loadedWorkCount() > 0);
+            String summary =
+                    io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth.summaryLine();
+            // 【code 1066】主出口：LSPosed 模块日志（设置页状态卡不再挂小字）
+            io.github.ariinyume.dlsitesoundfloat.util.XposedCompat.log(
+                    "[DLsiteSoundFloat:Health] " + summary);
+            Intent out = new Intent(ACTION_HEALTH_REPLY);
+            out.putExtra(EXTRA_HEALTH_SUMMARY, summary);
+            ctx.sendBroadcast(out);
+        } catch (Throwable t) {
+            logWarn("answerHealth failed: " + t);
+        }
+    }
+
     /** 【code 1007】宿主 → 设置页：广播一条缓存占用。 */
     private static void sendCacheStats(Context ctx, int count, long bytes) {
         try {
@@ -778,6 +828,21 @@ public final class ConfigBus {
             logDebug("prefetch clear request sent to host");
         } catch (Throwable t) {
             logWarn("sendPrefetchClear failed: " + t);
+        }
+    }
+
+    /** 【code 1065 / C1】设置页查询 AdapterHealth（宿主回 {@link #ACTION_HEALTH_REPLY}）。 */
+    public static void sendHealthQuery(Context ctx) {
+        if (ctx == null) {
+            return;
+        }
+        try {
+            Intent i = new Intent(ACTION_HEALTH_QUERY);
+            i.setPackage(HOST_PKG);
+            ctx.sendBroadcast(i);
+            logDebug("health query sent to host");
+        } catch (Throwable t) {
+            logWarn("sendHealthQuery failed: " + t);
         }
     }
 

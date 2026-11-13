@@ -25,8 +25,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import io.github.ariinyume.dlsitesoundfloat.config.Protocol;
-import io.github.ariinyume.dlsitesoundfloat.config.Protocol;
 import io.github.ariinyume.dlsitesoundfloat.config.SubtitleConfig;
+import io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth;
 import io.github.ariinyume.dlsitesoundfloat.data.CueStore;
 import io.github.ariinyume.dlsitesoundfloat.data.DisplayContract;
 import io.github.ariinyume.dlsitesoundfloat.data.PlaylistKey;
@@ -37,7 +37,12 @@ import io.github.ariinyume.dlsitesoundfloat.hook.TestAccessBridge;
 import io.github.ariinyume.dlsitesoundfloat.ui.SettingsAppearanceLogic;
 import io.github.ariinyume.dlsitesoundfloat.ui.SettingsDraftPolicy;
 import io.github.ariinyume.dlsitesoundfloat.ui.SettingsExperimentalLogic;
+import io.github.ariinyume.dlsitesoundfloat.ui.SettingsDisplayFormatLogic;
+import io.github.ariinyume.dlsitesoundfloat.ui.SettingsImportLogic;
 import io.github.ariinyume.dlsitesoundfloat.ui.SettingsLiquidGlassLogic;
+import io.github.ariinyume.dlsitesoundfloat.ui.SettingsPreviewBackdropLogic;
+import io.github.ariinyume.dlsitesoundfloat.ui.SettingsPreviewCollapseLogic;
+import io.github.ariinyume.dlsitesoundfloat.ui.SettingsResetLogic;
 import io.github.ariinyume.dlsitesoundfloat.util.HostInfo;
 
 import java.util.HashMap;
@@ -1327,6 +1332,360 @@ public class GoldenVectorTest {
         assertEquals(Protocol.Channel.HOST_FONT, Protocol.channelOf(Protocol.ACTION_HOST_FONT_CHUNK));
         assertEquals(Protocol.Channel.UNKNOWN, Protocol.channelOf(null));
         assertNull(Protocol.selfCheck());
+    }
+
+    // ==================================================================
+    // SettingsImportLogic（code 1060 / B1）
+    // ==================================================================
+
+    @Test
+    public void settingsImport_preflightGates() {
+        assertFalse(SettingsImportLogic.looksLikeSubtitleConfig(
+                java.util.Collections.singleton("note")));
+        assertEquals(SettingsImportLogic.Preflight.BROKEN_SHELL,
+                SettingsImportLogic.preflight(0, false, SubtitleConfig.SCHEMA_VERSION));
+        assertEquals(SettingsImportLogic.Preflight.TOO_NEW,
+                SettingsImportLogic.preflight(99, true, SubtitleConfig.SCHEMA_VERSION));
+        assertTrue(SettingsImportLogic.looksLikeSubtitleConfig(
+                java.util.Collections.singleton(SubtitleConfig.K_TEXT_ALIGN)));
+        assertEquals(SettingsImportLogic.Preflight.OK,
+                SettingsImportLogic.preflight(0, true, SubtitleConfig.SCHEMA_VERSION));
+        assertEquals(SettingsImportLogic.Preflight.OK,
+                SettingsImportLogic.preflight(1, false, SubtitleConfig.SCHEMA_VERSION));
+    }
+
+    @Test
+    public void settingsImport_alignRoundTrip() {
+        assertEquals(0, SettingsImportLogic.alignIndex(SubtitleConfig.ALIGN_LEFT));
+        assertEquals(1, SettingsImportLogic.alignIndex(SubtitleConfig.ALIGN_CENTER));
+        assertEquals(2, SettingsImportLogic.alignIndex(SubtitleConfig.ALIGN_RIGHT));
+        assertEquals(1, SettingsImportLogic.alignIndex(null));
+        assertEquals(1, SettingsImportLogic.alignIndex("weird"));
+        assertEquals(SubtitleConfig.ALIGN_LEFT, SettingsImportLogic.alignValueOf(0));
+        assertEquals(SubtitleConfig.ALIGN_CENTER, SettingsImportLogic.alignValueOf(1));
+        assertEquals(SubtitleConfig.ALIGN_RIGHT, SettingsImportLogic.alignValueOf(2));
+        assertEquals(SubtitleConfig.ALIGN_CENTER, SettingsImportLogic.alignValueOf(99));
+    }
+
+    @Test
+    public void settingsImport_prepareDraftKeepsLangAndQuantizes() {
+        SubtitleConfig c = new SubtitleConfig();
+        c.uiLanguage = SubtitleConfig.LANG_EN;
+        c.activeScale = 1.05f;
+        SettingsImportLogic.prepareImportedDraft(c, SubtitleConfig.LANG_ZH_CN);
+        assertEquals(SubtitleConfig.LANG_ZH_CN, c.uiLanguage);
+        assertEquals(1.1f, c.activeScale, 0.0001f);
+    }
+
+    // ==================================================================
+    // SettingsPreviewBackdropLogic（code 1061 / B1）
+    // ==================================================================
+
+    @Test
+    public void previewBackdrop_panelAlphaAndRadius() {
+        assertEquals(0x5B, SettingsPreviewBackdropLogic.panelPreviewBottomAlpha(0x92));
+        assertEquals(0f, SettingsPreviewBackdropLogic.blurRadiusPx(0), 0.0001f);
+        assertEquals(9f, SettingsPreviewBackdropLogic.blurRadiusPx(100), 0.0001f);
+        assertEquals(4.5f, SettingsPreviewBackdropLogic.blurRadiusPx(50), 0.0001f);
+        int[] floor = new int[1];
+        float frac = SettingsPreviewBackdropLogic.blurRadiusFrac(4.5f, floor);
+        assertEquals(4, floor[0]);
+        assertEquals(0.5f, frac, 0.0001f);
+        assertFalse(SettingsPreviewBackdropLogic.shouldInterpolateBlur(0.004f));
+        assertTrue(SettingsPreviewBackdropLogic.shouldInterpolateBlur(0.01f));
+        int[] grad = SettingsPreviewBackdropLogic.panelPreviewGradientColors(0x00FFFFFF);
+        assertEquals(0x92, (grad[0] >>> 24) & 0xFF);
+        assertEquals(0x5B, (grad[1] >>> 24) & 0xFF);
+    }
+
+    @Test
+    public void previewBackdrop_lerpClampLumSeed() {
+        assertEquals(0xFF808080,
+                SettingsPreviewBackdropLogic.lerpArgb(0xFF000000, 0xFFFFFFFF, 0.5f));
+        assertEquals(0xFF112233,
+                SettingsPreviewBackdropLogic.lerpArgb(0xFF112233, 0xFFFFFFFF, 0f));
+        assertEquals(0, SettingsPreviewBackdropLogic.clampIndex(-1, 64));
+        assertEquals(63, SettingsPreviewBackdropLogic.clampIndex(64, 64));
+        assertEquals(1f, SettingsPreviewBackdropLogic.backdropLumFromArgb(
+                new int[]{0xFFFFFFFF}), 0.0001f);
+        assertEquals(0f, SettingsPreviewBackdropLogic.backdropLumFromArgb(
+                new int[]{0xFF000000}), 0.0001f);
+        assertEquals(SettingsPreviewBackdropLogic.backdropSeed(1, 2, 3, 4),
+                SettingsPreviewBackdropLogic.backdropSeed(1, 2, 3, 4));
+    }
+
+    @Test
+    public void previewBackdrop_blurFlatAndInterpolated() {
+        int n = 3;
+        int[] flat = new int[n * n];
+        java.util.Arrays.fill(flat, 0xFF404040);
+        int[] blurred = SettingsPreviewBackdropLogic.blurTile(flat, n, 1);
+        for (int v : blurred) {
+            assertEquals(0xFF404040, v);
+        }
+        int[] src = new int[n * n];
+        java.util.Arrays.fill(src, 0xFF000000);
+        src[4] = 0xFFFF0000; // center
+        int[] out = SettingsPreviewBackdropLogic.blurTileInterpolated(src, n, 0.5f);
+        assertTrue(((out[4] >> 16) & 0xFF) < 0xFF);
+        assertTrue(((out[4] >> 16) & 0xFF) > 0);
+        assertTrue(((out[1] >> 16) & 0xFF) > 0 || ((out[3] >> 16) & 0xFF) > 0);
+    }
+
+    // ==================================================================
+    // SettingsPreviewCollapseLogic（code 1062 / B1）
+    // ==================================================================
+
+    @Test
+    public void previewCollapse_metricsAndHeight() {
+        // 行高 10/20/30/40/50：窗口 1..3 ⇒ top=10, bottom=100, winH=90
+        SettingsPreviewCollapseLogic.CollapsedMetrics m =
+                SettingsPreviewCollapseLogic.fromChildHeights(
+                        0, new int[]{10, 20, 30, 40, 50}, 1, 3, 150);
+        assertNotNull(m);
+        assertEquals(10, m.winDy);
+        assertEquals(90, m.winH);
+        assertEquals(10, m.clipTop);
+        assertEquals(100, m.clipBottom);
+        assertTrue(m.valid);
+        assertEquals(SettingsPreviewCollapseLogic.HEIGHT_WRAP,
+                SettingsPreviewCollapseLogic.cardHeightPx(200, 80, 0f));
+        assertEquals(80, SettingsPreviewCollapseLogic.cardHeightPx(200, 80, 1f));
+        assertEquals(140, SettingsPreviewCollapseLogic.cardHeightPx(200, 80, 0.5f));
+        assertEquals(-21f, SettingsPreviewCollapseLogic.contentTranslationY(42, 0.5f), 0.0001f);
+    }
+
+    @Test
+    public void previewCollapse_clipAndWidth() {
+        assertNull(SettingsPreviewCollapseLogic.clipBoundsOrNull(
+                0f, 40, 120, 200, 100));
+        SettingsPreviewCollapseLogic.ClipBounds c =
+                SettingsPreviewCollapseLogic.clipBoundsOrNull(0.5f, 40, 120, 200, 100);
+        assertNotNull(c);
+        assertEquals(20, c.top);
+        assertEquals(160, c.bottom);
+        assertEquals(1080 - 32 - 14 - 14,
+                SettingsPreviewCollapseLogic.inferContentWidth(0, 1080, 32, 14, 14));
+        assertEquals(400,
+                SettingsPreviewCollapseLogic.inferContentWidth(400, 1080, 32, 14, 14));
+        assertNull(SettingsPreviewCollapseLogic.fromChildHeights(
+                0, new int[]{10, 20}, 1, 3, 100));
+    }
+
+    // ==================================================================
+    // FollowBaseline / Held / Pick / Frame（code 1066 / 2.4.5 / A-2 A-3）
+    // ==================================================================
+
+    @Test
+    public void followBaseline_gates() {
+        final int NO = Integer.MIN_VALUE;
+        assertFalse(TestAccessBridge.followPageQuiet(0L, 1000L, 200L));
+        assertTrue(TestAccessBridge.followPageQuiet(100L, 400L, 200L));
+        assertTrue(TestAccessBridge.followAtRest(true, 0, NO, 6));
+        assertFalse(TestAccessBridge.followAtRest(true, 20, NO, 6));
+        // 偏离基线且未静止 → 推迟
+        assertTrue(TestAccessBridge.followDeferOff(100, 200, NO, 6, false));
+        assertFalse(TestAccessBridge.followDeferOff(100, 200, NO, 6, true));
+        assertTrue(TestAccessBridge.followCandReset(NO, 10, NO, 6));
+        assertFalse(TestAccessBridge.followSettle(0L, 100L, 400L));
+        assertTrue(TestAccessBridge.followSettle(100L, 600L, 400L));
+        assertTrue(TestAccessBridge.followAdoptBias(30, 64));
+        assertFalse(TestAccessBridge.followAdoptBias(400, 64));
+        assertFalse(TestAccessBridge.followHealEligible(NO, 10, 0, NO, 6));
+        assertTrue(TestAccessBridge.followHealEligible(5, 10, 0, NO, 6));
+        assertTrue(TestAccessBridge.followStartMotion(900L, 1000L, 200L));
+        assertTrue(TestAccessBridge.followStartDrag(true, true, 50, NO, 6));
+        assertFalse(TestAccessBridge.followStartDrag(true, true, 2, NO, 6));
+    }
+
+    @Test
+    public void followFrame_and_pick_and_held() {
+        final int NO = Integer.MIN_VALUE;
+        assertTrue(TestAccessBridge.heldRenew(NO, 10, NO, 6));
+        assertFalse(TestAccessBridge.heldRenew(10, 12, NO, 6));
+        assertTrue(TestAccessBridge.heldRenew(10, 20, NO, 6));
+        assertTrue(TestAccessBridge.playBtnSquare(48, 48, 32, 0.4f));
+        assertFalse(TestAccessBridge.playBtnSquare(48, 20, 32, 0.4f));
+        assertEquals(5, TestAccessBridge.playBtnScore(90, 10, 100));
+        assertTrue(TestAccessBridge.playBtnBeats(3, 10));
+        assertTrue(TestAccessBridge.followFrameHeld(20, NO, 6));
+        assertEquals(120000L, TestAccessBridge.followFrameCap(true, 20000L, 120000L));
+        assertEquals(20000L, TestAccessBridge.followFrameCap(false, 20000L, 120000L));
+        assertTrue(TestAccessBridge.followFrameTimedOut(0L, 21000L, 20000L));
+        assertTrue(TestAccessBridge.followFrameMissDone(90, 90));
+        assertFalse(TestAccessBridge.followFrameStopStill(true, 100, 90));
+        assertTrue(TestAccessBridge.followFrameStopStill(false, 90, 90));
+    }
+
+    // ==================================================================
+    // CapsuleButtonPolicy（code 1066 / 2.4.5 / A-1）
+    // ==================================================================
+
+    @Test
+    public void capsuleButton_onAndVisibleGates() {
+        // 无字幕：状态栏不算开、不显示；悬浮窗不算开
+        assertFalse(TestAccessBridge.capsuleStatusOn(true, true));
+        assertFalse(TestAccessBridge.capsuleStatusVisible(true, true, true));
+        assertFalse(TestAccessBridge.capsuleFloatOn(true, true));
+        // 有字幕 + 用户开着 → 状态栏开
+        assertTrue(TestAccessBridge.capsuleStatusOn(false, true));
+        assertFalse(TestAccessBridge.capsuleStatusOn(false, false));
+        // 可见 = 功能闸 ∧ SystemUI 授权
+        assertTrue(TestAccessBridge.capsuleStatusVisible(false, true, true));
+        assertFalse(TestAccessBridge.capsuleStatusVisible(false, false, true));
+        assertFalse(TestAccessBridge.capsuleStatusVisible(false, true, false));
+        assertTrue(TestAccessBridge.capsuleFloatOn(false, true));
+        assertFalse(TestAccessBridge.capsuleFloatOn(false, false));
+    }
+
+    @Test
+    public void capsuleButton_visualSigCoversAllInputs() {
+        String a = TestAccessBridge.capsuleVisualSig("浮开", true, "栏开", true, true,
+                1f, false, 0xFF123456);
+        String b = TestAccessBridge.capsuleVisualSig("浮开", true, "栏开", true, true,
+                1f, false, 0xFF123456);
+        assertEquals(a, b);
+        // 漏任何一项都应换签名（1.21.12 / 1.21.16 坑）
+        assertFalse(a.equals(TestAccessBridge.capsuleVisualSig("浮开", false, "栏开", true, true,
+                1f, false, 0xFF123456)));
+        assertFalse(a.equals(TestAccessBridge.capsuleVisualSig("浮开", true, "栏开", true, false,
+                1f, false, 0xFF123456)));
+        assertFalse(a.equals(TestAccessBridge.capsuleVisualSig("浮开", true, "栏开", true, true,
+                0.6f, false, 0xFF123456)));
+        assertFalse(a.equals(TestAccessBridge.capsuleVisualSig("浮开", true, "栏开", true, true,
+                1f, true, 0xFF123456)));
+        assertFalse(a.equals(TestAccessBridge.capsuleVisualSig("浮开", true, "栏开", true, true,
+                1f, false, 0)));
+    }
+
+    // ==================================================================
+    // StatusBarScrollOrchestrator + AdapterHealth（code 1065）
+    // ==================================================================
+
+    @Test
+    public void statusBarScrollOrchestrator_gates() {
+        assertEquals("ABORT", TestAccessBridge.scrollStartAction(false, true, 10));
+        assertEquals("WAIT_WIDTH", TestAccessBridge.scrollStartAction(true, false, 10));
+        assertEquals("SHOW_STATIC", TestAccessBridge.scrollStartAction(true, true, 0));
+        assertEquals("ANIMATE", TestAccessBridge.scrollStartAction(true, true, 120));
+        assertEquals("ARM_START", TestAccessBridge.scrollAfterWidth(true, false));
+        assertEquals("RETARGET", TestAccessBridge.scrollAfterWidth(true, true));
+        assertEquals("NONE", TestAccessBridge.scrollAfterWidth(false, false));
+    }
+
+    @Test
+    public void adapterHealth_summaryLineReflectsMarks() {
+        AdapterHealth.resetForTest();
+        assertTrue(AdapterHealth.summaryLine().contains("0/" + AdapterHealth.Item.values().length));
+        // 静默设状态：不经 mark→XposedCompat（单测 classpath 无 libxposed）
+        AdapterHealth.setStateForTest(AdapterHealth.Item.NET_BUILD, AdapterHealth.State.HIT);
+        AdapterHealth.setStateForTest(AdapterHealth.Item.NET_RN, AdapterHealth.State.DEGRADED);
+        String line = AdapterHealth.summaryLine();
+        assertTrue(line.contains("NET_BUILD=HIT"));
+        assertTrue(line.contains("NET_RN=DEGRADED"));
+        assertTrue(line.startsWith("1/"));
+        AdapterHealth.resetForTest();
+    }
+
+    @Test
+    public void protocol_healthChannelMapped() {
+        assertEquals(Protocol.Channel.HEALTH,
+                Protocol.channelOf(Protocol.ACTION_HEALTH_QUERY));
+        assertEquals(Protocol.Channel.HEALTH,
+                Protocol.channelOf(Protocol.ACTION_HEALTH_REPLY));
+        assertNull(Protocol.selfCheck());
+    }
+
+    // ==================================================================
+    // SettingsDisplayFormatLogic / SettingsResetLogic（code 1063 / B1）
+    // ==================================================================
+
+    @Test
+    public void settingsDisplayFormat_scaleDpAndInactiveTicks() {
+        assertEquals("0.8", SettingsDisplayFormatLogic.fmtScale(8));
+        assertEquals("1.8", SettingsDisplayFormatLogic.fmtScale(18));
+        assertEquals("0", SettingsDisplayFormatLogic.fmtDp(0f));
+        assertEquals("2.5", SettingsDisplayFormatLogic.fmtDp(2.5f));
+        assertEquals("3.0", SettingsDisplayFormatLogic.fmtOneDecimal(3f));
+        assertEquals(8, SettingsDisplayFormatLogic.inactiveScalePctToTick(80));
+        assertEquals(80, SettingsDisplayFormatLogic.inactiveScaleTickToPct(8));
+        assertEquals(5, SettingsDisplayFormatLogic.inactiveScalePctToTick(
+                SubtitleConfig.INACTIVE_SCALE_PCT_MIN));
+        assertEquals(18, SettingsDisplayFormatLogic.inactiveScalePctToTick(
+                SubtitleConfig.INACTIVE_SCALE_PCT_MAX));
+    }
+
+    @Test
+    public void settingsResetLogic_threeFacesRestoreDefaults() {
+        SubtitleConfig c = SubtitleConfig.defaults();
+        c.activeScale = 1.5f;
+        c.activeHighlight = 70;
+        c.inactiveHighlight = 80;
+        c.inactiveScalePct = 150;
+        c.inactiveBlurEnabled = false;
+        c.subtitleBold = true;
+        c.subtitleFontFollowSystem = true;
+        c.lineSpacingDp = 3f;
+        SettingsResetLogic.resetMain(c);
+        assertEquals(SubtitleConfig.ACTIVE_SCALE_DEF, c.activeScale, 0.0001f);
+        assertEquals(SubtitleConfig.HIGHLIGHT_DEF, c.activeHighlight);
+        assertEquals(80, c.inactiveHighlight); // 行态未动
+        SettingsResetLogic.resetInactive(c);
+        assertEquals(SubtitleConfig.INACTIVE_HIGHLIGHT_DEF, c.inactiveHighlight);
+        assertEquals(SubtitleConfig.INACTIVE_SCALE_PCT_DEF, c.inactiveScalePct);
+        assertTrue(c.inactiveBlurEnabled);
+        assertTrue(c.subtitleBold); // 排版未动
+        SettingsResetLogic.resetTypo(c);
+        assertFalse(c.subtitleBold);
+        assertFalse(c.subtitleFontFollowSystem);
+        assertEquals(SubtitleConfig.LINE_SPACING_DEF, c.lineSpacingDp, 0.0001f);
+    }
+
+    @Test
+    public void settingsDraft_inactiveHighlightAndBoldDirtySections() {
+        SubtitleConfig saved = SubtitleConfig.defaults();
+        SettingsDraftPolicy.quantize(saved);
+        SubtitleConfig draft = saved.copy();
+        draft.inactiveHighlight = 75;
+        assertEquals(1, SettingsDraftPolicy.dirtySectionCount(draft, saved));
+        draft = saved.copy();
+        draft.subtitleBold = true;
+        assertEquals(1, SettingsDraftPolicy.dirtySectionCount(draft, saved));
+    }
+
+    @Test
+    public void subtitleConfig_newRangesDefaultsCopyAndClamp() {
+        assertEquals(1.8f, SubtitleConfig.ACTIVE_SCALE_MAX, 0.0001f);
+        assertEquals(180, SubtitleConfig.INACTIVE_SCALE_PCT_MAX);
+        assertEquals(80, SubtitleConfig.INACTIVE_SCALE_PCT_DEF);
+        assertEquals(50, SubtitleConfig.INACTIVE_HIGHLIGHT_DEF);
+        assertEquals(20, SubtitleConfig.INACTIVE_HIGHLIGHT_MIN);
+        SubtitleConfig def = SubtitleConfig.defaults();
+        assertEquals(50, def.inactiveHighlight);
+        assertEquals(80, def.inactiveScalePct);
+        assertFalse(def.subtitleBold);
+        assertEquals(1.8f, SubtitleConfig.ACTIVE_SCALE_MAX, 0.0001f);
+
+        SubtitleConfig c = SubtitleConfig.defaults();
+        c.inactiveHighlight = 70;
+        c.inactiveScalePct = 120;
+        c.activeScale = 1.8f;
+        c.subtitleBold = true;
+        SubtitleConfig back = c.copy();
+        assertEquals(70, back.inactiveHighlight);
+        assertEquals(120, back.inactiveScalePct);
+        assertEquals(1.8f, back.activeScale, 0.0001f);
+        assertTrue(back.subtitleBold);
+        assertTrue(c.sameParametersAs(back));
+
+        c.inactiveHighlight = 5;
+        c.inactiveScalePct = 999;
+        c.activeScale = 2.5f;
+        c.clamp();
+        assertEquals(SubtitleConfig.INACTIVE_HIGHLIGHT_MIN, c.inactiveHighlight);
+        assertEquals(20, c.inactiveHighlight);
+        assertEquals(SubtitleConfig.INACTIVE_SCALE_PCT_MAX, c.inactiveScalePct);
+        assertEquals(SubtitleConfig.ACTIVE_SCALE_MAX, c.activeScale, 0.0001f);
     }
 
     // ==================================================================

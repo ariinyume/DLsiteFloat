@@ -162,7 +162,7 @@ import io.github.ariinyume.dlsitesoundfloat.view.SystemFont;
  *    另写一套字号/颜色/阴影换算 —— 否则用户调完发现「预览跟真窗不一样」。
  * ─────────────────────────────────────────────────────────────────────
  */
-public class SettingsActivity extends AppCompatActivity {
+public class SettingsActivity extends AppCompatActivity implements SettingsHost {
 
     private static final String TAG = "DLsiteFloat:Settings";
 
@@ -178,7 +178,9 @@ public class SettingsActivity extends AppCompatActivity {
      * 真实渐变由渲染端（SubtitleStyle / GlassPanelDrawable）负责，两边口径见
      * {@code SubtitleConfig#floatWindowColor} 的注释。
      */
-    private static final int PANEL_PREVIEW_TOP_ALPHA = 0x92;
+    // 【code 1061 / B1】→ {@link SettingsPreviewBackdropLogic#PANEL_PREVIEW_TOP_ALPHA}
+    private static final int PANEL_PREVIEW_TOP_ALPHA =
+            SettingsPreviewBackdropLogic.PANEL_PREVIEW_TOP_ALPHA;
 
     /**
      * 【2.2.10】液态玻璃档的预览圆角（dp）。
@@ -482,8 +484,9 @@ public class SettingsActivity extends AppCompatActivity {
      * 典型断面，能同时看出两档字号、两档不透明度、阴影与（开启时的）模糊。
      * ⚠️ 与 {@link #PREVIEW_ACTIVE_INDEX}(2) 是同一套下标，改示例文本时要一起看。
      */
-    private static final int WINDOW_FIRST = 1;
-    private static final int WINDOW_LAST = 3;
+    // 【code 1062 / B1】→ {@link SettingsPreviewCollapseLogic}
+    private static final int WINDOW_FIRST = SettingsPreviewCollapseLogic.WINDOW_FIRST;
+    private static final int WINDOW_LAST = SettingsPreviewCollapseLogic.WINDOW_LAST;
 
     /** 【code 1029】预览卡「收起程度」0 = 全展开、1 = 收起到 {@link #WINDOW_FIRST}..{@link #WINDOW_LAST} 三行。 */
     private float mPreviewFraction;
@@ -546,8 +549,15 @@ public class SettingsActivity extends AppCompatActivity {
      */
     private LinearLayout mAppearanceTabs;
     private final MaterialButton[] mAppearanceTabButtons = new MaterialButton[3];
-    /** 当前选中的维度（0 颜色 / 1 行态 / 2 排版）。语言切换会 rebuild，靠它恢复选中态。 */
-    private int mAppearancePage = 0;
+    /**
+     * 【code 1066 / B-0】行引用登记表 + 四卡 Fragment。
+     * 外观页签下标改由 {@link SettingsAppearanceFragment} 持有（语言 rebuild 不丢）。
+     */
+    private final SettingsRowRegistry mRowRegistry = new SettingsRowRegistry();
+    private SettingsAppearanceFragment mAppearanceFrag;
+    private SettingsLiquidGlassFragment mLiquidGlassFrag;
+    private SettingsExperimentalFragment mExperimentalFrag;
+    private SettingsMiscFragment mMiscFrag;
     /** 【code 1003】「液态玻璃效果调整」卡片（独立成卡，摆在「其他」之前）。 */
     private LinearLayout mGroupLiquidGlass;
     /** 【code 1015 / 2.3.2】「实验性功能」组（独立成卡，摆在液态玻璃与「其他」之间）。 */
@@ -584,6 +594,8 @@ public class SettingsActivity extends AppCompatActivity {
     private SliderRow mRowHighlight;
     private SliderRow mRowScale;
     private SliderRow mRowBlurRadius;
+    /** 【code 1063】行态面「非活动行不透明度」。 */
+    private SliderRow mRowInactiveHighlight;
     private SliderRow mRowInactiveScalePct;
     private SliderRow mRowLineSpacing;
     private SliderRow mRowWrapSpacing;
@@ -591,6 +603,8 @@ public class SettingsActivity extends AppCompatActivity {
     private SwitchRow mRowInactiveScaleEnabled;
     /** 【code 1044】排版面里的「字幕字体跟随系统设定」开关行。 */
     private SwitchRow mRowFontFollowSystem;
+    /** 【code 1063】排版面「字体加粗」。 */
+    private SwitchRow mRowFontBold;
     private SwitchRow mRowStatusbar;
     /** 【2.2.7 / code 979】「其他」卡片里的「调试日志」开关行。 */
     private SwitchRow mRowDebugLog;
@@ -608,6 +622,9 @@ public class SettingsActivity extends AppCompatActivity {
     private TextView mCacheUsage;
     /** 【code 1007】宿主 → 设置页的缓存统计接收器（onCreate 注册、onDestroy 注销）。 */
     private BroadcastReceiver mCacheStatsReceiver;
+    /** 【code 1065 / C1】宿主 AdapterHealth 摘要；null = 尚未回执。 */
+    private String mHealthSummary;
+    private BroadcastReceiver mHealthReceiver;
     /** 【code 1046】宿主 → 设置页的「悬浮窗真正用的字体」接收器（同上成对）。 */
     private BroadcastReceiver mHostFontReceiver;
     /** 【code 1007】点过「清除已缓存字幕」、等宿主回执：收到统计后弹一次「已清除」。 */
@@ -902,6 +919,8 @@ public class SettingsActivity extends AppCompatActivity {
         // 【code 1046】先挂接收器再问（顺序不能倒）。字体描述本身放在 onResume 里要 ——
         //   用户可能中途切去 MoriMod 改了字体，回到设置页时预览得跟上。
         registerHostFontReceiver();
+        // 【code 1065 / C1】AdapterHealth 摘要接收器（先挂再问）。
+        registerHealthReceiver();
         PreviewHostFont.setListener(this::updatePreview);
     }
 
@@ -921,6 +940,13 @@ public class SettingsActivity extends AppCompatActivity {
             } catch (Throwable ignored) {
             }
             mHostFontReceiver = null;
+        }
+        if (mHealthReceiver != null) {
+            try {
+                unregisterReceiver(mHealthReceiver);
+            } catch (Throwable ignored) {
+            }
+            mHealthReceiver = null;
         }
         PreviewHostFont.setListener(null);
         super.onDestroy();
@@ -1367,6 +1393,7 @@ public class SettingsActivity extends AppCompatActivity {
         mGroupExperimental = findViewById(R.id.group_experimental);
         mGroupMisc = findViewById(R.id.group_misc);
         mCardExperimental = findViewById(R.id.card_experimental);
+        ensureSettingsFragments();
         // 节标题在**卡片外**（参考稿口径），由 applyStaticTexts 刷文案
         mTitlePreview = findViewById(R.id.title_preview);
         mTitleMain = findViewById(R.id.title_main);
@@ -1654,19 +1681,12 @@ public class SettingsActivity extends AppCompatActivity {
         }
         // 🔴【code 1032】必须先钉住内容高度，再改卡片高度 —— 顺序不能反。
         pinPreviewContentHeight();
-        if (f <= 0f) {
-            lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
-        } else if (f >= 1f) {
-            lp.height = mPreviewWinH;
-        } else {
-            lp.height = Math.round(mPreviewFullH + (mPreviewWinH - mPreviewFullH) * f);
-        }
+        // 【code 1062 / B1】高度 / 位移 → {@link SettingsPreviewCollapseLogic}
+        lp.height = SettingsPreviewCollapseLogic.cardHeightPx(mPreviewFullH, mPreviewWinH, f);
         mPreviewCard.setLayoutParams(lp);
         if (mPreviewLines != null) {
-            // 【code 1031】上移量 = 第 FIRST 行**顶边**（含容器 paddingTop 与第 0 行），
-            //   把它整行顶到卡顶；卡高 = 第 FIRST 行顶到 LAST 行底的净高。
-            //   两个值同源、互为边界 ⇒ 窗口里正好三行，既不会顶部白一条，也不会切到下一行。
-            mPreviewLines.setTranslationY(-mPreviewWinDy * f);
+            mPreviewLines.setTranslationY(
+                    SettingsPreviewCollapseLogic.contentTranslationY(mPreviewWinDy, f));
             applyPreviewClip(f);
         }
     }
@@ -1739,19 +1759,15 @@ public class SettingsActivity extends AppCompatActivity {
             return;
         }
         int w = mPreviewLines.getWidth();
-        if (f <= 0f || mPreviewClipTop <= 0 || mPreviewClipBottom <= mPreviewClipTop
-                || w <= 0 || mPreviewFullH <= 0) {
+        // 【code 1062 / B1】裁剪上下界 → {@link SettingsPreviewCollapseLogic#clipBoundsOrNull}
+        SettingsPreviewCollapseLogic.ClipBounds clip =
+                SettingsPreviewCollapseLogic.clipBoundsOrNull(
+                        f, mPreviewClipTop, mPreviewClipBottom, mPreviewFullH, w);
+        if (clip == null) {
             mPreviewLines.setClipBounds(null);
             return;
         }
-        int top = Math.round(mPreviewClipTop * f);
-        // 【code 1031】底部也线性收口：f=0 → full（等于不裁），f=1 → 第 LAST 行底。
-        //   只裁上沿的话，窗口下沿仍会落进「第 4 行」的头几像素，看起来就像多出半行。
-        int bottom = Math.round(mPreviewFullH + (mPreviewClipBottom - mPreviewFullH) * f);
-        if (bottom <= top) {
-            bottom = top + 1;
-        }
-        mPreviewLines.setClipBounds(new Rect(0, top, w, bottom));
+        mPreviewLines.setClipBounds(new Rect(0, clip.top, w, clip.bottom));
     }
 
     /**
@@ -1784,15 +1800,12 @@ public class SettingsActivity extends AppCompatActivity {
         try {
             int width = mPreviewLines.getWidth();
             if (width <= 0) {
-                // 首次进入还没排版：按「屏幕宽 - 卡片左右 margin - 本容器左右 padding」推。
-                // 🔴【code 1031】1029/1030 只减了 32dp（卡片 margin），**没减 preview_lines
-                //   自己的 14dp×2** —— 推出来的可用宽比真实值宽 28dp，英文长句因此少换
-                //   一行、行高被低估，折叠窗口就短了一截。
+                // 【code 1062 / B1】宽度兜底 → {@link SettingsPreviewCollapseLogic#inferContentWidth}
                 View parent = (View) mPreviewLines.getParent();
                 int pw = parent == null ? 0 : parent.getWidth();
-                width = pw > 0 ? pw
-                        : getResources().getDisplayMetrics().widthPixels - dp(32)
-                        - mPreviewLines.getPaddingLeft() - mPreviewLines.getPaddingRight();
+                width = SettingsPreviewCollapseLogic.inferContentWidth(
+                        pw, getResources().getDisplayMetrics().widthPixels, dp(32),
+                        mPreviewLines.getPaddingLeft(), mPreviewLines.getPaddingRight());
             }
             // 🔴🔴【code 1033】forceLayout 是必须的：View.measure() 自带缓存，spec 没变且
             //   没有 FORCE_LAYOUT 标记时会**跳过 onMeasure**，直接返回上一次的尺寸 ——
@@ -1821,28 +1834,25 @@ public class SettingsActivity extends AppCompatActivity {
             //   没有任何 baseline / gravity 之类的额外偏移。1031 说真实坐标「能吸收字体留白」，
             //   但那份留白本来就在子 View 自己的 measuredHeight 里 ⇒ 累加不会漏掉。
             //   而且累加只依赖「刚刚量出来的值」，与「有没有 layout 过」完全无关。
-            int y = mPreviewLines.getPaddingTop();
-            int winTop = -1;
-            int winBottom = -1;
+            // 【code 1062 / B1】窗口累加 → {@link SettingsPreviewCollapseLogic#fromChildHeights}
+            int[] heights = new int[n];
             for (int i = 0; i < n; i++) {
-                if (i == WINDOW_FIRST) {
-                    winTop = y;
-                }
-                y += mPreviewLines.getChildAt(i).getMeasuredHeight();
-                if (i == WINDOW_LAST) {
-                    winBottom = y;
-                }
+                heights[i] = mPreviewLines.getChildAt(i).getMeasuredHeight();
             }
-            if (winTop < 0 || winBottom <= winTop) {
+            SettingsPreviewCollapseLogic.CollapsedMetrics m =
+                    SettingsPreviewCollapseLogic.fromChildHeights(
+                            mPreviewLines.getPaddingTop(), heights,
+                            WINDOW_FIRST, WINDOW_LAST, full);
+            if (m == null) {
                 return;
             }
-            mPreviewFullH = full;
-            mPreviewWinH = winBottom - winTop;
-            mPreviewWinDy = winTop;
-            mPreviewClipTop = winTop;
-            mPreviewClipBottom = winBottom;
+            mPreviewFullH = m.fullH;
+            mPreviewWinH = m.winH;
+            mPreviewWinDy = m.winDy;
+            mPreviewClipTop = m.clipTop;
+            mPreviewClipBottom = m.clipBottom;
             mPreviewMeasuredW = width;
-            mPreviewMetricsValid = full > 0 && mPreviewWinH > 0 && mPreviewWinH < full;
+            mPreviewMetricsValid = m.valid;
         } catch (Throwable t) {
             Log.w(TAG, "refreshPreviewMetrics failed: " + t);
         }
@@ -1880,9 +1890,12 @@ public class SettingsActivity extends AppCompatActivity {
                 ConfigBus.sendCacheStatsRequest(this);
             }
             if (result.hostAuthorized) {
+                ConfigBus.sendHealthQuery(this);
                 // 自愈补推：宿主进程现在活着，把**已保存**的配置再广播一次，
                 // 让宿主把 remote prefs 持久化补上（用户可能在宿主未运行时保存过）。
                 mStore.pushSavedConfigToHooks();
+            } else {
+                mHealthSummary = null;
             }
         });
     }
@@ -1900,6 +1913,7 @@ public class SettingsActivity extends AppCompatActivity {
         //   缓存变了；宿主的缓存操作本来就是在「用户切到设置页、宿主在后台」时做的，
         //   所以这条请求是**显式广播**（setPackage），不受后台隐式广播限制。
         ConfigBus.sendCacheStatsRequest(this);
+        ConfigBus.sendHealthQuery(this);
         // 【code 1046】每次回到本页都重新要一次「悬浮窗真正用的字体」：
         //   用户可能刚在 MoriMod 里换字体 / 开关了全局字体替换，预览必须跟上，
         //   否则「预览的字体 ≠ 悬浮窗真正用的字体」会原样复发。
@@ -2012,6 +2026,8 @@ public class SettingsActivity extends AppCompatActivity {
             mStatusGuide.setText(Strings.GUIDE_SYSTEMUI_OFF.get(mLang));
             mStatusGuide.setVisibility(View.VISIBLE);
         } else {
+            // 【code 1066】两侧已授权：状态卡不再挂「适配自检」小字。
+            //   摘要只进 LSPosed 日志（宿主应答 HEALTH 时 XposedCompat.log）。
             mStatusGuide.setVisibility(View.GONE);
         }
 
@@ -2040,7 +2056,8 @@ public class SettingsActivity extends AppCompatActivity {
      * 存储里那个 true 表达的是「用户没主动关过」，与「现在没权限所以用不了」是两件事。
      * 一旦用户之后去授权了 SystemUI，回到本页开关应自动恢复成 true，而不是被我们记成 false。
      */
-    private void applyStatusbarSwitchEnabled(boolean enabled) {
+    @Override
+    public void applyStatusbarSwitchEnabled(boolean enabled) {
         if (mRowStatusbar == null) {
             return;
         }
@@ -2173,42 +2190,63 @@ public class SettingsActivity extends AppCompatActivity {
         if (mGroupMain == null) {
             return;
         }
-        mGroupMain.removeAllViews();
-        buildMainGroup(mGroupMain);
-
-        mGroupInactive.removeAllViews();
-        buildInactiveGroup(mGroupInactive);
-
-        mGroupTypo.removeAllViews();
-        buildTypoGroup(mGroupTypo);
-
-        // 【code 1026】三卡合一仍在（卡内 tab 条 + 切面只改可见性）。
-        //   重置行改回「每个面各一条」，由各面的 buildXxxGroup 自己建，这里不再统一建。
-        buildAppearanceTabs();
-        selectAppearancePage(mAppearancePage);
-
-        // 【code 1003】「液态玻璃效果调整」独立成卡，摆在「其他」之前。
-        if (mGroupLiquidGlass != null) {
-            mGroupLiquidGlass.removeAllViews();
-            buildLiquidGlassGroup(mGroupLiquidGlass);
+        // 【code 1066 / B-0~B-2】按卡 Fragment 重建；行工厂仍在 Host（本 Activity）。
+        mRowRegistry.clear();
+        if (mAppearanceFrag != null) {
+            mAppearanceFrag.rebuild(this);
         }
-
-        // 【code 1015 / 2.3.2】「实验性功能」独立成卡，摆在「液态玻璃」与「其他」之间。
-        //   未解锁时整块（节标题 + 卡片）GONE —— 见 applyExperimentalVisibility。
-        if (mGroupExperimental != null) {
-            mGroupExperimental.removeAllViews();
-            buildExperimentalGroup(mGroupExperimental);
+        if (mLiquidGlassFrag != null) {
+            mLiquidGlassFrag.rebuild(this);
         }
-
-        if (mGroupMisc != null) {
-            mGroupMisc.removeAllViews();
-            buildMiscGroup(mGroupMisc);
-            // 重建后要按最新探测结果重刷一次「状态栏字幕功能」的可用性
+        if (mExperimentalFrag != null) {
+            mExperimentalFrag.rebuild(this);
+        }
+        if (mMiscFrag != null) {
+            mMiscFrag.rebuild(this);
             applyStatusbarSwitchEnabled(mProbe != null && mProbe.systemUiAuthorized);
         }
-
-        // 【code 1015 / 2.3.2】实验卡显隐与卡内子开关可用性（依赖草稿 / 已保存两侧，故放最后）。
         applyExperimentalVisibility();
+    }
+
+    /** 【code 1066】挂上四卡 Fragment（无独立 layout；容器仍是 activity_settings 的 group_*）。 */
+    private void ensureSettingsFragments() {
+        androidx.fragment.app.FragmentManager fm = getSupportFragmentManager();
+        mAppearanceFrag = (SettingsAppearanceFragment) fm.findFragmentByTag(
+                SettingsAppearanceFragment.TAG);
+        if (mAppearanceFrag == null) {
+            mAppearanceFrag = new SettingsAppearanceFragment();
+            fm.beginTransaction().add(mAppearanceFrag, SettingsAppearanceFragment.TAG).commitNow();
+        }
+        mAppearanceFrag.bindContainers(mGroupMain, mGroupInactive, mGroupTypo);
+
+        mLiquidGlassFrag = (SettingsLiquidGlassFragment) fm.findFragmentByTag(
+                SettingsLiquidGlassFragment.TAG);
+        if (mLiquidGlassFrag == null) {
+            mLiquidGlassFrag = new SettingsLiquidGlassFragment();
+            fm.beginTransaction().add(mLiquidGlassFrag, SettingsLiquidGlassFragment.TAG).commitNow();
+        }
+        mLiquidGlassFrag.bindContainer(mGroupLiquidGlass);
+
+        mExperimentalFrag = (SettingsExperimentalFragment) fm.findFragmentByTag(
+                SettingsExperimentalFragment.TAG);
+        if (mExperimentalFrag == null) {
+            mExperimentalFrag = new SettingsExperimentalFragment();
+            fm.beginTransaction()
+                    .add(mExperimentalFrag, SettingsExperimentalFragment.TAG).commitNow();
+        }
+        mExperimentalFrag.bindContainer(mGroupExperimental);
+
+        mMiscFrag = (SettingsMiscFragment) fm.findFragmentByTag(SettingsMiscFragment.TAG);
+        if (mMiscFrag == null) {
+            mMiscFrag = new SettingsMiscFragment();
+            fm.beginTransaction().add(mMiscFrag, SettingsMiscFragment.TAG).commitNow();
+        }
+        mMiscFrag.bindContainer(mGroupMisc);
+    }
+
+    @Override
+    public SettingsRowRegistry rowRegistry() {
+        return mRowRegistry;
     }
 
     /**
@@ -2303,7 +2341,13 @@ public class SettingsActivity extends AppCompatActivity {
                 .build();
     }
 
-    private void buildAppearanceTabs() {
+    /** 【code 1066】外观页签下标在 Fragment；语言 rebuild 靠它恢复。 */
+    int appearancePage() {
+        return mAppearanceFrag != null ? mAppearanceFrag.page() : 0;
+    }
+
+    @Override
+    public void buildAppearanceTabs() {
         if (mAppearanceTabs == null) {
             return;
         }
@@ -2356,10 +2400,14 @@ public class SettingsActivity extends AppCompatActivity {
      * <p>零重建是这套交互的全部价值 —— 切面只是换可见性，滑块状态、滚动位置、
      * 草稿值都不受影响（三组从一开始就已经建好，只是藏着）。
      */
-    private void selectAppearancePage(int page) {
+    @Override
+    public void selectAppearancePage(int page) {
         // 【code 1057 / B1】页签下标 → {@link SettingsAppearanceLogic#clampPage}
         page = SettingsAppearanceLogic.clampPage(page);
-        mAppearancePage = page;
+        if (mAppearanceFrag != null) {
+            mAppearanceFrag.setPage(page);
+        }
+        mRowRegistry.put(SettingsRowRegistry.APPEARANCE_PAGE, Integer.valueOf(page));
         LinearLayout[] pages = {mGroupMain, mGroupInactive, mGroupTypo};
         for (int i = 0; i < pages.length; i++) {
             if (pages[i] != null) {
@@ -2399,7 +2447,8 @@ public class SettingsActivity extends AppCompatActivity {
         pinCardLastBottom(group, group.getChildAt(group.getChildCount() - 1));
     }
 
-    private void buildMainGroup(LinearLayout parent) {
+    @Override
+    public void buildMainGroup(LinearLayout parent) {
         mSwatchSubtitle = addColorRow(parent, Strings.SUBTITLE_COLOR,
                 commonPalette(), commonPaletteNames(), () -> mDraft.subtitleColor, v -> {
                     mDraft.subtitleColor = v;
@@ -2439,10 +2488,11 @@ public class SettingsActivity extends AppCompatActivity {
                 });
 
         // 放大倍数：滑块走「×10 的整数刻度」，避免浮点步长累积误差
+        // 【code 1063】上限 ×1.5 → ×1.8（常量 ACTIVE_SCALE_MAX 已改）
         mRowScale = addSliderRow(parent, Strings.ACTIVE_SCALE,
                 Math.round(SubtitleConfig.ACTIVE_SCALE_MIN * 10),
                 Math.round(SubtitleConfig.ACTIVE_SCALE_MAX * 10), 1,
-                v -> Strings.VALUE_SCALE.format(mLang, fmtScale(v)),
+                v -> Strings.VALUE_SCALE.format(mLang, SettingsDisplayFormatLogic.fmtScale(v)),
                 v -> {
                     mDraft.activeScale = v / 10f;
                     markDirty();
@@ -2454,7 +2504,17 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     /** FR-05 非活动行字幕调整（开关联动 + 恢复默认）。 */
-    private void buildInactiveGroup(LinearLayout parent) {
+    @Override
+    public void buildInactiveGroup(LinearLayout parent) {
+        // 【code 1063/1064】非活动行不透明度 20–100%，步长 5，默认 50%
+        mRowInactiveHighlight = addSliderRow(parent, Strings.INACTIVE_HIGHLIGHT,
+                SubtitleConfig.INACTIVE_HIGHLIGHT_MIN, SubtitleConfig.INACTIVE_HIGHLIGHT_MAX, 5,
+                v -> Strings.VALUE_PCT.format(mLang, v),
+                v -> {
+                    mDraft.inactiveHighlight = v;
+                    markDirty();
+                });
+
         mRowBlurEnabled = addSwitchRow(parent, Strings.BLUR_ENABLED, v -> {
             mDraft.inactiveBlurEnabled = v;
             // PRD §FR-05：关闭时滑块**隐藏**（占位收回，不是置灰）
@@ -2472,7 +2532,9 @@ public class SettingsActivity extends AppCompatActivity {
         // ⚠️ 变化点：**读数直接显示 px**（3.0px / 7.5px），不再显示「8 × 0.5px」这种算式。
         mRowBlurRadius = addSliderRow(parent, Strings.BLUR_RADIUS,
                 SubtitleConfig.BLUR_STEPS_MIN, SubtitleConfig.BLUR_STEPS_MAX, 1,
-                v -> Strings.VALUE_PX.format(mLang, fmtOneDecimal(v * SubtitleStyle.BLUR_PX_PER_STEP)),
+                v -> Strings.VALUE_PX.format(mLang,
+                        SettingsDisplayFormatLogic.fmtOneDecimal(
+                                v * SubtitleStyle.BLUR_PX_PER_STEP)),
                 v -> {
                     mDraft.inactiveBlurSteps = v;
                     markDirty();
@@ -2486,12 +2548,16 @@ public class SettingsActivity extends AppCompatActivity {
             markDirty();
         });
 
-        // §2.1.1：缩放 50–100% 步长 5 默认 90%
+        // 【code 1063】缩放 ×0.5–×1.8，步长 0.1，默认 ×0.8（底层仍存 inactive_scale_pct）
         mRowInactiveScalePct = addSliderRow(parent, Strings.INACTIVE_SCALE_PCT,
-                SubtitleConfig.INACTIVE_SCALE_PCT_MIN, SubtitleConfig.INACTIVE_SCALE_PCT_MAX, 5,
-                v -> Strings.VALUE_PCT.format(mLang, v),
+                SettingsDisplayFormatLogic.inactiveScalePctToTick(
+                        SubtitleConfig.INACTIVE_SCALE_PCT_MIN),
+                SettingsDisplayFormatLogic.inactiveScalePctToTick(
+                        SubtitleConfig.INACTIVE_SCALE_PCT_MAX), 1,
+                v -> Strings.VALUE_SCALE.format(mLang, SettingsDisplayFormatLogic.fmtScale(v)),
                 v -> {
-                    mDraft.inactiveScalePct = v;
+                    mDraft.inactiveScalePct =
+                            SettingsDisplayFormatLogic.inactiveScaleTickToPct(v);
                     markDirty();
                 });
 
@@ -2507,13 +2573,14 @@ public class SettingsActivity extends AppCompatActivity {
      * 只是界面不再暴露它 —— 渲染侧仍按它算（见 {@link SubtitleStyle}），
      * 默认值 {@code WEIGHT_SYSTEM} 恰好等价于用户没调过的状态。
      */
-    private void buildTypoGroup(LinearLayout parent) {
+    @Override
+    public void buildTypoGroup(LinearLayout parent) {
         // 行距：滑块走「×2 的整数刻度」（0.5dp 步长，含负值，PRD §14.2 DK-02）
         // §2.1.1：上限由 10dp 收窄到 5dp（SubtitleConfig.LINE_SPACING_MAX 已改，这里 to 值跟着走）
         mRowLineSpacing = addSliderRow(parent, Strings.LINE_SPACING,
                 Math.round(SubtitleConfig.LINE_SPACING_MIN * 2),
                 Math.round(SubtitleConfig.LINE_SPACING_MAX * 2), 1,
-                v -> Strings.VALUE_DP.format(mLang, fmtDp(v / 2f)),
+                v -> Strings.VALUE_DP.format(mLang, SettingsDisplayFormatLogic.fmtDp(v / 2f)),
                 v -> {
                     mDraft.lineSpacingDp = v / 2f;
                     markDirty();
@@ -2522,7 +2589,7 @@ public class SettingsActivity extends AppCompatActivity {
         mRowWrapSpacing = addSliderRow(parent, Strings.WRAP_SPACING,
                 Math.round(SubtitleConfig.WRAP_SPACING_MIN * 2),
                 Math.round(SubtitleConfig.WRAP_SPACING_MAX * 2), 1,
-                v -> Strings.VALUE_DP.format(mLang, fmtDp(v / 2f)),
+                v -> Strings.VALUE_DP.format(mLang, SettingsDisplayFormatLogic.fmtDp(v / 2f)),
                 v -> {
                     mDraft.wrapExtraSpacingDp = v / 2f;
                     markDirty();
@@ -2537,6 +2604,16 @@ public class SettingsActivity extends AppCompatActivity {
             markDirty();
         });
 
+        // 【code 1063】字体加粗（默认关）—— 开 = 活动/非活动一并加粗；关 = 两行常规。
+        //   同步写 font_weight 以便导出 JSON 可读；渲染侧以 subtitleBold 为准。
+        mRowFontBold = addSwitchRow(parent, Strings.FONT_BOLD, v -> {
+            mDraft.subtitleBold = v;
+            mDraft.fontWeight = v
+                    ? SubtitleConfig.WEIGHT_BOLD
+                    : SubtitleConfig.WEIGHT_REGULAR;
+            markDirty();
+        });
+
         // 【code 1026】「跟随宿主字幕样式」已整体移除 —— 上一版它就在这个位置。
         //   删除原因见 CHANGELOG 1026：宿主真正上屏的那一份样式并没有稳定可读的语义，
         //   与其留一个「看起来在跟、实际经常跟不到」的开关，不如把字号交回用户自己。
@@ -2547,7 +2624,8 @@ public class SettingsActivity extends AppCompatActivity {
         mRowAlign = addSegmentedRow(parent, Strings.ALIGN, new String[]{
                 Strings.ALIGN_LEFT.get(mLang), Strings.ALIGN_CENTER.get(mLang),
                 Strings.ALIGN_RIGHT.get(mLang)}, v -> {
-            mDraft.textAlign = alignValueOf(v);
+            // 【code 1060 / B1】→ {@link SettingsImportLogic#alignValueOf}
+            mDraft.textAlign = SettingsImportLogic.alignValueOf(v);
             markDirty();
         });
 
@@ -2600,7 +2678,8 @@ public class SettingsActivity extends AppCompatActivity {
      * v1.4 §16.3：**已删「保持屏幕常亮」整行**（真机测试 3.9 实锤无效果）。
      * {@code keep_screen_on} 键保留解析兼容，只是界面不再暴露。
      */
-    private void buildMiscGroup(LinearLayout parent) {
+    @Override
+    public void buildMiscGroup(LinearLayout parent) {
         // 【code 1023】宿主版本行已**搬进状态卡副标题第二行**（Ari 要求），本卡不再有这一行。
         buildStatusbarRow(parent);
         // 【code 1031】Ari 第 8 条：「桌面图标隐藏」放在「调试日志」上面。
@@ -2929,7 +3008,8 @@ public class SettingsActivity extends AppCompatActivity {
      *    只看草稿会让「关掉总闸」的瞬间就把入口抹掉，用户再也打不开它。
      * ─────────────────────────────────────────────────────────────────────
      */
-    private void buildExperimentalGroup(LinearLayout parent) {
+    @Override
+    public void buildExperimentalGroup(LinearLayout parent) {
         mRowExperimental = addSwitchRow(parent, Strings.EXPERIMENTAL_MASTER,
                 this::onExperimentalToggled);
 
@@ -3027,7 +3107,8 @@ public class SettingsActivity extends AppCompatActivity {
      *   · 「关掉总闸并保存」之后两者都为假 ⇒ 卡片消失（这正是 Ari 需求里
      *     「卡片在用户保存配置后不显示」那条）。
      */
-    private void applyExperimentalVisibility() {
+    @Override
+    public void applyExperimentalVisibility() {
         // 【code 1056 / B1】→ {@link SettingsExperimentalLogic#shouldShowCard}
         boolean show = SettingsExperimentalLogic.shouldShowCard(
                 mDraft.experimentalEnabled, mSaved.experimentalEnabled);
@@ -3234,6 +3315,38 @@ public class SettingsActivity extends AppCompatActivity {
      * 【code 1007】Android 13+ 动态注册必须显式声明可见性：宿主是**别的 UID**，
      * 只能用 {@code RECEIVER_EXPORTED}（与 {@code util.ScopeProbe} 收 PONG 同一口径）。
      */
+    /** 【code 1065 / C1】注册宿主 AdapterHealth 摘要接收器。 */
+    private void registerHealthReceiver() {
+        if (mHealthReceiver != null) {
+            return;
+        }
+        IntentFilter f = new IntentFilter();
+        f.addAction(ConfigBus.ACTION_HEALTH_REPLY);
+        BroadcastReceiver r = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context c, Intent i) {
+                if (i == null) {
+                    return;
+                }
+                String s = i.getStringExtra(ConfigBus.EXTRA_HEALTH_SUMMARY);
+                mHealthSummary = s;
+                if (!isFinishing() && !isDestroyed()) {
+                    renderStatusCard();
+                }
+            }
+        };
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(r, f, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(r, f);
+            }
+            mHealthReceiver = r;
+        } catch (Throwable t) {
+            Log.w(TAG, "register health receiver failed: " + t);
+        }
+    }
+
     private void registerCacheStatsReceiver() {
         if (mCacheStatsReceiver != null) {
             return;
@@ -3466,7 +3579,8 @@ public class SettingsActivity extends AppCompatActivity {
      *   ⑥ 恢复液态玻璃默认设置（全部设置为 50%）
      * 总开关关闭时 ②~⑥ 全部隐藏（见 {@link #applyLiquidGlassBlurVisibility()}）。
      */
-    private void buildLiquidGlassGroup(LinearLayout parent) {
+    @Override
+    public void buildLiquidGlassGroup(LinearLayout parent) {
         // ① 「液态玻璃」总开关（本卡首行）
         mRowLiquidGlass = addSwitchRow(parent, Strings.LIQUID_GLASS, this::onLiquidGlassToggled);
 
@@ -3723,7 +3837,8 @@ public class SettingsActivity extends AppCompatActivity {
      * 逐行调 {@link #stylePreviewLine}（= 真窗 {@code styleLine} 的同一套参数）。
      *   · 字号：活动行 {@code BASE_TEXT_SP × activeScale}，非活动行
      *     {@code BASE_TEXT_SP × inactiveScalePct%} —— 直接取绝对值，不再走相对倍数；
-     *   · 颜色与不透明度：{@code activeColor + activeAlpha} / {@code inactiveColor + 0.21}；
+     *   · 颜色与不透明度：{@code activeColor + activeAlpha} /
+     *     {@code inactiveColor + inactiveAlpha}（【code 1063】起由 inactive_highlight% 配置）；
      *   · 阴影：{@code shadowRadiusPx / shadowDyPx / shadowColor} 直接取；
      *   · 模糊：非活动行走 {@link #applyPreviewBlur}（真窗 {@code applyBlur} 同源）。
      * 允许的差异只剩**抗锯齿与栅格化**（PRD §3.1.1 明示允许）。
@@ -3947,13 +4062,11 @@ public class SettingsActivity extends AppCompatActivity {
                 mPreviewGlass.setBackdropLum(
                         Math.max(0f, Math.min(1f, mDraft.liquidGlassBackdropLum / 100f)));
             } else {
-                int base = mDraft.floatWindowColor;
-                int topAlpha = PANEL_PREVIEW_TOP_ALPHA;
-                int bottomAlpha = Math.max(0, Math.round(topAlpha * (0x5B / (float) 0x92)));
-                int top = withAlpha(base, topAlpha / 255f);
-                int bottom = withAlpha(base, bottomAlpha / 255f);
+                // 【code 1061 / B1】渐变两色 → {@link SettingsPreviewBackdropLogic}
+                int[] grad = SettingsPreviewBackdropLogic.panelPreviewGradientColors(
+                        mDraft.floatWindowColor);
                 GradientDrawable panel = new GradientDrawable(
-                        GradientDrawable.Orientation.TOP_BOTTOM, new int[]{top, bottom});
+                        GradientDrawable.Orientation.TOP_BOTTOM, grad);
                 panel.setCornerRadius(radius);
                 mPreviewPanel.setBackground(panel);
             }
@@ -3973,7 +4086,8 @@ public class SettingsActivity extends AppCompatActivity {
      * ⚠️ 只建一次（渐变颜色变了才重建），因为 {@link #applyPreviewPanel()} 会被频繁调用。
      */
     private void ensurePreviewBackdropTile(int a, int b, int c, int d) {
-        final int seed = a ^ (b * 31) ^ (c * 131) ^ (d * 3571);
+        // 【code 1061 / B1】种子 → {@link SettingsPreviewBackdropLogic#backdropSeed}
+        final int seed = SettingsPreviewBackdropLogic.backdropSeed(a, b, c, d);
         if (mPreviewBackdropBmp != null && mPreviewBackdropSeed == seed) {
             return;                    // 颜色没变且已有图 → 复用
         }
@@ -4011,12 +4125,9 @@ public class SettingsActivity extends AppCompatActivity {
             }
             int[] px = new int[n * n];
             bmp.getPixels(px, 0, n, 0, 0, n, n);
-            long sum = 0;
-            for (int v : px) {
-                sum += (77 * ((v >> 16) & 0xFF) + 150 * ((v >> 8) & 0xFF) + 29 * (v & 0xFF)) >> 8;
-            }
             mPreviewBackdropBmp = bmp;
-            mPreviewBackdropLum = (sum / (float) px.length) / 255f;
+            // 【code 1061 / B1】均值亮度 → {@link SettingsPreviewBackdropLogic#backdropLumFromArgb}
+            mPreviewBackdropLum = SettingsPreviewBackdropLogic.backdropLumFromArgb(px);
         } catch (Throwable t) {
             // 建不出来就退回"没有背景"的静态玻璃，预览仍然可用
             mPreviewBackdropBmp = null;
@@ -4038,24 +4149,13 @@ public class SettingsActivity extends AppCompatActivity {
             return mPreviewBackdropBlurBmp;
         }
         try {
-            // 【2.2.12】连续模糊：半径 r 与 r+1 **各糊一遍再按小数部分线性插值**。
-            //   ⚠️ 上一版是「整数档位的缩放」（1/8 → 7/8 档），每跨一档跳一次 ——
-            //      那正是「预览闪跳而不连续」的直接原因。模糊半径现在是连续的。
+            // 【2.2.12】连续模糊：半径 r 与 r+1 插值。
+            // 【code 1061 / B1】→ {@link SettingsPreviewBackdropLogic#blurTileInterpolated}
             final int n = mPreviewBackdropBmp.getWidth();
-            final float rad = q / 100f * 9f;             // 0..9px（在 64×64 的底图上）
-            final int r0 = (int) Math.floor(rad);
-            final float frac = rad - r0;
             final int[] src = new int[n * n];
             mPreviewBackdropBmp.getPixels(src, 0, n, 0, 0, n, n);
-            final int[] b0 = blurTile(src, n, r0);
-            final int[] out = blurTile(src, n, r0 + 1);
-            if (frac > 0.005f) {
-                for (int i = 0; i < out.length; i++) {
-                    out[i] = lerpArgb(b0[i], out[i], frac);
-                }
-            } else {
-                System.arraycopy(b0, 0, out, 0, out.length);
-            }
+            final int[] out = SettingsPreviewBackdropLogic.blurTileInterpolated(
+                    src, n, SettingsPreviewBackdropLogic.blurRadiusPx(q));
             Bitmap bmp = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888);
             bmp.setPixels(out, 0, n, 0, 0, n, n);
             mPreviewBackdropBlurBmp = bmp;
@@ -4064,75 +4164,6 @@ public class SettingsActivity extends AppCompatActivity {
         } catch (Throwable t) {
             return mPreviewBackdropBmp;
         }
-    }
-
-    /** 对 n×n 的像素数组做两遍可分离盒式模糊（半径 0 = 原样返回）。 */
-    private static int[] blurTile(int[] src, int n, int radius) {
-        int[] a = src.clone();
-        if (radius <= 0) {
-            return a;
-        }
-        int[] t = new int[a.length];
-        for (int pass = 0; pass < 2; pass++) {
-            blurTileH(a, t, n, radius);
-            blurTileV(t, a, n, radius);
-        }
-        return a;
-    }
-
-    private static void blurTileH(int[] in, int[] out, int n, int r) {
-        final int div = 2 * r + 1;
-        for (int y = 0; y < n; y++) {
-            final int row = y * n;
-            int sa = 0, sr = 0, sg = 0, sb = 0;
-            for (int i = -r; i <= r; i++) {
-                int p = in[row + ci(i, n)];
-                sa += p >>> 24; sr += (p >> 16) & 0xFF; sg += (p >> 8) & 0xFF; sb += p & 0xFF;
-            }
-            for (int x = 0; x < n; x++) {
-                out[row + x] = ((sa / div) << 24) | ((sr / div) << 16) | ((sg / div) << 8) | (sb / div);
-                int add = in[row + ci(x + r + 1, n)];
-                int sub = in[row + ci(x - r, n)];
-                sa += (add >>> 24) - (sub >>> 24);
-                sr += ((add >> 16) & 0xFF) - ((sub >> 16) & 0xFF);
-                sg += ((add >> 8) & 0xFF) - ((sub >> 8) & 0xFF);
-                sb += (add & 0xFF) - (sub & 0xFF);
-            }
-        }
-    }
-
-    private static void blurTileV(int[] in, int[] out, int n, int r) {
-        final int div = 2 * r + 1;
-        for (int x = 0; x < n; x++) {
-            int sa = 0, sr = 0, sg = 0, sb = 0;
-            for (int i = -r; i <= r; i++) {
-                int p = in[ci(i, n) * n + x];
-                sa += p >>> 24; sr += (p >> 16) & 0xFF; sg += (p >> 8) & 0xFF; sb += p & 0xFF;
-            }
-            for (int y = 0; y < n; y++) {
-                out[y * n + x] = ((sa / div) << 24) | ((sr / div) << 16) | ((sg / div) << 8) | (sb / div);
-                int add = in[ci(y + r + 1, n) * n + x];
-                int sub = in[ci(y - r, n) * n + x];
-                sa += (add >>> 24) - (sub >>> 24);
-                sr += ((add >> 16) & 0xFF) - ((sub >> 16) & 0xFF);
-                sg += ((add >> 8) & 0xFF) - ((sub >> 8) & 0xFF);
-                sb += (add & 0xFF) - (sub & 0xFF);
-            }
-        }
-    }
-
-    private static int ci(int v, int n) {
-        return v < 0 ? 0 : (v >= n ? n - 1 : v);
-    }
-
-    /** 按 f 在两个 ARGB 之间线性插值（逐通道）。 */
-    private static int lerpArgb(int a, int b, float f) {
-        final int g = Math.round(255 * f);
-        final int ia = 255 - g;
-        return ((((a >>> 24) * ia + (b >>> 24) * g) / 255) << 24)
-                | (((((a >> 16) & 0xFF) * ia + ((b >> 16) & 0xFF) * g) / 255) << 16)
-                | (((((a >> 8) & 0xFF) * ia + ((b >> 8) & 0xFF) * g) / 255) << 8)
-                | (((a & 0xFF) * ia + (b & 0xFF) * g) / 255);
     }
 
     // ==================================================================
@@ -4205,29 +4236,25 @@ public class SettingsActivity extends AppCompatActivity {
         }
 
         // ③ 是 JSON 但内容不合规（schema 过新 / 结构坏 / 解析异常）
+        // 【code 1060 / B1】预检 / 草稿准备 → {@link SettingsImportLogic}
         try {
             int schema = o.optInt(SubtitleConfig.K_SCHEMA_VERSION, 0);
-            if (schema > SubtitleConfig.SCHEMA_VERSION) {
-                // PRD §12 E-04：配置比本模块新 → 明确拒绝，绝不猜着降级解析
+            SettingsImportLogic.Preflight gate = SettingsImportLogic.preflight(
+                    schema, SettingsImportLogic.looksLikeSubtitleConfig(o),
+                    SubtitleConfig.SCHEMA_VERSION);
+            if (gate == SettingsImportLogic.Preflight.TOO_NEW) {
                 toast(Strings.IMPORT_TOO_NEW.get(mLang));
                 return;
             }
-            // schema 缺失（0）或字段全不对时，fromJson 会回落默认值而不抛 —— 那等于「导入了一份
-            // 和默认一模一样的配置」，用户会以为导入成功了却什么都没变。这里额外判一道：
-            // 连我们的键名一个都没有，就当内容不合规。
-            if (schema <= 0 && !looksLikeSubtitleConfig(o)) {
+            if (gate == SettingsImportLogic.Preflight.BROKEN_SHELL) {
                 Log.w(TAG, "import rejected: json without any known key");
                 toast(Strings.IMPORT_FAILED_BROKEN.get(mLang));
                 return;
             }
             SubtitleConfig imported = SubtitleConfig.fromJson(o);
-            // 导入 = 草稿改动（不立刻写盘），用户还得按保存才生效 —— 与 Henry 的
-            // 「保存才落盘」一致，也避免误导入后没法回头。
+            // 导入 = 草稿改动（不立刻写盘）；语言属界面层，保留本页。
+            SettingsImportLogic.prepareImportedDraft(imported, mLang.configValue());
             mDraft = imported;
-            // 语言属于**界面层**、不属于外观参数：导入一份别人的配置不应该把本页语言也换掉
-            // （用户刚在本页选过语言，切走会让他莫名奇妙）。与 §FR-02 规则 2 一致。
-            mDraft.uiLanguage = mLang.configValue();
-            quantize(mDraft);
             buildRows();
             syncWidgets();
             updatePreview();
@@ -4236,16 +4263,6 @@ public class SettingsActivity extends AppCompatActivity {
             Log.w(TAG, "import failed: " + t);
             toast(Strings.IMPORT_FAILED_BROKEN.get(mLang));
         }
-    }
-
-    /** 粗判：这份 JSON 里有没有任何一个我们认识的配置键（用于区分「空壳 JSON」与真配置）。 */
-    private static boolean looksLikeSubtitleConfig(org.json.JSONObject o) {
-        return o.has(SubtitleConfig.K_SUBTITLE_COLOR)
-                || o.has(SubtitleConfig.K_SHADOW_COLOR)
-                || o.has(SubtitleConfig.K_TEXT_ALIGN)
-                || o.has(SubtitleConfig.K_LINE_SPACING_DP)
-                || o.has(SubtitleConfig.K_FLOAT_WINDOW_COLOR)
-                || o.has(SubtitleConfig.K_UI_LANGUAGE);
     }
 
     // ==================================================================
@@ -4423,19 +4440,23 @@ public class SettingsActivity extends AppCompatActivity {
             setSlider(mRowShadowRadius, mDraft.shadowRadius);
             setSlider(mRowHighlight, mDraft.activeHighlight);
             setSlider(mRowScale, Math.round(mDraft.activeScale * 10));
+            setSlider(mRowInactiveHighlight, mDraft.inactiveHighlight);
             setSwitch(mRowBlurEnabled, mDraft.inactiveBlurEnabled);
             setSlider(mRowBlurRadius, mDraft.inactiveBlurSteps);
             if (mRowBlurRadius != null) {
                 mRowBlurRadius.root.setVisibility(mDraft.inactiveBlurEnabled ? View.VISIBLE : View.GONE);
             }
             setSwitch(mRowInactiveScaleEnabled, mDraft.inactiveScaleEnabled);
-            setSlider(mRowInactiveScalePct, mDraft.inactiveScalePct);
+            setSlider(mRowInactiveScalePct,
+                    SettingsDisplayFormatLogic.inactiveScalePctToTick(mDraft.inactiveScalePct));
             if (mRowInactiveScalePct != null) {
                 mRowInactiveScalePct.root.setVisibility(mDraft.inactiveScaleEnabled ? View.VISIBLE : View.GONE);
             }
-            setSegmented(mRowAlign, alignIndex(mDraft.textAlign));
+            // 【code 1060 / B1】→ {@link SettingsImportLogic#alignIndex}
+            setSegmented(mRowAlign, SettingsImportLogic.alignIndex(mDraft.textAlign));
             // 【code 1044】字幕字体是否跟随系统
             setSwitch(mRowFontFollowSystem, mDraft.subtitleFontFollowSystem);
+            setSwitch(mRowFontBold, mDraft.subtitleBold);
             setSlider(mRowLineSpacing, Math.round(mDraft.lineSpacingDp * 2));
             setSlider(mRowWrapSpacing, Math.round(mDraft.wrapExtraSpacingDp * 2));
             // 状态栏字幕功能：真值来自草稿，但 SystemUI 未授权时会被 applyStatusbarSwitchEnabled
@@ -4557,36 +4578,20 @@ public class SettingsActivity extends AppCompatActivity {
 
     /** 主字幕 / 活动行这一面的默认值（无副作用，由调用方决定何时 sync / 提示）。 */
     private void resetMainValues() {
-        mDraft.subtitleColor = SubtitleConfig.SUBTITLE_COLOR_DEF;
-        mDraft.shadowColor = SubtitleConfig.SHADOW_COLOR_DEF;
-        mDraft.shadowStrength = SubtitleConfig.SHADOW_STRENGTH_DEF;
-        mDraft.shadowRadius = SubtitleConfig.SHADOW_RADIUS_DEF;
-        mDraft.activeHighlight = SubtitleConfig.HIGHLIGHT_DEF;
-        mDraft.activeScale = SubtitleConfig.ACTIVE_SCALE_DEF;
+        // 【code 1063 / B1】→ {@link SettingsResetLogic#resetMain}
+        SettingsResetLogic.resetMain(mDraft);
     }
 
     /** 非活动行这一面的默认值。 */
     private void resetInactiveValues() {
-        mDraft.inactiveBlurEnabled = true;
-        mDraft.inactiveBlurSteps = SubtitleConfig.BLUR_STEPS_DEF;
-        mDraft.inactiveScaleEnabled = true;
-        mDraft.inactiveScalePct = SubtitleConfig.INACTIVE_SCALE_PCT_DEF;
+        // 【code 1063 / B1】→ {@link SettingsResetLogic#resetInactive}
+        SettingsResetLogic.resetInactive(mDraft);
     }
 
     /** 排版这一面的默认值。 */
     private void resetTypoValues() {
-        // v1.4 §16.3：「字重」已从界面删除，但配置键保留 —— 恢复默认时**仍然把它拉回默认值**，
-        // 这样用户从旧版本（可能存过 regular / bold）升上来，点恢复默认也会把它清干净。
-        mDraft.fontWeight = SubtitleConfig.WEIGHT_SYSTEM;
-        mDraft.textAlign = SubtitleConfig.ALIGN_CENTER;
-        mDraft.lineSpacingDp = SubtitleConfig.LINE_SPACING_DEF;
-        mDraft.wrapExtraSpacingDp = SubtitleConfig.WRAP_SPACING_DEF;
-        // §3.1.5：「恢复默认」小字里已列出「悬浮窗颜色 黑色」，这里必须真的把它恢复，
-        // 否则小字写的是什么、按下去变的却是另一套（文案与行为必须一致）
-        // 【code 1026】「跟随宿主字幕样式」已移除，恢复默认不再需要关它。
-        mDraft.floatWindowColor = SubtitleConfig.FLOAT_WINDOW_COLOR_DEF;
-        // 【code 1044】字体跟随系统的默认值是「关」（= 跟随宿主），恢复默认必须把它关回去
-        mDraft.subtitleFontFollowSystem = false;
+        // 【code 1063 / B1】→ {@link SettingsResetLogic#resetTypo}
+        SettingsResetLogic.resetTypo(mDraft);
     }
 
     private String alignLabel(String v) {
@@ -4597,28 +4602,6 @@ public class SettingsActivity extends AppCompatActivity {
             return Strings.ALIGN_RIGHT.get(mLang);
         }
         return Strings.ALIGN_CENTER.get(mLang);
-    }
-
-    private static String alignValueOf(int index) {
-        switch (index) {
-            case 0:
-                return SubtitleConfig.ALIGN_LEFT;
-            case 2:
-                return SubtitleConfig.ALIGN_RIGHT;
-            case 1:
-            default:
-                return SubtitleConfig.ALIGN_CENTER;
-        }
-    }
-
-    private static int alignIndex(String v) {
-        if (SubtitleConfig.ALIGN_LEFT.equals(v)) {
-            return 0;
-        }
-        if (SubtitleConfig.ALIGN_RIGHT.equals(v)) {
-            return 2;
-        }
-        return 1;
     }
 
     // ==================================================================
@@ -4991,7 +4974,7 @@ public class SettingsActivity extends AppCompatActivity {
         if (label == Strings.SHADOW_RADIUS) {
             return R.drawable.ic_ui_radius;
         }
-        if (label == Strings.ACTIVE_HIGHLIGHT) {
+        if (label == Strings.ACTIVE_HIGHLIGHT || label == Strings.INACTIVE_HIGHLIGHT) {
             return R.drawable.ic_ui_highlight;
         }
         if (label == Strings.ACTIVE_SCALE || label == Strings.INACTIVE_SCALE_ENABLED
@@ -5011,7 +4994,8 @@ public class SettingsActivity extends AppCompatActivity {
             return R.drawable.ic_ui_line_spacing;
         }
         // 【code 1044】「字幕字体跟随系统设定」—— 一个大写 A
-        if (label == Strings.FONT_FOLLOW_SYSTEM) {
+        // 【code 1063】「字体加粗」同用字体图标
+        if (label == Strings.FONT_FOLLOW_SYSTEM || label == Strings.FONT_BOLD) {
             return R.drawable.ic_ui_font;
         }
         if (label == Strings.WRAP_SPACING) {
@@ -5073,16 +5057,7 @@ public class SettingsActivity extends AppCompatActivity {
         if (label == Strings.SHADOW_RADIUS) {
             return Strings.SUP_SHADOW_RADIUS;
         }
-        if (label == Strings.LINE_SPACING) {
-            return Strings.SUP_LINE_SPACING;
-        }
-        // 【code 1044】这一行的语义必须解释清楚：「系统字体」与「宿主字体」不是一回事
-        if (label == Strings.FONT_FOLLOW_SYSTEM) {
-            return Strings.SUP_FONT_FOLLOW_SYSTEM;
-        }
-        if (label == Strings.WRAP_SPACING) {
-            return Strings.SUP_WRAP_SPACING;
-        }
+        // 【code 1064】按指令去掉「字幕间行距 / 换行额外行距 / 字体跟随系统」三行副标题。
         if (label == Strings.BLUR_RADIUS) {
             return Strings.SUP_BLUR_RADIUS;
         }
@@ -5885,28 +5860,24 @@ public class SettingsActivity extends AppCompatActivity {
         return SubtitleConfig.argbToHex(color);
     }
 
-    /** 滑块刻度（×10）→ 显示用倍数文本。 */
+    /** 【code 1063 / B1】→ {@link SettingsDisplayFormatLogic#fmtScale} */
     private static String fmtScale(int tick) {
-        return String.format(Locale.ROOT, "%.1f", tick / 10f);
+        return SettingsDisplayFormatLogic.fmtScale(tick);
     }
 
+    /** 【code 1063 / B1】→ {@link SettingsDisplayFormatLogic#fmtDp} */
     private static String fmtDp(float v) {
-        if (Math.abs(v - Math.round(v)) < 0.01f) {
-            return String.valueOf(Math.round(v));
-        }
-        return String.format(Locale.ROOT, "%.1f", v);
+        return SettingsDisplayFormatLogic.fmtDp(v);
     }
 
     /**
      * 模糊半径读数（px）—— v1.4 §2.1.1 要求**显示 px**，且保留一位小数：
      * {@code 3.0px} / {@code 7.5px}。
      *
-     * ⚠️ 与 {@link #fmtDp(float)} 刻意不同：dp 值在整数时省略小数（{@code 0 dp}），
-     *    但模糊半径**必须始终带一位小数** —— 「3px」和「3.0px」在 0.5 步长的滑块上
-     *    会让人怀疑「是不是只能整数」，写死一位小数才能表达出「半档也是有效的刻度」。
+     * <p>【code 1063 / B1】→ {@link SettingsDisplayFormatLogic#fmtOneDecimal}
      */
     private static String fmtOneDecimal(float v) {
-        return String.format(Locale.ROOT, "%.1f", v);
+        return SettingsDisplayFormatLogic.fmtOneDecimal(v);
     }
 
     /**

@@ -435,6 +435,10 @@ public final class ZiptreePrefetch {
             LogGate.debug(TAG, " HIT dur=" + durMs + "ms -> "
                     + m.pack.workno + "/" + m.track.jsonName + " (" + f.length() + " B)"
                     + " work=" + shortKey(m.track.workKey));
+            // 【code 1066】take 命中也记 HIT —— 仅靠 offer 解析会漏「本会话未再拦到 ziptree、
+            //   但盘上索引已能离线喂字幕」的正常态（真机 164243：字幕正常、PREFETCH=UNKNOWN）。
+            AdapterHealth.hit(AdapterHealth.Item.PREFETCH,
+                    "take HIT " + m.pack.workno + "/" + m.track.jsonName);
             return new Hit(txt, m.track.workKey, m.track.durMs, m.track.jsonName);
         } catch (Throwable e) {
             XposedCompat.log(TAG + " take failed (ignored): " + e);
@@ -902,7 +906,8 @@ public final class ZiptreePrefetch {
      * <b>拦到的那份 ziptree URL 同源</b>，CloudFront 签名才不会因 Referer 错主机被拒。
      *
      * <p>解析失败时回落 {@code https://play.dlsite.com/}（2.23.1 {@code app.config}
-     * 的 {@code PLAY_API_URL}），比已经不存在的旧 CDN 字面量更稳。
+     * 的 {@code PLAY_API_URL}）——【code 1065 / C2】这是**最后手段**，正常路径必须
+     * 同源；禁止再写死已迁走的 {@code play.dl.dlsite.com}。
      *
      * <p>纯函数，可单测。
      */
@@ -1037,9 +1042,20 @@ public final class ZiptreePrefetch {
                 }
                 XposedCompat.log(TAG + " index loaded: " + PACKS.size() + " works"
                         + " dir=" + d);
+                if (!PACKS.isEmpty()) {
+                    AdapterHealth.hit(AdapterHealth.Item.PREFETCH,
+                            "index loaded " + PACKS.size() + " works");
+                }
             } catch (Throwable e) {
                 XposedCompat.log(TAG + " index load failed (ignored): " + e);
             }
+        }
+    }
+
+    /** 【code 1066】内存里是否已有预取包（含负证据包）—— 宿主 HEALTH 代理用。 */
+    public static int loadedWorkCount() {
+        synchronized (LOCK) {
+            return PACKS.size();
         }
     }
 

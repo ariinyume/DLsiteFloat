@@ -28,20 +28,9 @@ import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 /**
  * 【code 1022 / P0-2】适配自检表 —— 把「某条锚点没命中」从**隐性**变成**一行常开日志**。
  *
- * <h3>要解决的问题</h3>
- * 本模块的六条链路各自 try/catch，失败时只落 {@code LogGate.debug}（**默认关闭**）。
- * 于是宿主一升级（R8 重跑短名），用户的观感是「插件突然不工作了」，
- * 而日志里干干净净 —— 这就是 2.20.2 上连废两版（964/965）的同一类问题。
- *
- * <p>本类把六条链路的「最新结论」集中到一处：状态**一旦变化**就打一行常开日志，
- * 内容是「哪一项、从什么变成什么、当前满分几项」。启动后第一屏日志就能看出
- * 是「插件没生效」还是「宿主结构变了」。
- *
- * <h3>为什么不做设置页可视化</h3>
- * 自检结果产生在**宿主进程**，而设置页在模块自己的进程（不同 uid）——
- * 共享 SharedPreferences / 静态字段都读不到，要展示必须扩 {@code ConfigBus} 协议。
- * 那是另一件事（协议升版有风险），本版先把「日志可见」做扎实；
- * 设置页只显示能自己读到的**宿主版本**（见 {@code SettingsActivity}）。
+ * <p>六条链路 + PREFETCH 的最新结论集中在此：状态变化时打常开日志。
+ * 【code 1065 / C1】设置页经 {@code ConfigBus} HEALTH_QUERY/REPLY 拉取
+ * {@link #summaryLine()}，展示在状态卡（宿主未活时显示「读不到」）。
  *
  * <h3>口径</h3>
  * <ul>
@@ -164,6 +153,78 @@ public final class AdapterHealth {
         }
         return hit + "/" + Item.values().length
                 + (bad.length() > 0 ? " [" + bad + "]" : " [all clear]");
+    }
+
+    /**
+     * 【code 1066】宿主进程在应答 HEALTH 前补记「功能已在跑」证据。
+     *
+     * <p>真机 164243：字幕/状态栏/预取都正常，但摘要仍是
+     * {@code SUB_TEXT/STATUSBAR/PREFETCH=UNKNOWN} —— 因为：
+     * <ul>
+     *   <li>{@code STATUSBAR} 的 HIT 写在 SystemUI 进程，宿主静态表读不到；</li>
+     *   <li>{@code SUB_TEXT} 旧口径只认「宿主 TextView ∈ cues」，浮窗/状态栏走 cue 库时不记；</li>
+     *   <li>{@code PREFETCH} 旧口径只在当场 parse ziptree 时记，索引已加载/take 命中不记。</li>
+     * </ul>
+     * 本方法只升 UNKNOWN→HIT，不覆盖已有 DEGRADED/MISS。
+     */
+    public static synchronized void noteHostEvidence(boolean statusBarLineDelivered,
+            boolean cuesOnDisplay, boolean prefetchIndexLoaded) {
+        if (statusBarLineDelivered && get(Item.STATUSBAR) == State.UNKNOWN) {
+            hit(Item.STATUSBAR, "host LINE delivered (proxy)");
+        }
+        if (cuesOnDisplay && get(Item.SUB_TEXT) == State.UNKNOWN) {
+            hit(Item.SUB_TEXT, "cues on display (proxy)");
+        }
+        if (prefetchIndexLoaded && get(Item.PREFETCH) == State.UNKNOWN) {
+            hit(Item.PREFETCH, "prefetch index present (proxy)");
+        }
+    }
+
+    /**
+     * 【code 1065 / C1】紧凑摘要（无 Android 依赖，可单测）。
+     *
+     * <p>形如 {@code 5/7 HIT · NET_BUILD=HIT NET_RN=DEGRADED …}。
+     * 【code 1066】设置页不再上屏；由宿主应答时打进 LSPosed 日志。
+     */
+    public static synchronized String summaryLine() {
+        StringBuilder all = new StringBuilder();
+        int hit = 0;
+        for (Item it : Item.values()) {
+            State st = STATE.get(it);
+            if (st == null) {
+                st = State.UNKNOWN;
+            }
+            if (st == State.HIT) {
+                hit++;
+            }
+            if (all.length() > 0) {
+                all.append(' ');
+            }
+            all.append(it).append('=').append(st);
+        }
+        return hit + "/" + Item.values().length + " · " + all;
+    }
+
+    /** 单测 / 进程复位：全部回到 UNKNOWN（生产路径不调用）。 */
+    public static synchronized void resetForTest() {
+        for (Item it : Item.values()) {
+            STATE.put(it, State.UNKNOWN);
+            DETAIL.remove(it);
+        }
+        sTableLogged = false;
+        sPlayerPageAtMs = 0L;
+        sSilentLogged = false;
+    }
+
+    /**
+     * 单测：静默写入状态，不经 {@link #mark}（避免拉起 {@code XposedCompat} /
+     * libxposed，单元测试 classpath 没有那一层）。
+     */
+    public static synchronized void setStateForTest(Item item, State state) {
+        if (item == null || state == null) {
+            return;
+        }
+        STATE.put(item, state);
     }
 
     /** 首次进入播放页 / 启动完成时打一行清单，便于用户直接复制进 Issue。 */

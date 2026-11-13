@@ -5217,3 +5217,53 @@ versionName / tag 2.4.4、versionCode 1047 → 1048、label 1029.1 → 1104.1。
 - 真机 `LSPosed_20261112_181749`：code 1058 + 2.23.1 `verified=yes`；Health 推进正常，本段无新 FALSE NEGATIVE。
 - **B2** `ScrollFitRecheck`：posted fit 入口闸 / 是否补起滚；动画末 `RETARGET_CONTINUE` / `CONTINUE_REMAINING` / `NONE`。
 - 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1058 → 1059、label 1112.5。
+
+### 1113.1 code 1059 → 1060：架构优化 P1/B1（SettingsImportLogic）
+
+- 功能面确认后继续 B1：**SettingsImportLogic** 导入预检（`preflight` / `looksLike` / `prepareImportedDraft`）+ 对齐枚举（`alignIndex` / `alignValueOf`）。
+- Uri I/O、Toast、`fromJson`、View 仍在 `SettingsActivity`；黄金向量补预检闸与对齐往返。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1059 → 1060、label 1113.1。
+
+### 1113.2 code 1060 → 1061：架构优化 P1/B1（SettingsPreviewBackdropLogic）
+
+- 真机 `LSPosed_20261113_100825`：code 1060 + 2.23.1 `verified=yes`；Health 主路径 HIT，本段无 FALSE NEGATIVE。
+- **B1** `SettingsPreviewBackdropLogic`：预览面板渐变 alpha + 连续盒式模糊（`blurTileInterpolated` / `lerpArgb` / lum / seed）。
+- Bitmap / Canvas / 模糊缓存仍在 `SettingsActivity`。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1060 → 1061、label 1113.2。
+
+### 1113.3 code 1061 → 1062：架构优化 P1/B1（SettingsPreviewCollapseLogic）
+
+- 真机 `LSPosed_20261113_113540`：code 1061 + 2.23.1 `verified=yes`；Health 主路径 HIT；旧段有 6ms FALSE NEGATIVE 自愈。
+- **B1** `SettingsPreviewCollapseLogic`：折叠高度 / 位移 / 裁剪 / 子行累加 / 宽度兜底。
+- View.measure / ValueAnimator / clipBounds 仍在 `SettingsActivity`。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1061 → 1062、label 1113.3。
+
+### 1113.4 code 1062 → 1063：四项小功能 + 架构 P1/B1（DisplayFormat / Reset）
+
+- 真机 `LSPosed_20261113_145446`：code 1062 + 2.23.1 `verified=yes`；功能面确认健康。
+- **功能**：行态「非活动行不透明度」50–100%（步长 5，默认 50%）；非活动缩放改为 ×0.5–×1.8（步长 0.1，默认 ×0.8）；主字幕放大上限 ×1.5 → ×1.8；排版「字体加粗」开关（默认关）。
+- **B1** `SettingsDisplayFormatLogic` + `SettingsResetLogic`：滑块读数格式化与三面恢复默认纯赋值；黄金向量覆盖。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1062 → 1063、label 1113.4。
+
+### 1113.5 code 1063 → 1064：151817 回修（不透明度范围 + 去副标题）
+
+- 真机 `LSPosed_20261113_151817`：宿主注入侧仍是旧码（`style` 里 inactive alpha 恒 `0.21`、active 最大 `25.5sp=×1.5`、inactive 最大 `17sp=×1.0`）；设置页已是 1063 UI，广播 JSON 被旧 `clamp` 截断。
+- **改动**：非活动行不透明度范围改为 20–100%；删除「字幕间行距 / 换行额外行距 / 字体跟随系统」三行副标题小字。
+- **安装注意**：覆盖安装后须强制停止宿主 App 与 SystemUI（或重启），确认日志出现 `BUILD … code 1064` 后再调参。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1063 → 1064、label 1113.5。
+
+### 1113.6 code 1064 → 1065：架构收口 B1 / B2 / B5 / C1 / C2 / C3
+
+- **B1**：`SettingsAppearanceUi` / `LiquidGlassUi` / `MiscUi` / `ExperimentalUi` 卡边界；行工厂仍在 Activity。
+- **B2**：`StatusBarScrollOrchestrator` 起滚 / 宽度落地补起滚闸门 + 黄金向量。
+- **C1**：`AdapterHealth.summaryLine` + `HEALTH_QUERY/REPLY`；状态卡 guide 展示摘要。
+- **C2/C3**：Referer 最后手段注释、README CDN 表述、`Shape` 强调离线 HIT ≠ 运行时 HIT。
+- **B5**：随改文件注释外迁（AdapterHealth「不做设置页」段已改）。
+- 口径：只升 code —— versionName / tag 保持 2.4.4，versionCode 1064 → 1065、label 1113.6。
+
+### 1113.7 code 1065 → 1066 / 2.4.5：按钮纯判 + Settings Fragment + Health
+
+- **A-1~A-3**：`CapsuleButtonPolicy`、`FollowBaselinePolicy`、`HeldSnapshotRenewPolicy`、`PlayButtonPickPolicy`、`FollowFramePolicy` + 黄金向量。
+- **B-0~B-2**：`SettingsHost` / `SettingsRowRegistry` + 四卡 Fragment；删除 `Settings*Ui` facade；行工厂仍在 Activity。
+- **Health（真机 164243）**：状态卡去掉「适配自检」小字，摘要改打 LSPosed `[DLsiteSoundFloat:Health]`；`STATUSBAR`/`SUB_TEXT`/`PREFETCH` 在宿主侧按 LINE 推送 / cue 库 / 预取索引补 HIT（SystemUI 进程表读不到的问题）。
+- 口径：versionName / tag **2.4.4 → 2.4.5**，versionCode 1065 → 1066、label 1113.7。

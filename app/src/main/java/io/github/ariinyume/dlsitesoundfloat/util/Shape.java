@@ -27,6 +27,9 @@ import java.util.List;
 /**
  * 【2.1.4 新增】**按签名形状**定位宿主类/方法 —— 抗 R8 混淆。
  *
+ * <p>【code 1065 / C3】离线串池 HIT（解包扫字面量）≠ 运行时 HIT：R8 可能保留类名但
+ * 改方法形状。运行时以本类匹配 + {@code AdapterHealth.NET_BUILD/NET_RN} 为准。
+ *
  * <h3>为什么需要它</h3>
  * 宿主 DLsiteSound 2.20.2 起启用 R8 混淆（离线核实：全包 16052 个类里 {@code okhttp3.*}
  * 只剩 1 个 {@code PublicSuffixDatabase}，其余全改成 {@code Lvk/*} 之类短名）。

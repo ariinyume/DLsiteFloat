@@ -521,6 +521,113 @@ public Win(long needMs, long sinceMs, boolean goneStill, boolean hasEvidence) {
         return new Object[]{d.accepted, d.acc, d.streak, d.prev, d.log};
     }
 
+    // ── CapsuleButtonPolicy（code 1066 / 2.4.5 / A-1）───────────────────
+
+    public static boolean capsuleStatusOn(boolean noSub, boolean appEnabled) {
+        return CapsuleButtonPolicy.statusBarButtonOn(noSub, appEnabled);
+    }
+
+    public static boolean capsuleStatusVisible(boolean noSub, boolean featureEnabled,
+            boolean systemUiAuthorized) {
+        return CapsuleButtonPolicy.statusBarButtonVisible(noSub, featureEnabled, systemUiAuthorized);
+    }
+
+    public static boolean capsuleFloatOn(boolean noSub, boolean floatingOpen) {
+        return CapsuleButtonPolicy.floatingButtonOn(noSub, floatingOpen);
+    }
+
+    public static String capsuleVisualSig(String floatText, boolean floatOn, String statusText,
+            boolean statusOn, boolean statusVisible, float alpha, boolean liquidGlass, int accent) {
+        return CapsuleButtonPolicy.visualSig(floatText, floatOn, statusText, statusOn,
+                statusVisible, alpha, liquidGlass, accent);
+    }
+
+    // ── FollowBaselinePolicy（code 1066 / A-2）─────────────────────────
+
+    public static boolean followPageQuiet(long lastMs, long now, long hold) {
+        return FollowBaselinePolicy.pageQuietEnough(lastMs, now, hold);
+    }
+
+    public static boolean followAtRest(boolean seen, int vis, int noBase, int dz) {
+        return FollowBaselinePolicy.atLayoutRest(seen, vis, noBase, dz);
+    }
+
+    public static boolean followDeferOff(int base, int y, int noBase, int dz, boolean rest) {
+        return FollowBaselinePolicy.deferOffBaseline(base, y, noBase, dz, rest);
+    }
+
+    public static boolean followCandReset(int cand, int y, int noBase, int dz) {
+        return FollowBaselinePolicy.candidateNeedsReset(cand, y, noBase, dz);
+    }
+
+    public static boolean followSettle(long candMs, long now, long settle) {
+        return FollowBaselinePolicy.settleReady(candMs, now, settle);
+    }
+
+    public static boolean followAdoptBias(int offset, int max) {
+        return FollowBaselinePolicy.shouldAdoptBias(offset, max);
+    }
+
+    public static boolean followHealEligible(int bias, int applied, int offset, int noBase, int dz) {
+        return FollowBaselinePolicy.healEligible(bias, applied, offset, noBase, dz);
+    }
+
+    public static boolean followStartMotion(long lastMs, long now, long hold) {
+        return FollowBaselinePolicy.shouldStartFromRecentMotion(lastMs, now, hold);
+    }
+
+    public static boolean followStartDrag(boolean seen, boolean bias, int vis, int noBase, int dz) {
+        return FollowBaselinePolicy.shouldStartFromDragged(seen, bias, vis, noBase, dz);
+    }
+
+    // ── HeldSnapshot / PlayButtonPick / FollowFrame（code 1066 / A-3）──
+
+    public static boolean heldRenew(int held, int vis, int noBase, int dz) {
+        return HeldSnapshotRenewPolicy.shouldRenew(held, vis, noBase, dz);
+    }
+
+    public static boolean playBtnSquare(int w, int h, int minPx, float slack) {
+        return PlayButtonPickPolicy.isSquareCandidate(w, h, minPx, slack);
+    }
+
+    public static int playBtnScore(int locX, int w, int centerX) {
+        return PlayButtonPickPolicy.centerScore(locX, w, centerX);
+    }
+
+    public static boolean playBtnBeats(int neu, int best) {
+        return PlayButtonPickPolicy.beats(neu, best);
+    }
+
+    public static boolean followFrameHeld(int delta, int noBase, int dz) {
+        return FollowFramePolicy.isHeld(delta, noBase, dz);
+    }
+
+    public static long followFrameCap(boolean held, long max, long maxHeld) {
+        return FollowFramePolicy.durationCap(held, max, maxHeld);
+    }
+
+    public static boolean followFrameTimedOut(long start, long now, long cap) {
+        return FollowFramePolicy.timedOut(start, now, cap);
+    }
+
+    public static boolean followFrameMissDone(int miss, int max) {
+        return FollowFramePolicy.missExhausted(miss, max);
+    }
+
+    public static boolean followFrameStopStill(boolean held, int still, int need) {
+        return FollowFramePolicy.shouldStopWhenStill(held, still, need);
+    }
+
+    // ── StatusBarScrollOrchestrator（code 1065 / B2）───────────────────
+
+    public static String scrollStartAction(boolean hasLine, boolean widthSettled, int targetPx) {
+        return StatusBarScrollOrchestrator.decideStart(hasLine, widthSettled, targetPx).name();
+    }
+
+    public static String scrollAfterWidth(boolean hasLine, boolean armed) {
+        return StatusBarScrollOrchestrator.afterWidthApplied(hasLine, armed).name();
+    }
+
     // ── ScrollFitRecheck（code 1059 / B2）──────────────────────────────
 
     public static boolean fitSkipPosted(boolean sameView, boolean hasAnimator,

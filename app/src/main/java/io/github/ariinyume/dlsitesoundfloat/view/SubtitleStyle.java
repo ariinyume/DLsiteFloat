@@ -70,10 +70,8 @@ public final class SubtitleStyle {
     public static final int SHADOW_STRENGTH_LEGACY_PCT = 80;
 
     /**
-     * 非活动行整体不透明度。
-     *
-     * legacy 的两段是「颜色 alpha {@code 0x99}（0.6）+ 视图 alpha 0.35」，
-     * 乘积 = 0.21。这里折成单一个视图 alpha（颜色用配置色），最终不透明度完全一致。
+     * legacy 非活动行整体不透明度（颜色 alpha 0.6 × 视图 alpha 0.35 = 0.21）。
+     * 【code 1063】起改由 {@code inactive_highlight%} 配置；本常量仅作历史对照。
      */
     public static final float INACTIVE_ALPHA = 0.21f;
 
@@ -128,7 +126,7 @@ public final class SubtitleStyle {
     public final int inactiveColor;
     /** 活动行不透明度 —— {@code active_highlight%}（默认 100% ⇒ 与 legacy 的 0xFF 一致）。 */
     public final float activeAlpha;
-    /** 非活动行不透明度 —— 恒为 {@link #INACTIVE_ALPHA}。 */
+    /** 非活动行不透明度 —— {@code inactive_highlight%}（【code 1063】可调，默认 50%）。 */
     public final float inactiveAlpha;
 
     public final Typeface activeTypeface;
@@ -243,7 +241,7 @@ public final class SubtitleStyle {
         this.activeColor = textColor;
         this.inactiveColor = textColor;
         this.activeAlpha = cfg.activeHighlight / 100f;
-        this.inactiveAlpha = INACTIVE_ALPHA;
+        this.inactiveAlpha = cfg.inactiveHighlight / 100f;
 
         // ── 字体 ──────────────────────────────────────────────────────
         // 【code 1044】两条路二选一（{@code subtitleFontFollowSystem}，默认关 = 跟随宿主）：
@@ -252,35 +250,18 @@ public final class SubtitleStyle {
         //     ⚠️ null 是**语义**而不是省略：渲染侧见到 fontFollowSystem 会走
         //     {@code SystemFont.clearTypeface()}，既绕开宿主改字体模块接管过的
         //     {@code Paint#setTypeface}，也不会再被它换回宿主字体。
+        // 【code 1063】粗细改由 {@code subtitleBold} 开关统一控制（默认关 = 两行常规；
+        //   开 = 两行加粗）。旧 {@code font_weight} 仍读写兼容，渲染侧不再分支。
         this.fontFollowSystem = cfg.subtitleFontFollowSystem;
+        boolean bold = cfg.subtitleBold;
         if (this.fontFollowSystem) {
             this.activeTypeface = null;
             this.inactiveTypeface = null;
-            // 系统默认字体没有可选的粗体变体 ⇒ 用合成加粗顶替粗细层级。口径与下面
-            // 「跟随宿主」分支的 if/else 完全等价：system（默认）= 活动行粗、非活动行常规；
-            // 显式选档则两行一起变（medium / bold 都按「粗」处理，合成加粗只有两档）。
-            boolean explicit = !SubtitleConfig.WEIGHT_SYSTEM.equals(cfg.fontWeight);
-            boolean explicitBold = explicit
-                    && !SubtitleConfig.WEIGHT_REGULAR.equals(cfg.fontWeight);
-            this.activeFakeBold = explicit ? explicitBold : true;
-            this.inactiveFakeBold = explicitBold;
+            this.activeFakeBold = bold;
+            this.inactiveFakeBold = bold;
         } else {
-            // 「跟随宿主」= legacy 行为：活动行加粗、其余常规（PRD §FR-06 默认档）
-            // 显式选了档位则**活动行与非活动行一起**用该字重（PRD §FR-06 验收标准：
-            // 「选择粗体 + 左对齐 → 活动行以粗体左对齐渲染，非活动行同步」）
-            if (SubtitleConfig.WEIGHT_REGULAR.equals(cfg.fontWeight)) {
-                this.activeTypeface = TF_NORMAL;
-                this.inactiveTypeface = TF_NORMAL;
-            } else if (SubtitleConfig.WEIGHT_MEDIUM.equals(cfg.fontWeight)) {
-                this.activeTypeface = TF_MEDIUM;
-                this.inactiveTypeface = TF_MEDIUM;
-            } else if (SubtitleConfig.WEIGHT_BOLD.equals(cfg.fontWeight)) {
-                this.activeTypeface = TF_BOLD;
-                this.inactiveTypeface = TF_BOLD;
-            } else {
-                this.activeTypeface = TF_BOLD;
-                this.inactiveTypeface = TF_NORMAL;
-            }
+            this.activeTypeface = bold ? TF_BOLD : TF_NORMAL;
+            this.inactiveTypeface = bold ? TF_BOLD : TF_NORMAL;
             this.activeFakeBold = false;
             this.inactiveFakeBold = false;
         }

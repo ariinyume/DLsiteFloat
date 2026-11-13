@@ -130,6 +130,20 @@ public final class Protocol {
     // 字体文件只有宿主 uid 读得到（ MoriMod 缓存在宿主 filesDir 下），所以
     // 「描述」走一条广播，「字节」分片走 N 条广播（Binder 单事务 ~1MB 上限）。
 
+    // ── 【code 1065 / C1】适配自检（设置页 ↔ DLsiteSound 进程）────────────
+    //
+    // AdapterHealth 只活在宿主进程；设置页用 QUERY/REPLY 拉摘要上状态卡。
+    // 新增 action，不改 PROTOCOL_VERSION（旧端忽略未知 action，与 HostFont 同模式）。
+
+    /** 【code 1065】设置页 → 宿主：请回报 AdapterHealth 摘要。 */
+    public static final String ACTION_HEALTH_QUERY = ACTION_PREFIX + "ADAPTER_HEALTH_QUERY";
+
+    /** 【code 1065】宿主 → 设置页：AdapterHealth 摘要应答。 */
+    public static final String ACTION_HEALTH_REPLY = ACTION_PREFIX + "ADAPTER_HEALTH_REPLY";
+
+    /** 【code 1065】健康摘要串（见 {@link io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth#summaryLine}）。 */
+    public static final String EXTRA_HEALTH_SUMMARY = "health_summary";
+
     /** 【code 1046】设置页 → DLsiteSound 进程：请把「悬浮窗真正用的字体」报上来。 */
     public static final String ACTION_HOST_FONT_REQ = ACTION_PREFIX + "HOST_FONT_REQ";
 
@@ -267,6 +281,8 @@ public final class Protocol {
         CACHE,
         /** 设置页 ↔ 宿主：HostFont 描述与分片。 */
         HOST_FONT,
+        /** 【code 1065】设置页 ↔ 宿主：AdapterHealth 摘要。 */
+        HEALTH,
         UNKNOWN
     }
 
@@ -288,6 +304,9 @@ public final class Protocol {
         };
         public static final String[] HOST_FONT = {
                 ACTION_HOST_FONT_REQ, ACTION_HOST_FONT_INFO, ACTION_HOST_FONT_CHUNK,
+        };
+        public static final String[] HEALTH = {
+                ACTION_HEALTH_QUERY, ACTION_HEALTH_REPLY,
         };
 
         private Channels() {
@@ -324,6 +343,11 @@ public final class Protocol {
                 return Channel.HOST_FONT;
             }
         }
+        for (String a : Channels.HEALTH) {
+            if (a.equals(action)) {
+                return Channel.HEALTH;
+            }
+        }
         return Channel.UNKNOWN;
     }
 
@@ -345,6 +369,7 @@ public final class Protocol {
                 ACTION_SUBTITLE_CACHE_CLEAR, ACTION_SUBTITLE_CACHE_STATS_REQ,
                 ACTION_SUBTITLE_CACHE_STATS, ACTION_SUBTITLE_PREFETCH_CLEAR,
                 ACTION_HOST_FONT_REQ, ACTION_HOST_FONT_INFO, ACTION_HOST_FONT_CHUNK,
+                ACTION_HEALTH_QUERY, ACTION_HEALTH_REPLY,
         };
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (String a : actions) {
@@ -366,6 +391,7 @@ public final class Protocol {
                 EXTRA_LINE_MATCHED, EXTRA_LINE_MISMATCHED, EXTRA_LINE_SAMPLES,
                 EXTRA_FONT_DESC, EXTRA_FONT_NAME, EXTRA_FONT_RID,
                 EXTRA_FONT_SEQ, EXTRA_FONT_N, EXTRA_FONT_DATA,
+                EXTRA_HEALTH_SUMMARY,
         };
         seen.clear();
         for (String e : extras) {

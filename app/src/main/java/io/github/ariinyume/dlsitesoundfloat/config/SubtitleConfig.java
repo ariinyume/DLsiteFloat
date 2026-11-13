@@ -84,6 +84,11 @@ public final class SubtitleConfig {
     public static final String K_ACTIVE_SCALE = "active_scale";
     public static final String K_INACTIVE_BLUR_ENABLED = "inactive_blur_enabled";
     public static final String K_INACTIVE_BLUR_STEPS = "inactive_blur_steps";
+    /**
+     * 【code 1063/1064】非活动行不透明度（20–100%，步长 5，默认 50%）。
+     * 键名冻结；旧配置缺键回落默认。
+     */
+    public static final String K_INACTIVE_HIGHLIGHT = "inactive_highlight";
     public static final String K_INACTIVE_SCALE_ENABLED = "inactive_scale_enabled";
     public static final String K_INACTIVE_SCALE_PCT = "inactive_scale_pct";
     public static final String K_FONT_WEIGHT = "font_weight";
@@ -227,6 +232,15 @@ public final class SubtitleConfig {
      * <p>⚠️ 键名冻结（PRD §FR-09 规则 4）：本键为新增键，旧配置读不到时回落默认值（关），天然兼容。
      */
     public static final String K_SUBTITLE_FONT_FOLLOW_SYSTEM = "subtitle_font_follow_system";
+    /**
+     * 【code 1063】「字体加粗」开关（默认**关**）。
+     *
+     * <p>开 = 活动行与非活动行一并加粗；关 = 两行皆常规。渲染侧以此为准；
+     * {@link #K_FONT_WEIGHT} 仍读写以兼容旧配置导出，但界面不再暴露字重枚举。
+     *
+     * <p>⚠️ 键名冻结（PRD §FR-09 规则 4）：缺键回落默认（关）。
+     */
+    public static final String K_SUBTITLE_BOLD = "subtitle_bold";
 
     // ==================================================================
     // 枚举取值（PRD §十「范围/枚举」列）
@@ -271,9 +285,9 @@ public final class SubtitleConfig {
     public static final int HIGHLIGHT_MAX = 100;
     public static final int HIGHLIGHT_DEF = 100;
 
-    /** 放大倍数：×0.8–×1.5，步长 0.1，默认 ×1.0（PRD §14.2 DK-03）。 */
+    /** 放大倍数：×0.8–×1.8，步长 0.1，默认 ×1.0（【code 1063】上限 1.5 → 1.8）。 */
     public static final float ACTIVE_SCALE_MIN = 0.8f;
-    public static final float ACTIVE_SCALE_MAX = 1.5f;
+    public static final float ACTIVE_SCALE_MAX = 1.8f;
     public static final float ACTIVE_SCALE_STEP = 0.1f;
     public static final float ACTIVE_SCALE_DEF = 1.0f;
 
@@ -282,9 +296,18 @@ public final class SubtitleConfig {
     public static final int BLUR_STEPS_MAX = 16;
     public static final int BLUR_STEPS_DEF = 6;
 
+    /** 【code 1063/1064】非活动行不透明度：20–100%，步长 5，默认 50%。 */
+    public static final int INACTIVE_HIGHLIGHT_MIN = 20;
+    public static final int INACTIVE_HIGHLIGHT_MAX = 100;
+    public static final int INACTIVE_HIGHLIGHT_DEF = 50;
+
+    /**
+     * 非活动行缩放：存「比例 ×100」（50=×0.5 … 180=×1.8），步长 10，默认 80（×0.8）。
+     * 【code 1063】由「50–100%、默认 90%」改为倍率刻度；键名 {@link #K_INACTIVE_SCALE_PCT} 冻结。
+     */
     public static final int INACTIVE_SCALE_PCT_MIN = 50;
-    public static final int INACTIVE_SCALE_PCT_MAX = 100;
-    public static final int INACTIVE_SCALE_PCT_DEF = 90;
+    public static final int INACTIVE_SCALE_PCT_MAX = 180;
+    public static final int INACTIVE_SCALE_PCT_DEF = 80;
 
     /**
      * 字幕间行距：-5.0 – 5 dp，默认 0（PRD §14.2 DK-02）。
@@ -355,6 +378,8 @@ public final class SubtitleConfig {
 
     public boolean inactiveBlurEnabled = true;
     public int inactiveBlurSteps = BLUR_STEPS_DEF;
+    /** 【code 1063】非活动行不透明度（%）。 */
+    public int inactiveHighlight = INACTIVE_HIGHLIGHT_DEF;
     public boolean inactiveScaleEnabled = true;
     public int inactiveScalePct = INACTIVE_SCALE_PCT_DEF;
 
@@ -418,6 +443,9 @@ public final class SubtitleConfig {
      */
     public boolean subtitleFontFollowSystem = false;
 
+    /** 【code 1063】字体加粗（默认关）。 */
+    public boolean subtitleBold = false;
+
     public SubtitleConfig() {
     }
 
@@ -443,6 +471,7 @@ public final class SubtitleConfig {
         c.activeScale = activeScale;
         c.inactiveBlurEnabled = inactiveBlurEnabled;
         c.inactiveBlurSteps = inactiveBlurSteps;
+        c.inactiveHighlight = inactiveHighlight;
         c.inactiveScaleEnabled = inactiveScaleEnabled;
         c.inactiveScalePct = inactiveScalePct;
         c.fontWeight = fontWeight;
@@ -462,6 +491,7 @@ public final class SubtitleConfig {
         c.subtitleCacheEnabled = subtitleCacheEnabled;
         c.experimentalEnabled = experimentalEnabled;
         c.subtitleFontFollowSystem = subtitleFontFollowSystem;
+        c.subtitleBold = subtitleBold;
         return c;
     }
 
@@ -478,6 +508,7 @@ public final class SubtitleConfig {
                 && Float.compare(activeScale, o.activeScale) == 0
                 && inactiveBlurEnabled == o.inactiveBlurEnabled
                 && inactiveBlurSteps == o.inactiveBlurSteps
+                && inactiveHighlight == o.inactiveHighlight
                 && inactiveScaleEnabled == o.inactiveScaleEnabled
                 && inactiveScalePct == o.inactiveScalePct
                 && eq(fontWeight, o.fontWeight)
@@ -497,6 +528,7 @@ public final class SubtitleConfig {
                 && subtitleCacheEnabled == o.subtitleCacheEnabled
                 && experimentalEnabled == o.experimentalEnabled
                 && subtitleFontFollowSystem == o.subtitleFontFollowSystem
+                && subtitleBold == o.subtitleBold
                 && eq(uiLanguage, o.uiLanguage);
     }
 
@@ -524,6 +556,7 @@ public final class SubtitleConfig {
         shadowRadius = clampInt(shadowRadius, SHADOW_RADIUS_MIN, SHADOW_RADIUS_MAX);
         activeHighlight = clampInt(activeHighlight, HIGHLIGHT_MIN, HIGHLIGHT_MAX);
         inactiveBlurSteps = clampInt(inactiveBlurSteps, BLUR_STEPS_MIN, BLUR_STEPS_MAX);
+        inactiveHighlight = clampInt(inactiveHighlight, INACTIVE_HIGHLIGHT_MIN, INACTIVE_HIGHLIGHT_MAX);
         inactiveScalePct = clampInt(inactiveScalePct, INACTIVE_SCALE_PCT_MIN, INACTIVE_SCALE_PCT_MAX);
         liquidGlassBlurPct = clampInt(liquidGlassBlurPct,
                 LIQUID_GLASS_BLUR_PCT_MIN, LIQUID_GLASS_BLUR_PCT_MAX);
@@ -588,6 +621,7 @@ public final class SubtitleConfig {
             o.put(K_ACTIVE_SCALE, round1(activeScale));
             o.put(K_INACTIVE_BLUR_ENABLED, inactiveBlurEnabled);
             o.put(K_INACTIVE_BLUR_STEPS, inactiveBlurSteps);
+            o.put(K_INACTIVE_HIGHLIGHT, inactiveHighlight);
             o.put(K_INACTIVE_SCALE_ENABLED, inactiveScaleEnabled);
             o.put(K_INACTIVE_SCALE_PCT, inactiveScalePct);
             o.put(K_FONT_WEIGHT, fontWeight);
@@ -607,6 +641,7 @@ public final class SubtitleConfig {
             o.put(K_SUBTITLE_CACHE_ENABLED, subtitleCacheEnabled);
             o.put(K_EXPERIMENTAL_ENABLED, experimentalEnabled);
             o.put(K_SUBTITLE_FONT_FOLLOW_SYSTEM, subtitleFontFollowSystem);
+            o.put(K_SUBTITLE_BOLD, subtitleBold);
         } catch (Throwable ignored) {
             // JSONObject.put 只在传 null 键时抛，本方法不传 null
         }
@@ -635,6 +670,7 @@ public final class SubtitleConfig {
         c.activeScale = (float) o.optDouble(K_ACTIVE_SCALE, c.activeScale);
         c.inactiveBlurEnabled = o.optBoolean(K_INACTIVE_BLUR_ENABLED, c.inactiveBlurEnabled);
         c.inactiveBlurSteps = o.optInt(K_INACTIVE_BLUR_STEPS, c.inactiveBlurSteps);
+        c.inactiveHighlight = o.optInt(K_INACTIVE_HIGHLIGHT, c.inactiveHighlight);
         c.inactiveScaleEnabled = o.optBoolean(K_INACTIVE_SCALE_ENABLED, c.inactiveScaleEnabled);
         c.inactiveScalePct = o.optInt(K_INACTIVE_SCALE_PCT, c.inactiveScalePct);
         c.fontWeight = o.optString(K_FONT_WEIGHT, c.fontWeight);
@@ -657,6 +693,7 @@ public final class SubtitleConfig {
         c.experimentalEnabled = o.optBoolean(K_EXPERIMENTAL_ENABLED, c.experimentalEnabled);
         c.subtitleFontFollowSystem = o.optBoolean(K_SUBTITLE_FONT_FOLLOW_SYSTEM,
                 c.subtitleFontFollowSystem);
+        c.subtitleBold = o.optBoolean(K_SUBTITLE_BOLD, c.subtitleBold);
         c.clamp();
         return c;
     }
@@ -678,6 +715,7 @@ public final class SubtitleConfig {
         e.putFloat(K_ACTIVE_SCALE, activeScale);
         e.putBoolean(K_INACTIVE_BLUR_ENABLED, inactiveBlurEnabled);
         e.putInt(K_INACTIVE_BLUR_STEPS, inactiveBlurSteps);
+        e.putInt(K_INACTIVE_HIGHLIGHT, inactiveHighlight);
         e.putBoolean(K_INACTIVE_SCALE_ENABLED, inactiveScaleEnabled);
         e.putInt(K_INACTIVE_SCALE_PCT, inactiveScalePct);
         e.putString(K_FONT_WEIGHT, fontWeight);
@@ -697,6 +735,7 @@ public final class SubtitleConfig {
         e.putBoolean(K_SUBTITLE_CACHE_ENABLED, subtitleCacheEnabled);
         e.putBoolean(K_EXPERIMENTAL_ENABLED, experimentalEnabled);
         e.putBoolean(K_SUBTITLE_FONT_FOLLOW_SYSTEM, subtitleFontFollowSystem);
+        e.putBoolean(K_SUBTITLE_BOLD, subtitleBold);
     }
 
     /** 从 SharedPreferences 读；未写过的键（{@code contains == false}）保留默认值。 */
@@ -716,6 +755,7 @@ public final class SubtitleConfig {
         c.activeScale = p.getFloat(K_ACTIVE_SCALE, c.activeScale);
         c.inactiveBlurEnabled = p.getBoolean(K_INACTIVE_BLUR_ENABLED, c.inactiveBlurEnabled);
         c.inactiveBlurSteps = p.getInt(K_INACTIVE_BLUR_STEPS, c.inactiveBlurSteps);
+        c.inactiveHighlight = p.getInt(K_INACTIVE_HIGHLIGHT, c.inactiveHighlight);
         c.inactiveScaleEnabled = p.getBoolean(K_INACTIVE_SCALE_ENABLED, c.inactiveScaleEnabled);
         c.inactiveScalePct = p.getInt(K_INACTIVE_SCALE_PCT, c.inactiveScalePct);
         c.fontWeight = p.getString(K_FONT_WEIGHT, c.fontWeight);
@@ -738,6 +778,7 @@ public final class SubtitleConfig {
         c.experimentalEnabled = p.getBoolean(K_EXPERIMENTAL_ENABLED, c.experimentalEnabled);
         c.subtitleFontFollowSystem = p.getBoolean(K_SUBTITLE_FONT_FOLLOW_SYSTEM,
                 c.subtitleFontFollowSystem);
+        c.subtitleBold = p.getBoolean(K_SUBTITLE_BOLD, c.subtitleBold);
         c.clamp();
         return c;
     }
@@ -795,7 +836,9 @@ public final class SubtitleConfig {
                 + " shadow=" + argbToHex(shadowColor) + "/" + shadowStrength + "%/" + shadowRadius + "%"
                 + " highlight=" + activeHighlight + "% scale=" + round1(activeScale)
                 + " inactive[blur=" + (inactiveBlurEnabled ? inactiveBlurSteps : "off")
-                + ", scale=" + (inactiveScaleEnabled ? inactiveScalePct + "%" : "off") + "]"
+                + ", alpha=" + inactiveHighlight + "%"
+                + ", scale=" + (inactiveScaleEnabled ? ("x" + round1(inactiveScalePct / 100f)) : "off")
+                + "]"
                 + " weight=" + fontWeight + " align=" + textAlign
                 + " spacing=" + round1(lineSpacingDp) + "/" + round1(wrapExtraSpacingDp)
                 + " floatWindow=" + argbToHex(floatWindowColor)
@@ -808,6 +851,7 @@ public final class SubtitleConfig {
                 //   `+ " experimental=" + experimentalEnabled;` 当作「配置键七处同步」的锚，
                 //   它带行尾分号 ⇒ 任何追加都只能接在这行前面，否则那条锚会静默失效。
                 + " fontFollowSystem=" + subtitleFontFollowSystem
+                + " bold=" + subtitleBold
                 + " experimental=" + experimentalEnabled;
     }
 

@@ -1809,11 +1809,11 @@ public class ActivityButtonHook {
             if (sPickFallback == null) {
                 sPickFallback = v; // 兜底：只要是个 Lottie 就留着，万一方正判据挑不出来
             }
-            if (w >= PLAY_BTN_MIN_PX && h >= PLAY_BTN_MIN_PX
-                    && Math.abs(w - h) <= Math.max(w, h) * 0.4f) {
+            // 【code 1066 / A-3】方正 + centerX 分 → PlayButtonPickPolicy
+            if (PlayButtonPickPolicy.isSquareCandidate(w, h, PLAY_BTN_MIN_PX, 0.4f)) {
                 v.getLocationOnScreen(sTmpLoc);
-                int score = Math.abs(sTmpLoc[0] + w / 2 - sPickCenterX);
-                if (score < sPickScore) {
+                int score = PlayButtonPickPolicy.centerScore(sTmpLoc[0], w, sPickCenterX);
+                if (PlayButtonPickPolicy.beats(score, sPickScore)) {
                     sPickScore = score;
                     sPickBest = v;
                 }
@@ -1921,8 +1921,9 @@ public class ActivityButtonHook {
         //
         // 现在改成「位移变化 ≥ FOLLOW_DEADZONE_PX 才续期」：快照 = 「最后一次真的动过」，
         // 时间上限才真的会到期。匀速拖动每帧都在变 → 窗口照样被持续续期，不影响拖手保护。
-        if (sHeldOffset == FOLLOW_NO_BASELINE
-                || Math.abs(vis - sHeldOffset) >= FOLLOW_DEADZONE_PX) {
+        // 【code 1066 / A-3】held 快照续期 → HeldSnapshotRenewPolicy
+        if (HeldSnapshotRenewPolicy.shouldRenew(
+                sHeldOffset, vis, FOLLOW_NO_BASELINE, FOLLOW_DEADZONE_PX)) {
             sHeldOffset = vis;
             sHeldOffsetMs = SystemClock.uptimeMillis();
             sHoldProbeRef = new WeakReference<>(v);
@@ -2109,44 +2110,33 @@ public class ActivityButtonHook {
         // {@link #sLastPageMotionMs}，于是「安静不足 PAGE_MOTION_HOLD_MS」直接否掉标定。
         // （本闸用的是**位移**的时间轴，而不是扫描节奏的时间轴 —— 后者会被转场的
         //   密集结构事件踢到 80ms 一次，根本量不出「停了多久」。）
-        if (sLastPageMotionMs == 0L || now - sLastPageMotionMs < PAGE_MOTION_HOLD_MS) {
-            sBaseCandY = FOLLOW_NO_BASELINE; // 这一次不算数，等页面真的安静下来从头采
+        // 【code 1066 / A-2】门①.5 / ③ / ② / ②.5 → FollowBaselinePolicy
+        if (!FollowBaselinePolicy.pageQuietEnough(sLastPageMotionMs, now, PAGE_MOTION_HOLD_MS)) {
+            sBaseCandY = FOLLOW_NO_BASELINE;
             sBaseCandMs = 0L;
             logBaseDeferred(now, "page still moving", y, vis);
             return;
         }
-        // 门③（v37 重写）：已有基线、当前位置离它很远时 —— 页面到底「真的回到布局静止位」了吗？
-        // 用**无基线通道**回答（它不受换参考点影响）：transform 累加值 ≈ 0 才是真的在静止位。
-        //   · 是 → 允许落定新基线（自愈：换页 / 换曲之后基线能跟上）
-        //   · 否 → 页面只是被拖开、停在半路，**绝不覆盖** —— 覆盖 = 位移归零 = 按钮弹回原位，
-        //          那正是用户说的「卡在原位置不动」。
-        // ⚠️ v35 这里读错了字段（sPlayBtnBaseY 恒为哨兵）→ 这道门从来没生效过；
-        //    v36 换了字段但仍然只能靠「页面确实不再动」间接推断，无法区分
-        //    「回到原位」和「被拖住不动」。v37 用无基线通道把这件事直接问清楚。
-        if (sFollowBaseY != FOLLOW_NO_BASELINE && Math.abs(y - sFollowBaseY) > FOLLOW_DEADZONE_PX) {
-            boolean atLayoutRest = sVisualSeen && vis != FOLLOW_NO_BASELINE
-                    && Math.abs(vis) < FOLLOW_DEADZONE_PX;
-            if (!atLayoutRest) {
-                sBaseCandY = y;
-                sBaseCandMs = now;
-                logBaseDeferred(now, "off baseline & not at layout rest", y, vis);
-                return;
-            }
+        boolean atLayoutRest = FollowBaselinePolicy.atLayoutRest(
+                sVisualSeen, vis, FOLLOW_NO_BASELINE, FOLLOW_DEADZONE_PX);
+        if (FollowBaselinePolicy.deferOffBaseline(
+                sFollowBaseY, y, FOLLOW_NO_BASELINE, FOLLOW_DEADZONE_PX, atLayoutRest)) {
+            sBaseCandY = y;
+            sBaseCandMs = now;
+            logBaseDeferred(now, "off baseline & not at layout rest", y, vis);
+            return;
         }
-        // 门②：位置还在变 → 先记候选（并**重新起算**稳定窗），等下一次扫描确认。
-        if (sBaseCandY == FOLLOW_NO_BASELINE || Math.abs(y - sBaseCandY) > FOLLOW_DEADZONE_PX) {
+        if (FollowBaselinePolicy.candidateNeedsReset(
+                sBaseCandY, y, FOLLOW_NO_BASELINE, FOLLOW_DEADZONE_PX)) {
             sBaseCandY = y;
             sBaseCandMs = now;
             return;
         }
-        // ── 【code 951 门②.5】候选一致还不够 —— 必须**连续稳住一整段墙钟**（见 BASE_SETTLE_MS）──
-        // 上一版这里只要求「两次扫描读数相同」，而转场里的两次扫描可以只隔 80ms
-        // （结构事件把扫描踢得很密）⇒ 转场停顿窗原样过关，431px 的转场位移被标成宿主偏置。
         if (sBaseCandMs == 0L) {
             sBaseCandMs = now;
             return;
         }
-        if (now - sBaseCandMs < BASE_SETTLE_MS) {
+        if (!FollowBaselinePolicy.settleReady(sBaseCandMs, now, BASE_SETTLE_MS)) {
             logBaseDeferred(now, "settle window " + (now - sBaseCandMs) + "ms", y, vis);
             return;
         }
@@ -2167,7 +2157,7 @@ public class ActivityButtonHook {
         //   当成常数把按钮永久顶到封面上去。基线本身照落，不受影响。
         if (sVisualBias == FOLLOW_NO_BASELINE && vis != FOLLOW_NO_BASELINE) {
             int biasMax = biasMaxStaticPx();
-            if (Math.abs(sVisualOffset) <= biasMax) {
+            if (FollowBaselinePolicy.shouldAdoptBias(sVisualOffset, biasMax)) {
                 sVisualBias = sVisualOffset;
                 LogGate.debug(TAG, " page follow bias calibrated: " + sVisualBias
                         + "px (ref=" + (sFollowRefIsPlayBtn ? "play-button" : "anchor") + ")");
@@ -2228,18 +2218,14 @@ public class ActivityButtonHook {
      * 当前 y、位移归零，按钮就自己回到「滑条上方」了。
      */
     private static void healStaleBiasIfAtRest(long now) {
-        if (sVisualBias == FOLLOW_NO_BASELINE || sFollowAppliedY == 0) {
+        // 【code 1066 / A-2】自愈前置闸 → FollowBaselinePolicy
+        if (!FollowBaselinePolicy.healEligible(sVisualBias, sFollowAppliedY, sVisualOffset,
+                FOLLOW_NO_BASELINE, FOLLOW_DEADZONE_PX)) {
             sHealCandY = FOLLOW_NO_BASELINE;
             sHealCandMs = 0L;
             return;
         }
-        if (sVisualOffset == FOLLOW_NO_BASELINE
-                || Math.abs(sVisualOffset) > FOLLOW_DEADZONE_PX) {
-            sHealCandY = FOLLOW_NO_BASELINE; // 页面真的被拖开着 —— 那是正常跟随，不许动
-            sHealCandMs = 0L;
-            return;
-        }
-        if (sLastPageMotionMs == 0L || now - sLastPageMotionMs < PAGE_MOTION_HOLD_MS) {
+        if (!FollowBaselinePolicy.pageQuietEnough(sLastPageMotionMs, now, PAGE_MOTION_HOLD_MS)) {
             sHealCandMs = 0L;
             return;
         }
@@ -2249,7 +2235,8 @@ public class ActivityButtonHook {
             sHealCandMs = 0L;
             return;
         }
-        if (sHealCandY == FOLLOW_NO_BASELINE || Math.abs(y - sHealCandY) > FOLLOW_DEADZONE_PX) {
+        if (FollowBaselinePolicy.candidateNeedsReset(
+                sHealCandY, y, FOLLOW_NO_BASELINE, FOLLOW_DEADZONE_PX)) {
             sHealCandY = y;
             sHealCandMs = now;
             return;
@@ -2258,7 +2245,7 @@ public class ActivityButtonHook {
             sHealCandMs = now;
             return;
         }
-        if (now - sHealCandMs < BASE_SETTLE_MS) {
+        if (!FollowBaselinePolicy.settleReady(sHealCandMs, now, BASE_SETTLE_MS)) {
             return;
         }
         int oldBias = sVisualBias;
@@ -2318,17 +2305,17 @@ public class ActivityButtonHook {
             return;
         }
         long now = SystemClock.uptimeMillis();
-        if (sLastPageMotionMs != 0L && now - sLastPageMotionMs < PAGE_MOTION_HOLD_MS) {
+        // 【code 1066 / A-2】启停闸 → FollowBaselinePolicy
+        if (FollowBaselinePolicy.shouldStartFromRecentMotion(
+                sLastPageMotionMs, now, PAGE_MOTION_HOLD_MS)) {
             startPageFollow();
             return;
         }
-        // v39：页面**此刻就是被拖开的** —— 循环若在半路掉了，这里立刻接上。
-        // 已经跑起来的循环会在上面 `sFollowing` 处返回，不会重复启动。
-        if (sVisualSeen && sVisualBias != FOLLOW_NO_BASELINE) {
-            int vis = pageVisualOffset();
-            if (vis != FOLLOW_NO_BASELINE && Math.abs(vis) > FOLLOW_DEADZONE_PX) {
-                startPageFollow();
-            }
+        int vis = pageVisualOffset();
+        if (FollowBaselinePolicy.shouldStartFromDragged(
+                sVisualSeen, sVisualBias != FOLLOW_NO_BASELINE, vis,
+                FOLLOW_NO_BASELINE, FOLLOW_DEADZONE_PX)) {
+            startPageFollow();
         }
     }
 
@@ -2537,24 +2524,18 @@ public class ActivityButtonHook {
                             return;
                         }
                         int delta = followOffset();
-                        boolean held = delta != FOLLOW_NO_BASELINE
-                                && Math.abs(delta) > FOLLOW_DEADZONE_PX;
+                        // 【code 1066 / A-3】帧闸 → FollowFramePolicy
+                        boolean held = FollowFramePolicy.isHeld(
+                                delta, FOLLOW_NO_BASELINE, FOLLOW_DEADZONE_PX);
                         long nowMs = SystemClock.uptimeMillis();
-                        // v39：时长上限**只在页面回到静止位附近时才收口**。
-                        // 页面被拖开（held）时必须继续跑 —— 见 FOLLOW_MAX_HELD_MS。
-                        long cap = held ? FOLLOW_MAX_HELD_MS : FOLLOW_MAX_MS;
-                        if (nowMs - sFollowStartMs > cap) {
+                        long cap = FollowFramePolicy.durationCap(
+                                held, FOLLOW_MAX_MS, FOLLOW_MAX_HELD_MS);
+                        if (FollowFramePolicy.timedOut(sFollowStartMs, nowMs, cap)) {
                             return;
                         }
                         if (delta == FOLLOW_NO_BASELINE) {
-                            // ⚠️ v35 在这里直接 return → `again` 保持 false → 循环被**一次性杀死**。
-                            // 而拖动期间参考点会被短暂判成「不可用」（锚点 area 掉到 45%、
-                            // verdict 在 PLAYER/OTHER 之间来回跳），这种**瞬时**读不到
-                            // 绝不该结束跟手 —— 何况 RN 拖动不触发布局回调，
-                            // 结构事件不一定再来，循环再也起不来 = 按钮永久卡死。
-                            // v36：跳过这一帧、清掉静止计数（免得误判「页面停了」），
-                            // 连续 FOLLOW_MISS_MAX_FRAMES 帧都读不到才认输。
-                            if (++sFollowMiss >= FOLLOW_MISS_MAX_FRAMES) {
+                            if (FollowFramePolicy.missExhausted(
+                                    ++sFollowMiss, FOLLOW_MISS_MAX_FRAMES)) {
                                 return;
                             }
                             sFollowStill = 0;
@@ -2567,40 +2548,15 @@ public class ActivityButtonHook {
                         } else {
                             sFollowStill = 0;
                             sLastFollowY = delta;
-                            // v38：**只在位移真的变了**才刷新「页面最后运动的时刻」。
-                            // 老代码无条件刷新 —— 于是帧循环那 12 帧「静止确认」期间时间戳
-                            // 还在往前走，sLastPageMotionMs 会比「页面真正停下的时刻」晚 ≈200ms。
-                            // 而它现在是「离开播放页」确认窗的起算点（见 deadFor），
-                            // 晚 200ms = 白白多给 200ms 宽限。改成条件刷新后它精确等于最后一次移动。
                             sLastPageMotionMs = SystemClock.uptimeMillis();
                         }
                         applyFollowOffset(clampFollowOffset(delta));
-                        // v39：**只有页面回到静止位附近，才允许用「静止帧数」注销循环**。
-                        //
-                        // 老代码无条件 `if (sFollowStill >= FOLLOW_STILL_FRAMES) return;` ——
-                        // 于是「页面被拖到极限、位移不再变化」的那 ~200ms 就会把循环注销掉，
-                        // 而重启**只能靠宿主结构事件**（maybeStartPageFollow 唯一的调用点），
-                        // RN 的回弹却不保证产生结构事件 → 按钮在原地冻住，等下一次事件
-                        // 唤醒时**一帧补齐几百 px**。
-                        //
-                        // 实测（2026-09-14 23:55:10~23:56:33，一次连续拖动）：
-                        //   86 次「跟手重启」**全部**先经历 ≥100ms 停顿（p50 587ms、
-                        //   p90 1.7s），补跳 p50 122px、最大 2769px。典型形态是
-                        //   「按钮停在 2765px 不动 554ms → 一帧跳到 2428px」。
-                        //   循环停了、页面还在动 —— 这一段就是用户说的「位移闪跳」。
-                        //
-                        // 页面被拖开时循环继续跑的成本可忽略（每帧 ~15 个节点的
-                        // getTranslationY/getScrollY，没有布局、没有日志），
-                        // 换掉的是几百毫秒的冻结 + 几百像素的补跳。
                         if (!held) {
-                            // 回到静止位：把最后那点亚死区残留抹平（v38 实测残留 20~107px），
-                            // 否则 `captureFollowBaseline()` 的「位移为 0」那道门永远进不去。
                             if (delta != 0) {
                                 applyFollowOffset(0);
                             }
-                            if (sFollowStill >= FOLLOW_STILL_FRAMES) {
-                                // v44：这个阈值已放宽到 90 帧（≈1s 热待机）—— 见常量的注释。
-                                // 静止期间位移恒为 0 → 不写、不打日志，只有每帧一次参考点读。
+                            if (FollowFramePolicy.shouldStopWhenStill(
+                                    held, sFollowStill, FOLLOW_STILL_FRAMES)) {
                                 return;
                             }
                         }
@@ -4259,48 +4215,26 @@ public class ActivityButtonHook {
      * 现在 {@code sAppEnabled} 是**纯用户意图**（只由长按翻转），本函数不必再跟任何
      * 别的口径争时间：没字幕可显示就不算绿，有字幕且用户开着就绿 —— 只看「当下有没有内容」。
      */
+    /** 【code 1066】→ {@link CapsuleButtonPolicy#statusBarButtonOn}。 */
     private static boolean statusBarButtonOn(SubtitleRepository repo, boolean noSub) {
-        // 无字幕时状态栏钮本来就不显示，这里返回 false 只是为了让签名稳定
-        // （避免「不可见但仍参与签名」的钮在无字幕期间还随开关抖动）。
-        return !noSub && StatusBarSubtitleBridge.sAppEnabled;
+        return CapsuleButtonPolicy.statusBarButtonOn(noSub, StatusBarSubtitleBridge.sAppEnabled);
     }
 
     /**
-     * 【code 941】状态栏钮是否该**显示**。
+     * 【code 941 / 1066】状态栏钮是否该**显示** → {@link CapsuleButtonPolicy#statusBarButtonVisible}。
      *
-     * 判据 =「当下有字幕可显示」**且**「L1 功能级总闸开着」**且**「SystemUI 作用域已确认授权」。
-     *
-     * 【2.3.0 §2.1.1.4】中间那条是新增的：设置页关掉「状态栏字幕功能」后，本按钮整个消失。
-     *
-     * 后者为什么必须：没勾选 SystemUI 作用域时，状态栏那条链路
-     * （{@link StatusBarSubtitleBridge#ACTION_LINE}）**没有接收方** —— 按钮点下去
-     * 只翻转一个没人听的开关，用户看到的是「按了没反应」。与其给一个假按钮，
-     * 不如不显示（需求原文：「如果检测到用户没有给插件勾选 com.android.systemui
-     * 作用域授权，则播放界面不显示状态栏字幕开关按钮」）。
-     *
-     * ⚠️ 与 {@link #statusBarButtonOn}（底色 = 开/关）是**两件事**，不要合并：
-     *    那个管「什么颜色」，这个管「在不在」。
-     * ⚠️ {@link #applyButtonText} 与 {@link #updateButtonDrawable(SubtitleRepository, boolean)}
-     *    **必须都走本函数** —— 两条路径各算一套正是 1.21.12 / 1.21.16 反复踩的坑
-     *    （「文字变了底色没变」「底色比事实早 9.5 秒」都是这么来的）。
+     * ⚠️ 与 {@link #statusBarButtonOn} 是两件事；{@link #applyButtonText} 与
+     * {@link #updateButtonDrawable(SubtitleRepository, boolean)} 必须同走本函数。
      */
     private static boolean statusBarButtonVisible(SubtitleRepository repo, boolean noSub) {
-        // 【2.3.0 §2.1.1.4】多一条 L1 功能级总闸：设置页把「状态栏字幕功能」关掉后，
-        //   播放页这个按钮**从界面上消失**（需求原话）。它表达的是 L2 会话开关，
-        //   功能本身都没开时给它一个按钮只会让用户点了没反应。
-        return !noSub && StatusBarSubtitleBridge.sFeatureEnabled
-                && StatusBarSubtitleBridge.isSystemUiScopeAuthorized();
+        return CapsuleButtonPolicy.statusBarButtonVisible(noSub,
+                StatusBarSubtitleBridge.sFeatureEnabled,
+                StatusBarSubtitleBridge.isSystemUiScopeAuthorized());
     }
 
-    /**
-     * 【v57】悬浮窗钮是否呈「开」态。
-     *
-     * ⚠️ 无字幕时需求是「悬浮窗字幕按键显示无字幕」—— 它的**文字**变成「无字幕」，
-     *    底色按关态处理（设计稿的「无字幕状态」就是一个深色胶囊）。
-     *    所以这里 `!noSub` 的约束保留：无字幕 → 不算开。
-     */
+    /** 【v57 / code 1066】→ {@link CapsuleButtonPolicy#floatingButtonOn}。 */
     private static boolean floatingButtonOn(SubtitleRepository repo, boolean noSub) {
-        return !noSub && repo.isFloatingWindowOpen();
+        return CapsuleButtonPolicy.floatingButtonOn(noSub, repo.isFloatingWindowOpen());
     }
 
     /**
@@ -4426,14 +4360,10 @@ public class ActivityButtonHook {
         // 【1.21.13/1.21.14 的教训】判等必须覆盖该控件的**全部**输入，漏任何一项
         // 都会留下「文字变了底色没变」这类错位。合成一个串最不容易漏。
         final float alpha = noSub ? 0.6f : 1.0f;
-        // 【2.2.9】液态玻璃开关也进签名：开关一变，下一次通知就会重建两种胶囊的底
-        //   （否则「切开关后按钮还是旧底」要等到下一次文字/底色变化才纠正）。
-        // 【code 1045】强调色也进签名：用户换壁纸后 MoriMod 会重采，强调色变了必须重画，
-        //   否则「底色停在旧强调色」要一直等下次文字/开关变化才纠正。
-        final String sig = floatText + '\u0000' + floatOn + '\u0000'
-                + statusText + '\u0000' + statusOn + '\u0000' + statusVisible
-                + '\u0000' + alpha + '\u0000' + RemoteConfig.liquidGlass()
-                + '\u0000' + MoriAccent.accentOr(sActivity, 0);
+        // 【2.2.9 / code 1045 / 1066】液态玻璃 + 强调色进签名 → CapsuleButtonPolicy.visualSig
+        final String sig = CapsuleButtonPolicy.visualSig(floatText, floatOn, statusText,
+                statusOn, statusVisible, alpha, RemoteConfig.liquidGlass(),
+                MoriAccent.accentOr(sActivity, 0));
         if (sig.equals(sLastBtnSig)) {
             sBtnNoSubPending = false;
             sBtnNoSubGen++;                    // 状态已经一致 -> 作废排队中的延时切换

@@ -2021,10 +2021,13 @@ public class StatusBarSubtitleHook {
                 width, sAppliedLineWidth, WIDTH_HYSTERESIS_PX)
                 == WidthSettlePolicy.PendingAction.NO_CHANGE_SETTLE) {
             sWidthSettled = true;
-            if (!sScrollArmed) {
+            // 【code 1065 / B2】→ {@link StatusBarScrollOrchestrator#afterHysteresisSettle}
+            StatusBarScrollOrchestrator.AfterWidthSettleAction hyst =
+                    StatusBarScrollOrchestrator.afterHysteresisSettle(
+                            sLineView != null, sScrollArmed);
+            if (hyst == StatusBarScrollOrchestrator.AfterWidthSettleAction.ARM_START) {
                 startScroll();
-            } else {
-                // 【2.2.0 半字根修】没用 pending 宽 retarget，只用实际生效宽。
+            } else if (hyst == StatusBarScrollOrchestrator.AfterWidthSettleAction.RETARGET) {
                 retargetScrollForNewWidth(sAppliedLineWidth);
             }
             return;
@@ -2402,28 +2405,22 @@ public class StatusBarSubtitleHook {
      */
     private static void startScroll() {
         cancelScroll();
-        if (sLineView == null) {
-            return;
-        }
         try {
-            // 【code 927 问题 1】宽度未落地之前**不许起滚**（问题 1 的核心修法）。
-            //   真机实证：首次开字幕时 startScroll 跑在宽度落地之前，
-            //   getWidth() 还是初始 MATCH_PARENT 的满宽（457px）⇒ 先按满宽起滚
-            //   ⇒ 150ms 后宽度落成 311 ⇒ retarget 成裁切 ⇒ 用户看到「先整行再半截」。
-            //   ⇒ 直接返回，等 applyPendingWidth 落地后**主动补起滚**。
-            if (!sWidthSettled) {
-                // 【code 933 精简】移除 width not settled 诊断日志（25 行/会话）。
+            // 【code 1065 / B2】起滚闸门 → {@link StatusBarScrollOrchestrator#decideStart}
+            // 【code 927】宽度未落地不许起滚；落地后由 applyPendingWidth 补起滚。
+            int target = (sLineView != null && sWidthSettled) ? computeScrollTarget() : 0;
+            StatusBarScrollOrchestrator.StartAction start =
+                    StatusBarScrollOrchestrator.decideStart(
+                            sLineView != null, sWidthSettled, target);
+            if (start == StatusBarScrollOrchestrator.StartAction.ABORT
+                    || start == StatusBarScrollOrchestrator.StartAction.WAIT_WIDTH) {
                 return;
             }
-            int target = computeScrollTarget();
             sScrollArmed = true;           // 已起滚：之后宽度变化走 retarget（不再重启动画）
-            if (target <= 0) {
+            if (start == StatusBarScrollOrchestrator.StartAction.SHOW_STATIC) {
                 sLineView.setScrollX(0);   // 放得下 → 静态显示，不滚动
                 sLiveTargetPx = 0;
-                // 【2.2.0 半字根修·兜底】「放得下」这个结论是在宽度刚写进 LayoutParams
-                //   时下的；若父容器实际量给子视图的宽度更小（钳制）、或字体刚从时钟
-                //   同步过来导致 Layout 偏小，结论就会错 —— 最后一个字会被永久裁掉。
-                //   ⇒ 下一帧（layout 已落地）用**真实宽度**复核一次，真放不下就补起滚。
+                // 【2.2.0 半字根修·兜底】下一帧用真实宽度复核，真放不下就补起滚。
                 recheckFitAfterLayout();
                 return;
             }

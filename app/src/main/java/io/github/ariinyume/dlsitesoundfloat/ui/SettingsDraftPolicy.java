@@ -104,6 +104,7 @@ public final class SettingsDraftPolicy {
         // ② 行态面
         if (draft.inactiveBlurEnabled != saved.inactiveBlurEnabled
                 || draft.inactiveBlurSteps != saved.inactiveBlurSteps
+                || draft.inactiveHighlight != saved.inactiveHighlight
                 || draft.inactiveScaleEnabled != saved.inactiveScaleEnabled
                 || draft.inactiveScalePct != saved.inactiveScalePct) {
             n++;
@@ -114,7 +115,8 @@ public final class SettingsDraftPolicy {
                 || Math.abs(draft.lineSpacingDp - saved.lineSpacingDp) > FLOAT_EPS
                 || Math.abs(draft.wrapExtraSpacingDp - saved.wrapExtraSpacingDp) > FLOAT_EPS
                 || draft.floatWindowColor != saved.floatWindowColor
-                || draft.subtitleFontFollowSystem != saved.subtitleFontFollowSystem) {
+                || draft.subtitleFontFollowSystem != saved.subtitleFontFollowSystem
+                || draft.subtitleBold != saved.subtitleBold) {
             n++;
         }
         // ④ 液态玻璃

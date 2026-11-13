@@ -41,7 +41,7 @@ plugins {
 //                    只是仓库内可读别名 ⇒ 改它**不必重新出包**。
 //                 ⚠️ 2026-10-14 回溯：1013~1017 都构建于 10-14，label 已由 `1008.30`
 //                    回填为 `1014.1`~`1014.5`；10-13 及更早的条目**保留旧值**（历史记录）。
-def appVersionTag = '2.4.4'
+def appVersionTag = '2.4.5'
 // ⚠️ 写成 int 字面量 925（不要写 0925 —— Groovy 可能按八进制/前导零解析）：
 //    versionCode 的**数值**是 925，管理器里显示 925，可读语义看 appVersionCodeLabel。
 // ── 版本履历（code 994 / label 1008.15）──
@@ -779,9 +779,46 @@ def appVersionTag = '2.4.4'
 // 【code 1059 / 2.4.4】架构优化 P1/B2：ScrollFitRecheck：
 //   ① fit recheck 入口闸 / 是否补起滚；动画末 afterAnimationEnd 三分支。
 //   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1058 → 1059、label 1112.5。
-def appVersionCode = 1059
-def appVersionCodeLabel = '1112.5'
-def appVersionName = '2.4.4'
+//
+// 【code 1060 / 2.4.4】架构优化 P1/B1：SettingsImportLogic：
+//   ① 导入预检 preflight / looksLike / prepareImportedDraft；对齐 alignIndex/ValueOf。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1059 → 1060、label 1113.1。
+//
+// 【code 1061 / 2.4.4】架构优化 P1/B1：SettingsPreviewBackdropLogic：
+//   ① 预览面板渐变 alpha + 连续盒式模糊（blurTileInterpolated / lerpArgb）。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1060 → 1061、label 1113.2。
+//
+// 【code 1066 / 2.4.5】ActivityButtonHook 纯判 + Settings Fragment + Health 口径：
+//   ① A-1~A-3：CapsuleButtonPolicy / FollowBaseline / HeldSnapshot / PlayButtonPick / FollowFrame。
+//   ② B-0~B-2：SettingsHost + 四卡 Fragment + RowRegistry；删 Settings*Ui facade。
+//   ③ 状态卡去掉适配自检小字 → LSPosed Health 日志；STATUSBAR/SUB_TEXT/PREFETCH 宿主代理 HIT。
+//   ④ versionName / tag 升 2.4.5，versionCode 1065 → 1066、label 1113.7。
+//
+// 【code 1065 / 2.4.4】架构收口 B1/B2/B5/C1/C2/C3：
+//   ① B1：SettingsAppearance/LiquidGlass/Misc/Experimental Ui 卡边界。
+//   ② B2：StatusBarScrollOrchestrator 起滚/宽度落地闸门。
+//   ③ C1：AdapterHealth → 状态卡（HEALTH_QUERY/REPLY）。
+//   ④ C2/C3：Referer/README 口径 + Shape 离线≠运行时；B5 随改注释。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1064 → 1065、label 1113.6。
+//
+// 【code 1064 / 2.4.4】真机 151817 回修：
+//   ① 非活动行不透明度范围 50–100 → 20–100；删行距/换行/字体跟随三行副标题。
+//   ② 151817 实证宿主仍跑旧码（alpha 恒 0.21、active 卡 25.5sp、inactive 卡 17sp）——
+//      1063 上限/新键需强制停宿主+SystemUI 后才加载；本轮随范围改动再升 code 促重载。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1063 → 1064、label 1113.5。
+//
+// 【code 1063 / 2.4.4】四项小功能 + 架构 P1/B1：
+//   ① 行态：非活动行不透明度 50–100%（默认 50%）；缩放比例改为 ×0.5–×1.8（默认 ×0.8）。
+//   ② 字幕：主字幕放大倍数上限 ×1.5 → ×1.8；排版：字体加粗开关（默认关）。
+//   ③ SettingsDisplayFormatLogic + SettingsResetLogic 纯判抽出并进黄金向量。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1062 → 1063、label 1113.4。
+//
+// 【code 1062 / 2.4.4】架构优化 P1/B1：SettingsPreviewCollapseLogic：
+//   ① 预览折叠高度/位移/裁剪/子行累加/宽度兜底零状态数学。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1061 → 1062、label 1113.3。
+def appVersionCode = 1066
+def appVersionCodeLabel = '1113.7'
+def appVersionName = '2.4.5'
 
 android {
     namespace 'io.github.ariinyume.dlsitesoundfloat'
@@ -897,6 +934,8 @@ dependencies {
     implementation 'com.google.android.material:material:1.14.0'
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'androidx.core:core:1.16.0'
+    // 【code 1066 / 2.4.5 / B-0】设置页四卡 Fragment —— 显式钉版本，不靠 appcompat 传递。
+    implementation 'androidx.fragment:fragment:1.8.5'
 
     // ── 【code 995】纯函数内核的黄金向量回归测试 ───────────────────────────────
     // CapsuleGeometry / PageFollowPolicy / AnchorDeadPolicy 是从 ActivityButtonHook
