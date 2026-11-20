@@ -1875,10 +1875,16 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
     private void startProbe() {
         ScopeProbe.probe(this, ScopeProbe.DEFAULT_WINDOW_MS, result -> {
             mProbe = result;
+            // 【code 1077】探到宿主授权（tag=host 的 PONG）⇒ 落盘「LSPosed 已勾宿主」。
+            //   之后宿主没在跑也能显示「模块已激活」（Ari：授权即激活）。
+            if (result.hostAuthorized) {
+                mStore.markHostScopeSeen();
+            }
             // 【code 1007】探测结果顺带决定缓存占用那行的「读不到」文案（没回执时才用它）。
-            mCacheHostAlive = result.hostAuthorized;
+            mCacheHostAlive = result.hostAuthorized || mStore.readHostScopeSeen();
             // 【code 995】诊断级 → 走 LogGate（探测每 3s 一轮，常开会刷屏）。
-            LogGate.debug(TAG, "status probe -> " + result);
+            LogGate.debug(TAG, "status probe -> " + result
+                    + " hostScopeSeen=" + mStore.readHostScopeSeen());
             if (isFinishing() || isDestroyed()) {
                 return;
             }
@@ -1928,11 +1934,9 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
      * 未激活 = {@code colorErrorContainer}。
      *
      * ─────────────────────────────────────────────────────────────────────
-     * 【code 1038】激活判定只认**当前这轮探测**的授权位。
-     * 旧实现把「本会话内曾经探测到」({@code mHostSeenOnce}) 与「历史上曾经授权」
-     * ({@code PREF_HOST_SCOPE_SEEN}) 混进判据，导致 LSPosed 未启用 / 宿主作用域未勾选时
-     * 状态卡仍显示「已激活」。这两份「记忆」现在全部移除：每次打开设置页都重新探测，
-     * 只有本轮 PING/PONG 握手成功才算授权。
+     * 【code 1077】激活 =「本轮探到宿主授权」或「历史上曾确认过宿主作用域」。
+     * 证据只能是带 {@code tag=host} 的 HOST_PONG（SystemUI 应答不会误记）。
+     * Ari：LSPosed 给了插件宿主授权 ⇒ 显示模块已激活（宿主当前没在跑也算）。
      * ─────────────────────────────────────────────────────────────────────
      */
     private void renderStatusCard() {
@@ -1940,8 +1944,9 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
             return;
         }
         boolean probing = mProbe == null;
-        // 【code 1038】只看当前探测结果：历史会话授权、本会话曾经授权都不作数。
-        boolean hostAuthorized = !probing && mProbe.hostAuthorized;
+        boolean hostScopeSeen = mStore != null && mStore.readHostScopeSeen();
+        // 【code 1077】本轮 PONG 或历史宿主授权落盘，都算「LSPosed 已勾宿主」。
+        boolean hostAuthorized = (!probing && mProbe.hostAuthorized) || hostScopeSeen;
         /**
          * 宿主**当前真的在用**（播放页在前台 / 正在播放）。
          *
@@ -1951,12 +1956,11 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
          * 保留它（而不是连同读取一起删掉）是为了将来若要恢复「未运行」判别态时
          * 只需把分支加回来，不必再动跨进程协议。
          */
-        boolean hostAlive = !probing && mProbe.hostAlive;
-        boolean sysUiActive = !probing && mProbe.systemUiAuthorized;
+        boolean hostAlive = !probing && mProbe != null && mProbe.hostAlive;
+        boolean sysUiActive = !probing && mProbe != null && mProbe.systemUiAuthorized;
 
-        // ── 两分支（【code 1038】只看本轮探测结果）─────────────────────────────
-        // 激活判定只用当前授权位：LSPosed 未启用 / 宿主作用域未勾选 ⇒ 状态卡显示未激活。
-        //  · 分支一 active         = hostAuthorized
+        // ── 两分支（【code 1077】本轮授权 ∪ 历史宿主作用域落盘）────────────────
+        //  · 分支一 active         = hostAuthorized（含落盘）
         //  · 分支二（else）        = !hostAuthorized ⇒ 未激活 / 未授权引导
         boolean active = hostAuthorized;
 
@@ -1977,7 +1981,8 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
         int bg;
         int on;
         int accent;
-        if (probing) {
+        // 【code 1077】探测中若已有宿主授权落盘，直接显示已激活（不必等本轮 PONG）。
+        if (probing && !hostScopeSeen) {
             bg = neutralBg;
             on = neutralOn;
             accent = attr(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF49454F);
@@ -2446,6 +2451,44 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
         }
         pinCardLastBottom(group, group.getChildAt(group.getChildCount() - 1));
     }
+
+    @Override
+    public SettingsAppearanceRows.Ops appearanceRowOps() {
+        return mAppearanceRowOps;
+    }
+
+    private final SettingsAppearanceRows.Ops mAppearanceRowOps =
+            new SettingsAppearanceRows.Ops() {
+                @Override
+                public void buildMain(LinearLayout parent) {
+                    buildMainGroup(parent);
+                }
+
+                @Override
+                public void buildInactive(LinearLayout parent) {
+                    buildInactiveGroup(parent);
+                }
+
+                @Override
+                public void buildTypo(LinearLayout parent) {
+                    buildTypoGroup(parent);
+                }
+
+                @Override
+                public void buildTabs() {
+                    buildAppearanceTabs();
+                }
+
+                @Override
+                public void selectPage(int page) {
+                    selectAppearancePage(page);
+                }
+
+                @Override
+                public void rememberPage(int page) {
+                    mRowRegistry.put(SettingsRowRegistry.APPEARANCE_PAGE, Integer.valueOf(page));
+                }
+            };
 
     @Override
     public void buildMainGroup(LinearLayout parent) {
@@ -3550,97 +3593,93 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
     }
 
     /**
-     * 【2.2.9】「液态玻璃」开关（「其他」卡片，摆在「调试日志」下方）。
+     * 【优化 P1-5】液态玻璃卡行控件仍由本 Activity 创建（私有 SliderRow/SwitchRow），
+     * 行顺序编排已下沉到 {@link SettingsLiquidGlassRows} + Fragment。
      *
-     * ─────────────────────────────────────────────────────────────────────
-     * 需求（Ari）：做一个「液态玻璃」开关，开启后**播放页两个字幕开关按钮**与
-     * **悬浮窗背景**以液态玻璃形式呈现；同时设置页里「悬浮窗颜色」**不可调整**。
-     *
-     * 渲染后端：{@code view.LiquidGlassDrawable}（自渲染多层玻璃）——
-     * 为什么不做「真·背后折射」见该类类头与工作区根目录的可行性分析报告
-     * （{@code ColorOS17_液态玻璃_悬浮窗可行性分析.md} §4.3：真折射要走「自己采背景 +
-     * 自己渲染」的跨进程高成本路线）。
-     *
-     * ⚠️ 本开关同时驱动三件事，缺一不可：
-     *   ① 悬浮窗面板背景（hook 侧 {@code FloatingSubtitleView.applyPanelBackground}）；
-     *   ② 播放页两个胶囊底（{@code ActivityButtonHook.createCapsuleDrawable}）；
-     *   ③ 本页「悬浮窗颜色」行**置灰不可调**（{@link #applyPanelColorLock()}）。
-     * ─────────────────────────────────────────────────────────────────────
-     */
-    /**
-     * 【code 1003】「液态玻璃效果调整」卡片（独立成卡，摆在「其他」卡片之前）。
-     *
-     * 分布（照 Ari 的参考图与《液态玻璃调整项.xlsx》）：
-     *   ① 液态玻璃（总开关）
-     *   ② 环境背景亮度  ← 自适应霜面的**唯一**亮度输入（原先的「自动采样」已整体删除）
-     *   ③ 通透度
-     *   ④ 明暗度
-     *   ⑤ 模糊强度
-     *   ⑥ 恢复液态玻璃默认设置（全部设置为 50%）
-     * 总开关关闭时 ②~⑥ 全部隐藏（见 {@link #applyLiquidGlassBlurVisibility()}）。
+     * <p>卡内顺序：总开关 → 环境背景亮度 / 通透度 / 明暗度 / 模糊强度 → 恢复默认；
+     * 总开关关闭时子行隐藏（见 {@link #applyLiquidGlassBlurVisibility()}）。
      */
     @Override
-    public void buildLiquidGlassGroup(LinearLayout parent) {
-        // ① 「液态玻璃」总开关（本卡首行）
-        mRowLiquidGlass = addSwitchRow(parent, Strings.LIQUID_GLASS, this::onLiquidGlassToggled);
-
-        // ② 环境背景亮度（0–100，步长 5，默认 50）—— 映射 L = pct / 100
-        mRowBackdropLum = addSliderRow(parent, Strings.LIQUID_GLASS_BACKDROP_LUM,
-                SubtitleConfig.LIQUID_GLASS_BACKDROP_LUM_MIN,
-                SubtitleConfig.LIQUID_GLASS_BACKDROP_LUM_MAX,
-                SubtitleConfig.LIQUID_GLASS_BACKDROP_LUM_STEP,
-                v -> Strings.VALUE_PCT.format(mLang, v), v -> {
-                    mDraft.liquidGlassBackdropLum = v;
-                    markDirty();
-                    updatePreview();
-                });
-        // 【code 1034 / Ari 第 3 条】小字说明从“行下方独立 TextView”改挂“行头副标题”
-        //   （supportingForRow 查表），与「字幕间行距」同一位置。
-        // ③ 通透度（0–100，步长 5，默认 50）
-        mRowTransparency = addSliderRow(parent, Strings.LIQUID_GLASS_TRANSPARENCY,
-                SubtitleConfig.LIQUID_GLASS_TRANSPARENCY_MIN,
-                SubtitleConfig.LIQUID_GLASS_TRANSPARENCY_MAX,
-                SubtitleConfig.LIQUID_GLASS_TRANSPARENCY_STEP,
-                v -> Strings.VALUE_PCT.format(mLang, v), v -> {
-                    mDraft.liquidGlassTransparency = v;
-                    markDirty();
-                    updatePreview();
-                });
-        // 【code 1034 / Ari 第 3 条】同上：副标题由 supportingForRow 提供。
-        // ④ 明暗度（0–100，步长 5，默认 50）
-        mRowPanelLum = addSliderRow(parent, Strings.LIQUID_GLASS_PANEL_LUM,
-                SubtitleConfig.LIQUID_GLASS_PANEL_LUM_MIN,
-                SubtitleConfig.LIQUID_GLASS_PANEL_LUM_MAX,
-                SubtitleConfig.LIQUID_GLASS_PANEL_LUM_STEP,
-                v -> Strings.VALUE_PCT.format(mLang, v), v -> {
-                    mDraft.liquidGlassPanelLum = v;
-                    markDirty();
-                    updatePreview();
-                });
-
-        // ⑤ 模糊强度（0–100，步长 5，默认 50）
-        mRowLiquidGlassBlur = addSliderRow(parent, Strings.LIQUID_GLASS_BLUR,
-                SubtitleConfig.LIQUID_GLASS_BLUR_PCT_MIN,
-                SubtitleConfig.LIQUID_GLASS_BLUR_PCT_MAX,
-                SubtitleConfig.LIQUID_GLASS_BLUR_PCT_STEP,
-                v -> Strings.VALUE_PCT.format(mLang, v), v -> {
-                    mDraft.liquidGlassBlurPct = v;
-                    markDirty();
-                    updatePreview();
-                });
-
-        // ⑥ 恢复默认（末行）
-        // 【code 1030】Ari：「删除『液态玻璃默认设置』下方小字说明」。
-        //   改成 showHint=false —— 按钮行自己就是本卡末行，底距走 pinCardLastBottom
-        //   与其它卡片同一套收敛口径（原来是「按钮行 + 一行小字」两个子视图，
-        //   底距钉在小字上，删掉小字后那个 margin 就悬空了）。
-        addResetRow(parent, Strings.RESET_LIQUID_GLASS, this::resetLiquidGlassGroup, false);
-        if (parent.getChildCount() > 0) {
-            pinCardLastBottom(parent, parent.getChildAt(parent.getChildCount() - 1));
-        }
-
-        applyLiquidGlassBlurVisibility();
+    public SettingsLiquidGlassRows.Ops liquidGlassRowOps() {
+        return mLiquidGlassRowOps;
     }
+
+    private final SettingsLiquidGlassRows.Ops mLiquidGlassRowOps =
+            new SettingsLiquidGlassRows.Ops() {
+                @Override
+                public void addMasterSwitch(LinearLayout parent) {
+                    mRowLiquidGlass = addSwitchRow(parent, Strings.LIQUID_GLASS,
+                            SettingsActivity.this::onLiquidGlassToggled);
+                }
+
+                @Override
+                public void addBackdropLum(LinearLayout parent) {
+                    mRowBackdropLum = addSliderRow(parent, Strings.LIQUID_GLASS_BACKDROP_LUM,
+                            SubtitleConfig.LIQUID_GLASS_BACKDROP_LUM_MIN,
+                            SubtitleConfig.LIQUID_GLASS_BACKDROP_LUM_MAX,
+                            SubtitleConfig.LIQUID_GLASS_BACKDROP_LUM_STEP,
+                            v -> Strings.VALUE_PCT.format(mLang, v), v -> {
+                                mDraft.liquidGlassBackdropLum = v;
+                                markDirty();
+                                updatePreview();
+                            });
+                }
+
+                @Override
+                public void addTransparency(LinearLayout parent) {
+                    mRowTransparency = addSliderRow(parent, Strings.LIQUID_GLASS_TRANSPARENCY,
+                            SubtitleConfig.LIQUID_GLASS_TRANSPARENCY_MIN,
+                            SubtitleConfig.LIQUID_GLASS_TRANSPARENCY_MAX,
+                            SubtitleConfig.LIQUID_GLASS_TRANSPARENCY_STEP,
+                            v -> Strings.VALUE_PCT.format(mLang, v), v -> {
+                                mDraft.liquidGlassTransparency = v;
+                                markDirty();
+                                updatePreview();
+                            });
+                }
+
+                @Override
+                public void addPanelLum(LinearLayout parent) {
+                    mRowPanelLum = addSliderRow(parent, Strings.LIQUID_GLASS_PANEL_LUM,
+                            SubtitleConfig.LIQUID_GLASS_PANEL_LUM_MIN,
+                            SubtitleConfig.LIQUID_GLASS_PANEL_LUM_MAX,
+                            SubtitleConfig.LIQUID_GLASS_PANEL_LUM_STEP,
+                            v -> Strings.VALUE_PCT.format(mLang, v), v -> {
+                                mDraft.liquidGlassPanelLum = v;
+                                markDirty();
+                                updatePreview();
+                            });
+                }
+
+                @Override
+                public void addBlur(LinearLayout parent) {
+                    mRowLiquidGlassBlur = addSliderRow(parent, Strings.LIQUID_GLASS_BLUR,
+                            SubtitleConfig.LIQUID_GLASS_BLUR_PCT_MIN,
+                            SubtitleConfig.LIQUID_GLASS_BLUR_PCT_MAX,
+                            SubtitleConfig.LIQUID_GLASS_BLUR_PCT_STEP,
+                            v -> Strings.VALUE_PCT.format(mLang, v), v -> {
+                                mDraft.liquidGlassBlurPct = v;
+                                markDirty();
+                                updatePreview();
+                            });
+                }
+
+                @Override
+                public void addReset(LinearLayout parent) {
+                    addResetRow(parent, Strings.RESET_LIQUID_GLASS,
+                            SettingsActivity.this::resetLiquidGlassGroup, false);
+                }
+
+                @Override
+                public void pinCardLastBottom(LinearLayout parent, View lastChild) {
+                    SettingsActivity.this.pinCardLastBottom(parent, lastChild);
+                }
+
+                @Override
+                public void applyChildrenVisibility() {
+                    applyLiquidGlassBlurVisibility();
+                }
+            };
 
     /** 【code 1003】一行常驻说明小字（随语言切换重刷）。 */
     private TextView makeHintView(Strings label) {
@@ -3672,7 +3711,7 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
      * 开关行下面 ⇒ 卡底凭空多出 45dp 空位（Ari 2026-10-10 截图实证）。
      * 遍历式写法同时满足铁律「新键必须加进所有门控判据」：以后往本卡新增行，
      * 不会再出现「新行忘了 gate / 占位漏 gate」这类漏网。
-     * ⚠️ 依赖「总开关是本卡第一个孩子」——{@link #buildLiquidGlassGroup} 里
+     * ⚠️ 依赖「总开关是本卡第一个孩子」——{@link SettingsLiquidGlassRows} 里
      * ① 先建开关行、{@link #beginRow} 对首行不插占位，故 index 0 恒为开关行。
      */
     private void applyLiquidGlassBlurVisibility() {

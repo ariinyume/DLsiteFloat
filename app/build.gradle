@@ -41,7 +41,7 @@ plugins {
 //                    只是仓库内可读别名 ⇒ 改它**不必重新出包**。
 //                 ⚠️ 2026-10-14 回溯：1013~1017 都构建于 10-14，label 已由 `1008.30`
 //                    回填为 `1014.1`~`1014.5`；10-13 及更早的条目**保留旧值**（历史记录）。
-def appVersionTag = '2.4.5'
+def appVersionTag = '2.4.6'
 // ⚠️ 写成 int 字面量 925（不要写 0925 —— Groovy 可能按八进制/前导零解析）：
 //    versionCode 的**数值**是 925，管理器里显示 925，可读语义看 appVersionCodeLabel。
 // ── 版本履历（code 994 / label 1008.15）──
@@ -788,37 +788,55 @@ def appVersionTag = '2.4.5'
 //   ① 预览面板渐变 alpha + 连续盒式模糊（blurTileInterpolated / lerpArgb）。
 //   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1060 → 1061、label 1113.2。
 //
-// 【code 1066 / 2.4.5】ActivityButtonHook 纯判 + Settings Fragment + Health 口径：
-//   ① A-1~A-3：CapsuleButtonPolicy / FollowBaseline / HeldSnapshot / PlayButtonPick / FollowFrame。
-//   ② B-0~B-2：SettingsHost + 四卡 Fragment + RowRegistry；删 Settings*Ui facade。
-//   ③ 状态卡去掉适配自检小字 → LSPosed Health 日志；STATUSBAR/SUB_TEXT/PREFETCH 宿主代理 HIT。
-//   ④ versionName / tag 升 2.4.5，versionCode 1065 → 1066、label 1113.7。
+// 【code 1079 / 2.4.6】STATUSBAR Health：SystemUI scope PONG / 会话开即 HIT。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.6，versionCode 1078 → 1079、label 1120.5。
 //
-// 【code 1065 / 2.4.4】架构收口 B1/B2/B5/C1/C2/C3：
-//   ① B1：SettingsAppearance/LiquidGlass/Misc/Experimental Ui 卡边界。
-//   ② B2：StatusBarScrollOrchestrator 起滚/宽度落地闸门。
-//   ③ C1：AdapterHealth → 状态卡（HEALTH_QUERY/REPLY）。
-//   ④ C2/C3：Referer/README 口径 + Shape 离线≠运行时；B5 随改注释。
-//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1064 → 1065、label 1113.6。
+// 【code 1078 / 2.4.6】SUB_TEXT Health：cue 入库即 HIT（liveLines=0 时也能满 7/7）。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.6，versionCode 1077 → 1078、label 1120.4。
 //
-// 【code 1064 / 2.4.4】真机 151817 回修：
-//   ① 非活动行不透明度范围 50–100 → 20–100；删行距/换行/字体跟随三行副标题。
-//   ② 151817 实证宿主仍跑旧码（alpha 恒 0.21、active 卡 25.5sp、inactive 卡 17sp）——
-//      1063 上限/新键需强制停宿主+SystemUI 后才加载；本轮随范围改动再升 code 促重载。
-//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1063 → 1064、label 1113.5。
+// 【code 1077 / 2.4.6】宿主 2.24.0 适配 + 授权即激活：
+//   ① PLUGIN_ADAPTER_2.24.0：VERIFIED_VERSION→2.24.0，白名单追加 2.23.1。
+//   ② Ari：LSPosed 勾了宿主 ⇒ 状态卡显示已激活（落盘 hostScopeSeen）。
+//   ③ 行为层建议（删曲重排 / 缺文件停播）本轮只记 CHANGELOG，不改钩子。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.6，versionCode 1076 → 1077、label 1120.3。
 //
-// 【code 1063 / 2.4.4】四项小功能 + 架构 P1/B1：
-//   ① 行态：非活动行不透明度 50–100%（默认 50%）；缩放比例改为 ×0.5–×1.8（默认 ×0.8）。
-//   ② 字幕：主字幕放大倍数上限 ×1.5 → ×1.8；排版：字体加粗开关（默认关）。
-//   ③ SettingsDisplayFormatLogic + SettingsResetLogic 纯判抽出并进黄金向量。
-//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1062 → 1063、label 1113.4。
+// 【code 1076 / 2.4.6】横屏可移到顶：高度仍=屏高−状态栏：
+//   ① 真机 175439：1075 insetT=141 导致状态栏下空一截、拖不到顶。
+//   ② insetT=0；横屏 maxH=屏高−statusBarH（不靠顶缘 inset）。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.6，versionCode 1075 → 1076、label 1120.2。
 //
-// 【code 1062 / 2.4.4】架构优化 P1/B1：SettingsPreviewCollapseLogic：
-//   ① 预览折叠高度/位移/裁剪/子行累加/宽度兜底零状态数学。
-//   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1061 → 1062、label 1113.3。
-def appVersionCode = 1066
-def appVersionCodeLabel = '1113.7'
-def appVersionName = '2.4.5'
+// 【code 1075 / 2.4.6】竖屏过长转横屏：高度收到屏高−状态栏：
+//   ① Ari：转横屏后高度 = 屏幕高度 − 状态栏高度。
+//   ② 横屏 insetT=状态栏高度；右缘 keep 不变；竖屏仍 0。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.6，versionCode 1074 → 1075、label 1120.1。
+//
+// 【code 1074 / 2.4.6】横屏高度可纵向满屏：
+//   ① Ari：横屏不限制高度，允许拉到纵向满屏；竖屏仍半屏上限。
+//   ② maxHRatio：横屏 100、竖屏 50；versionName / tag 升 2.4.6。
+//   ⚠️ versionCode 1073 → 1074、label 1119.2。
+//
+// 【code 1073 / 2.4.5】横屏右缘按状态栏高度再留：
+//   ① 真机 170248：1072 keep≈95px 仍贴圆角，角标偏危。
+//   ② 横屏 insetR = max(本机状态栏高度, INSET+LEG)；竖屏仍 0。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.5，versionCode 1072 → 1073、label 1119.1。
+//
+// 【code 1072 / 2.4.5】横屏贴右停宽护角标：
+//   ① 真机 190851：1071 横屏拉满宽，右下角标再次消失。
+//   ② 仅横屏 insetR=INSET+LEG；贴右即停宽。竖屏 inset 仍 0，右边可贴齐。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.5，versionCode 1071 → 1072、label 1117.6。
+//
+// 【code 1071 / 2.4.5】竖屏右边可贴齐：去掉右/下 EDGE_KEEP：
+//   ① 真机 185932：1070 右缘仍留 INSET+LEG 空档，贴不了右边。
+//   ② 四边 inset=0；角标靠正确屏宽 + 自身 INSET/clipToOutline。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.5，versionCode 1070 → 1071、label 1117.5。
+//
+// 【code 1070 / 2.4.5】回修贴边：左/上可贴齐，右/下仍留角标 keep：
+//   ① 真机 184943：1069 四边 keep 导致竖屏难贴边、横屏左上贴不了。
+//   ② insetL/T=0；insetR/B=EDGE_KEEP。
+//   ⚠️ 只升 code：versionName / tag 保持 2.4.5，versionCode 1069 → 1070、label 1117.4。
+def appVersionCode = 1079
+def appVersionCodeLabel = '1120.5'
+def appVersionName = '2.4.6'
 
 android {
     namespace 'io.github.ariinyume.dlsitesoundfloat'

@@ -30,6 +30,9 @@ public interface SettingsHost {
 
     SettingsRowRegistry rowRegistry();
 
+    /** 【优化 P1-5】外观卡三面行 Ops（Fragment + {@link SettingsAppearanceRows}）。 */
+    SettingsAppearanceRows.Ops appearanceRowOps();
+
     void buildMainGroup(LinearLayout parent);
 
     void buildInactiveGroup(LinearLayout parent);
@@ -40,7 +43,11 @@ public interface SettingsHost {
 
     void selectAppearancePage(int page);
 
-    void buildLiquidGlassGroup(LinearLayout parent);
+    /**
+     * 【优化 P1-5】液态玻璃卡行工厂 Ops —— Fragment 经 {@link SettingsLiquidGlassRows}
+     * 编排建行，不再经 Host 的整卡 {@code build*} 入口。
+     */
+    SettingsLiquidGlassRows.Ops liquidGlassRowOps();
 
     void buildMiscGroup(LinearLayout parent);
 

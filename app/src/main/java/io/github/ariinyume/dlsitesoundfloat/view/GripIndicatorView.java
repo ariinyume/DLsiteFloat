@@ -37,6 +37,11 @@ import io.github.ariinyume.dlsitesoundfloat.util.Utils;
  * v15：{@link #INSET_DP} 3 → 10dp —— 与右上角 ✕ 按钮的 10dp 外边距对齐，
  *   两个装饰件到边缘的距离一致，视觉上更像一套。
  *
+ * 【code 1068】{@link #INSET_DP} 10 → **14dp**：液态玻璃圆角 28dp 时，
+ *   直角顶点距角 {@code R(1-1/√2)≈0.293R≈8.2dp} 才算进圆角内；再加 1dp 描边与抗锯齿，
+ *   10dp 会画进玻璃外的透明耳区 —— 横屏拉满宽时右下角标看起来「出窗」。
+ *   14dp 留余量；与 ✕ 外边距同步（见 {@code FloatingSubtitleView#CLOSE_BTN_MARGIN_DP}）。
+ *
  * v16：{@link #LEG_DP} 由 private 改 public —— 窗口层的缩放热区改为
  *   **以三角形本身为中心对齐**，其中心距窗口右下角 = {@link #INSET_DP} + {@link #LEG_DP}/2，
  *   需要把边长暴露出去（见 {@code FloatingSubtitleView#hitResizeArea}）。
@@ -58,8 +63,11 @@ import io.github.ariinyume.dlsitesoundfloat.util.Utils;
 public class GripIndicatorView extends View {
     /** 三角形直角边长（dp）。public：缩放热区按三角形中心对齐，需要此值。 */
     public static final float LEG_DP = 18f;
-    /** 三角形距窗口右下角的留白（dp）。v15：3 → 10dp（与 ✕ 按钮外边距对齐）。 */
-    public static final float INSET_DP = 10f;
+    /**
+     * 三角形距窗口右下角的留白（dp）。
+     * v15：3 → 10；【code 1068】10 → 14（液态玻璃 28dp 圆角内收，避免出窗）。
+     */
+    public static final float INSET_DP = 14f;
     /** 倒圆半径 = 直角边长 × 该比例（上限 0.45，避免相邻圆角互相吃掉）。 */
     private static final float CORNER_RATIO = 0.36f;
     /**

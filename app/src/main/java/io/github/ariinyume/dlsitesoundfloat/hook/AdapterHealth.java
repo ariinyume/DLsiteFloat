@@ -56,7 +56,10 @@ public final class AdapterHealth {
         AUDIO_STATUS,
         /** 播放页判定：主滑条 + 时间文本配对（视图树扫描）。 */
         VIEW_PAGE,
-        /** 字幕文本：宿主上屏文本与 cue 列表的语义匹配。 */
+        /**
+         * 字幕文本链路：宿主 TextView ∈ cues（扫屏），或 cue 库成功入库 / HEALTH 代理
+         * （浮窗与状态栏不依赖宿主字幕控件，见 code 1078）。
+         */
         SUB_TEXT,
         /** 状态栏：SystemUI 侧注入容器。 */
         STATUSBAR,
@@ -161,8 +164,8 @@ public final class AdapterHealth {
      * <p>真机 164243：字幕/状态栏/预取都正常，但摘要仍是
      * {@code SUB_TEXT/STATUSBAR/PREFETCH=UNKNOWN} —— 因为：
      * <ul>
-     *   <li>{@code STATUSBAR} 的 HIT 写在 SystemUI 进程，宿主静态表读不到；</li>
-     *   <li>{@code SUB_TEXT} 旧口径只认「宿主 TextView ∈ cues」，浮窗/状态栏走 cue 库时不记；</li>
+     *   <li>{@code STATUSBAR} 的 HIT 写在 SystemUI 进程，宿主静态表读不到；【code 1079】scope PONG / 会话开也会在宿主侧实时 HIT；</li>
+     *   <li>{@code SUB_TEXT} 旧口径只认「宿主 TextView ∈ cues」；【code 1078】cue 入库也会实时 HIT，本代理仍作兜底；</li>
      *   <li>{@code PREFETCH} 旧口径只在当场 parse ziptree 时记，索引已加载/take 命中不记。</li>
      * </ul>
      * 本方法只升 UNKNOWN→HIT，不覆盖已有 DEGRADED/MISS。
@@ -170,7 +173,7 @@ public final class AdapterHealth {
     public static synchronized void noteHostEvidence(boolean statusBarLineDelivered,
             boolean cuesOnDisplay, boolean prefetchIndexLoaded) {
         if (statusBarLineDelivered && get(Item.STATUSBAR) == State.UNKNOWN) {
-            hit(Item.STATUSBAR, "host LINE delivered (proxy)");
+            hit(Item.STATUSBAR, "host statusbar evidence (proxy)");
         }
         if (cuesOnDisplay && get(Item.SUB_TEXT) == State.UNKNOWN) {
             hit(Item.SUB_TEXT, "cues on display (proxy)");

@@ -183,7 +183,18 @@ public class DlsiteSoundSubtitleModule extends XposedModule {
         //    下面这段 2.1.4 描述只用**功能性说法**（「按签名形状定位宿主对象」），
         //    绝不写出具体方法名或被移除的类名。
         // 版本核验锚点（**常开、只留这一行**）：详细变更历史已归入「调试日志」开关。
-        XposedCompat.log("[DLsiteSoundFloat] ==== BUILD 2.4.5 / code 1066");
+        XposedCompat.log("[DLsiteSoundFloat] ==== BUILD 2.4.6 / code 1079");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.6 / code 1079 （【code 1079 —— STATUSBAR Health】① SystemUI scope PONG / 会话开即 HIT。② 只升 code：versionName 保持 2.4.6，code 1078 → 1079，label 1120.5。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.6 / code 1076 （【code 1076 —— 横屏可移到顶】① 真机 175439：1075 insetT=141 状态栏下空一截。② insetT=0；maxH 仍=屏高−statusBarH。③ 只升 code：versionName 保持 2.4.6，code 1075 → 1076，label 1120.2。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.6 / code 1075 （【code 1075 —— 竖屏过长转横屏高度=屏高−状态栏】① Ari：转横屏后高度收到屏高−状态栏。② 横屏 insetT=状态栏高度；右缘 keep 不变。③ 只升 code：versionName 保持 2.4.6，code 1074 → 1075，label 1120.1。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.6 / code 1074 （【code 1074 —— 横屏高度可纵向满屏】① Ari：横屏不限制高度，可拉满纵向；竖屏仍半屏。② maxHRatio 横屏 100 / 竖屏 50。③ versionName 升 2.4.6，code 1073 → 1074，label 1119.2。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.5 / code 1073 （【code 1073 —— 横屏右缘按状态栏高度】① 真机 170248：1072 keep≈95px 仍贴圆角。② 横屏 insetR=max(状态栏高度, INSET+LEG)；竖屏仍 0。③ 只升 code：versionName 保持 2.4.5，code 1072 → 1073，label 1119.1。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.5 / code 1072 （【code 1072 —— 横屏贴右停宽护角标】① 真机 190851：1071 横屏拉满宽角标再消失。② 仅横屏 insetR=INSET+LEG，贴右即停宽；竖屏 inset=0 仍可贴右边。③ 只升 code：versionName 保持 2.4.5，code 1071 → 1072，label 1117.6。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.5 / code 1071 （【code 1071 —— 竖屏右边可贴齐】① 真机 185932：右缘 EDGE_KEEP 留空档。② 四边 inset=0；角标靠正确屏宽+自身 INSET/clip。③ 只升 code：versionName 保持 2.4.5，code 1070 → 1071，label 1117.5。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.5 / code 1070 （【code 1070 —— 贴边回修】① 真机 184943：1069 四边 keep 导致竖屏难贴边、横屏左上贴不了。② 左/上 inset=0 可贴齐；右/下仍 EDGE_KEEP 护角标。③ 只升 code：versionName 保持 2.4.5，code 1069 → 1070，label 1117.4。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.5 / code 1069 （【code 1069 —— 横屏满宽角标消失】① 真机 183729：窗贴屏右缘，角标进显示圆角/手势区被裁。② MaximumWindowMetrics+EDGE_KEEP 安全区夹取。③ 只升 code：versionName 保持 2.4.5，code 1068 → 1069，label 1117.3。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.5 / code 1068 （【code 1068 —— 横屏满宽角标出窗】① 真机 182205：液态玻璃 R=28 下 INSET=10+描边擦出圆角透明耳区。② 角标/✕ 外边距 10→14；根视图 clipToOutline。③ 只升 code：versionName 保持 2.4.5，code 1067 → 1068，label 1117.2。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.5 / code 1067 （【code 1067 —— 悬浮窗横竖屏越界回缩】① 真机 173827：已显示 overlay 旋转后宽高不更新，横屏宽窗/竖屏高窗裁出屏外。② WindowGeometry 纯夹取 + ComponentCallbacks→fitGeometryToScreen；拖动/缩放同步夹屏。③ 只升 code：versionName 保持 2.4.5，code 1066 → 1067，label 1117.1。）");
         LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.5 / code 1066 （【code 1066 —— 按钮纯判 + Settings Fragment + Health】① CapsuleButtonPolicy / FollowBaseline / Held / Pick / Frame。② SettingsHost 四卡 Fragment。③ 状态卡去掉适配自检小字→LSPosed Health 日志；STATUSBAR/SUB_TEXT/PREFETCH 宿主代理 HIT（164243）。④ versionName 升 2.4.5，code 1065 → 1066，label 1113.7。）");
         LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1065 （【code 1065 —— 架构收口 B1/B2/B5/C1/C2/C3】① 设置页按卡 Ui 边界；StatusBarScrollOrchestrator；AdapterHealth 进状态卡；Referer/Shape/README 口径。② 只升 code：versionName 保持 2.4.4，code 1064 → 1065，label 1113.6。）");
         LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.4 / code 1064 （【code 1064 —— 151817 回修】① 非活动不透明度范围改为 20–100%；去掉行距/换行/字体跟随副标题。② 151817 显示宿主仍用旧上限（active≤1.5、inactive≤1.0、alpha=0.21）——安装后需强制停止宿主与 SystemUI。③ 只升 code：versionName 保持 2.4.4，code 1063 → 1064，label 1113.5。）");

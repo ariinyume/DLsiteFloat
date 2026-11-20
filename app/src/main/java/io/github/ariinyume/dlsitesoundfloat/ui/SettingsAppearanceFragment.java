@@ -52,14 +52,7 @@ public final class SettingsAppearanceFragment extends Fragment {
         if (host == null || mMain == null || mInactive == null || mTypo == null) {
             return;
         }
-        mMain.removeAllViews();
-        host.buildMainGroup(mMain);
-        mInactive.removeAllViews();
-        host.buildInactiveGroup(mInactive);
-        mTypo.removeAllViews();
-        host.buildTypoGroup(mTypo);
-        host.buildAppearanceTabs();
-        host.selectAppearancePage(mPage);
-        host.rowRegistry().put(SettingsRowRegistry.APPEARANCE_PAGE, Integer.valueOf(mPage));
+        // 【优化 P1-5】三面编排收口到 SettingsAppearanceRows；行工厂仍经 Host Ops。
+        SettingsAppearanceRows.rebuild(mMain, mInactive, mTypo, mPage, host.appearanceRowOps());
     }
 }

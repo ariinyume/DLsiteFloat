@@ -5267,3 +5267,81 @@ versionName / tag 2.4.4、versionCode 1047 → 1048、label 1029.1 → 1104.1。
 - **B-0~B-2**：`SettingsHost` / `SettingsRowRegistry` + 四卡 Fragment；删除 `Settings*Ui` facade；行工厂仍在 Activity。
 - **Health（真机 164243）**：状态卡去掉「适配自检」小字，摘要改打 LSPosed `[DLsiteSoundFloat:Health]`；`STATUSBAR`/`SUB_TEXT`/`PREFETCH` 在宿主侧按 LINE 推送 / cue 库 / 预取索引补 HIT（SystemUI 进程表读不到的问题）。
 - 口径：versionName / tag **2.4.4 → 2.4.5**，versionCode 1065 → 1066、label 1113.7。
+
+### 1117.1 code 1066 → 1067：悬浮窗横竖屏切换越界回缩
+
+- **现象（真机 LSPosed_20261117_173827 + 录屏）**：横屏拉宽的悬浮窗切到竖屏后，超出屏宽的部分被裁掉不显示；竖屏拉高再切横屏同理。
+- **根因**：几何只在 `show()` 时按当前屏夹一次；已挂上的 overlay 旋转时不会重建，宽高/位置一直沿用旧像素。
+- **修法**：抽出 `WindowGeometry.clampToScreen`；开窗注册 `ComponentCallbacks`，配置变更时 `fitGeometryToScreen`（宽≤屏宽、高≤屏高×50%、位置收回可见区）；拖动/缩放同步夹屏。
+- 口径：只升 code —— versionName / tag 保持 2.4.5，versionCode 1066 → 1067、label 1117.1。
+
+### 1117.2 code 1067 → 1068：横屏拉满宽时右下缩放角标出窗
+
+- **现象（真机 LSPosed_20261117_182205 + 截图）**：屏幕横置、悬浮窗拉到最宽时，右下角调节三角画在玻璃圆角外的透明耳区。
+- **根因**：液态玻璃圆角 28dp，角标 `INSET=10` 加 1dp 描边刚好擦出圆角内接阈值；子 View 不按圆角裁剪。
+- **修法**：`GripIndicatorView.INSET_DP` 与 ✕ 外边距 10→14；`FloatingSubtitleView` `clipToOutline` 跟面板圆角。
+- 口径：只升 code —— versionName / tag 保持 2.4.5，versionCode 1067 → 1068、label 1117.2。
+
+### 1117.3 code 1068 → 1069：横屏满宽角标消失（贴屏右缘被裁）
+
+- **现象（真机 LSPosed_20261117_183729 + 录屏）**：1068 后角标仍出窗/消失；截图像窗右缘贴齐物理屏。
+- **根因**：满宽夹到 `screenW` 无安全边距，角标落入显示圆角/强制手势区被系统裁掉；宿主竖屏锁定时 `DisplayMetrics` 也不可靠。
+- **修法**：`getMaximumWindowMetrics` + `EDGE_KEEP(=INSET+LEG)`；开窗/旋转/拖缩放都走安全区。
+- 口径：只升 code —— versionName / tag 保持 2.4.5，versionCode 1068 → 1069、label 1117.3。
+
+### 1117.4 code 1069 → 1070：贴边回修（左/上可贴齐）
+
+- **现象（真机 LSPosed_20261117_184943 + 录屏）**：竖屏难贴边、横屏左边和上边贴不了手机边缘。
+- **根因**：1069 四边都加 `EDGE_KEEP`（再叠加强制手势 inset），左/上被顶出一截。
+- **修法**：左/上 inset=0（可贴齐）；右/下仍 `EDGE_KEEP` 护住右下角标；去掉强制手势 inset。
+- 口径：只升 code —— versionName / tag 保持 2.4.5，versionCode 1069 → 1070、label 1117.4。
+
+### 1117.5 code 1070 → 1071：竖屏右边可贴齐
+
+- **现象（真机 LSPosed_20261117_185932 + 截图）**：竖屏往右拖时右边仍留一截空，贴不了边。
+- **根因**：1070 右/下仍留 `EDGE_KEEP(=INSET+LEG)`，专为护角标，但挡住贴边。
+- **修法**：四边 inset 归 0；角标不消失改靠 `MaximumWindowMetrics` 不越出物理屏 + 角标自身 INSET/`clipToOutline`。
+- 口径：只升 code —— versionName / tag 保持 2.4.5，versionCode 1070 → 1071、label 1117.5。
+
+### 1117.6 code 1071 → 1072：横屏贴右停宽护角标
+
+- **现象（真机 LSPosed_20261117_190851 + 录屏）**：1071 横屏把悬浮窗拉到最宽时，右下调节角标再次消失。
+- **根因**：1071 去掉右缘 keep 后，横屏满宽右缘贴物理屏，角标进显示圆角/手势区被裁。
+- **修法**：仅横屏 `insetR = INSET+LEG`——拉宽碰到右界即停宽；竖屏 inset 仍 0，右边可贴齐；左/上/下仍 0。
+- 口径：只升 code —— versionName / tag 保持 2.4.5，versionCode 1071 → 1072、label 1117.6。
+
+### 1119.1 code 1072 → 1073：横屏右缘按状态栏高度再留
+
+- **现象（真机 LSPosed_20261119_170248 + 截图）**：1072 横屏 keep≈95px 后右缘仍贴圆角，角标偏危。
+- **口径（Ari）**：横屏右缘预留应约等于本机状态栏高度（机型相关）。
+- **修法**：横屏 `insetR = max(statusBarHeight, INSET+LEG)`；状态栏高度优先 `WindowInsets.statusBars`，回退 `android:status_bar_height`；竖屏仍 0。
+- 口径：只升 code —— versionName / tag 保持 2.4.5，versionCode 1072 → 1073、label 1119.1。
+
+### 1119.2 code 1073 → 1074 / 2.4.6：横屏高度可纵向满屏
+
+- **口径（Ari）**：横屏时允许悬浮窗高度拉到纵向满屏，不限制高度；版本号升到 2.4.6。
+- **修法**：`maxHRatio` 横屏改为 100（可用高度满屏），竖屏仍 50（半屏）；开窗 / 旋转夹取 / 缩放三处共用。
+- 口径：versionName / tag **2.4.5 → 2.4.6**，versionCode 1073 → 1074、label 1119.2。
+
+### 1120.1 code 1074 → 1075：竖屏过长转横屏高度=屏高−状态栏
+
+- **口径（Ari）**：竖屏悬浮窗过长转向横屏时，高度应缩到「屏幕高度 − 状态栏高度」。
+- **修法**：横屏 `insetT = statusBarHeight`，配合 `maxHRatio=100` ⇒ 最大高度 = 屏高 − 状态栏；右缘 keep 不变；竖屏 inset 仍 0。
+- 口径：只升 code —— versionName / tag 保持 2.4.6，versionCode 1074 → 1075、label 1120.1。
+
+### 1120.2 code 1075 → 1076：横屏可移到顶（高度仍限屏高−状态栏）
+
+- **现象（真机 LSPosed_20261120_175439 + 截图）**：横屏拖不到顶，状态栏下方空一截；日志 `insets=[0,141,141,0]`、`y=141`。
+- **根因**：1075 用 `insetT=statusBar` 同时限高度与顶缘，ColorOS 状态栏 inset(141) 大于可视条带。
+- **修法**：`insetT=0`（可贴顶）；横屏最大高度改由 `applyLandscapeMaxHeight`（屏高 − statusBarH）单独限制。
+- 口径：只升 code —— versionName / tag 保持 2.4.6，versionCode 1075 → 1076、label 1120.2。
+
+### 1120.3 code 1076 → 1077：宿主 2.24.0 适配 + 授权即激活
+
+- **适配（`PLUGIN_ADAPTER_2.24.0.md` / 真机 LSPosed_20261120_181347）**：
+  - **必做**：`HostInfo.VERIFIED_VERSION` → `2.24.0`，白名单追加 `2.23.1`（静态 17/17 HIT，Health 7/7，`verified=NO` → `yes`）。
+  - **不用动**：胶囊 `hostAtLeast(2,22,1)`、CDN/Referer、minSdk。
+  - **建议（本轮不改钩子）**：删曲索引重排可能误触发换轨清字幕；缺文件停播可能留冻字幕；简繁重启后看 Health 是否双份。
+- **激活（Ari）**：LSPosed 勾了宿主作用域 ⇒ 状态卡「模块已激活」。`ConfigStore` 落盘 `hostScopeSeen`（仅 `tag=host` 的 PONG 可置位）；本轮未探到时仍可读落盘。
+- **delta 交叉**：2.24.0 无新原生模块 / 无 RN 大版本；期間限定無料不影响字幕 JSON 正文判定；字体迁 `res/font` 属 MoriMod 面。
+- 口径：只升 code —— versionName / tag 保持 2.4.6，versionCode 1076 → 1077、label 1120.3。

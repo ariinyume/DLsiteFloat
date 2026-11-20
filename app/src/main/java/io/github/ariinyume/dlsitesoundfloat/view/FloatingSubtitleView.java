@@ -244,7 +244,11 @@ public class FloatingSubtitleView extends FrameLayout {
     /** 右上角 ✕ 按钮尺寸（dp）：**显示圆盘与点击区域同为该值**。v15：18 → 40dp；v18：→ 30dp。 */
     private static final int CLOSE_BTN_DP = 30;
     /** ✕ 按钮距窗口上/右边缘的距离（dp）。v15：3 → 10dp。 */
-    private static final int CLOSE_BTN_MARGIN_DP = 10;
+    /**
+     * ✕ 距窗口上/右边缘（dp）。【code 1068】10 → 14，与 {@link GripIndicatorView#INSET_DP}
+     * 同步 —— 液态玻璃 28dp 圆角下 10dp 会让角标擦出玻璃外。
+     */
+    private static final int CLOSE_BTN_MARGIN_DP = 14;
     /**
      * 【code 944】✕ 的自动隐藏延时（ms）；【code 945】起与「再点一次即收回」并存。
      *
@@ -300,6 +304,17 @@ public class FloatingSubtitleView extends FrameLayout {
     private boolean pendingResizeRecenter = false;
     /** 【2.1.6】兜底：万一这一帧没走到 preDraw，下一帧补一次；已被 preDraw 消费则空转。 */
     private final Runnable mResizeFallback = this::recenterForResizeSameFrame;
+
+    /**
+     * 【优化 P0-3】布局风暴合并：同帧多次 {@link #onSizeChanged} 只跑一轮
+     * stale 样式对账 + backdrop blur，避免拖窗/旋转时连续重建模糊区域。
+     */
+    private boolean styleBlurPassPending;
+    private final Runnable styleBlurPass = () -> {
+        styleBlurPassPending = false;
+        refreshStyleIfStale();
+        applyBackdropBlur();
+    };
 
     /**
      * v40：{@link #renderCues} 本次渲染时，每个 cue 在 container 里占据的
@@ -454,11 +469,18 @@ public class FloatingSubtitleView extends FrameLayout {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        // 【2.2.12b】先对账样式（万一它落后于配置），再下发模糊 —— 顺序不能反：
-        //   样式重建会换掉背景 Drawable，而模糊的判据正是"当前背景是不是玻璃"。
-        refreshStyleIfStale();
-        // 【2.2.12】尺寸（= 模糊区域）与圆角都变了 ⇒ 必须重设一次，否则糊的还是旧位置。
-        applyBackdropBlur();
+        // 【优化 P0-3】拖窗 / 旋转会连发 onSizeChanged；合并到下一消息循环一轮。
+        //   仍保证：先 refreshStyleIfStale、再 applyBackdropBlur（见 styleBlurPass）。
+        scheduleStyleBlurPass();
+    }
+
+    /** 同帧多次尺寸变化只调度一次样式/模糊对账。 */
+    private void scheduleStyleBlurPass() {
+        if (styleBlurPassPending) {
+            return;
+        }
+        styleBlurPassPending = true;
+        post(styleBlurPass);
     }
 
     /** 当前绘制参数（恒非 null；未初始化时按已保存配置现算一次）。 */
@@ -661,11 +683,21 @@ public class FloatingSubtitleView extends FrameLayout {
         setBackground(bg);
         // 【2.2.13 / 987】根视图内边距 = 阴影环宽（液态玻璃档）——字幕 / ✕ / 缩放手柄全部
         //   留在**玻璃面内**。⚠️ 987 起环宽为 0 ⇒ 恒等于 v14 的「根视图不设内边距」，
-        //   即两个角标重新贴到窗口边缘（距边 10dp，见 CLOSE_BTN_MARGIN_DP / INSET_DP）。
+        //   即两个角标重新贴到窗口边缘（距边见 CLOSE_BTN_MARGIN_DP / INSET_DP）。
         final int frameInset = st.liquidGlass ? dp(GLASS_SHADOW_INSET_DP) : 0;
         if (getPaddingLeft() != frameInset || getPaddingTop() != frameInset) {
             setPadding(frameInset, frameInset, frameInset, frameInset);
         }
+        // 【code 1068】子 View（缩放角标 / ✕）按矩形坐标画，玻璃只填圆角面；
+        //   不 clip 时角标会画进圆角外的透明耳区 = 「出窗」。轮廓与当前圆角一致。
+        final float clipR = dp(st.liquidGlass ? LIQUID_GLASS_CORNER_RADIUS_DP : CORNER_RADIUS_DP);
+        setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override
+            public void getOutline(android.view.View view, android.graphics.Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), clipR);
+            }
+        });
+        setClipToOutline(true);
         // 【2.3.1 §6.1.1】面板底色一变就同步 ✕ / 缩放手柄的「灰 ↔ 白」。
         applyControlTint();
         // 【2.2.12】模糊强度变了／玻璃开关变了 ⇒ 重新下发模糊半径（关玻璃时下发 0 撤掉）。

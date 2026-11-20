@@ -550,9 +550,14 @@ public final class ConfigBus {
                 }
             } catch (Throwable ignored) {
             }
-            io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth.noteHostEvidence(
+            // 【code 1079】STATUSBAR 代理：非空 LINE 或 SystemUI scope 新鲜 PONG 均可。
+            boolean statusBarOk =
                     io.github.ariinyume.dlsitesoundfloat.util.StatusBarSubtitleBridge
-                            .hasDeliveredNonEmptyLine(),
+                            .hasDeliveredNonEmptyLine()
+                    || io.github.ariinyume.dlsitesoundfloat.util.StatusBarSubtitleBridge
+                            .isSystemUiScopeAuthorized();
+            io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth.noteHostEvidence(
+                    statusBarOk,
                     cuesOn,
                     io.github.ariinyume.dlsitesoundfloat.hook.ZiptreePrefetch.loadedWorkCount() > 0);
             String summary =

@@ -33,6 +33,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import io.github.ariinyume.dlsitesoundfloat.config.RemoteConfig;
+import io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth;
 import io.github.ariinyume.dlsitesoundfloat.util.LineSource;
 import io.github.ariinyume.dlsitesoundfloat.util.XposedCompat;
 import io.github.ariinyume.dlsitesoundfloat.util.LogGate;
@@ -529,6 +530,12 @@ public class SubtitleRepository implements LineSource {
     private final List<Runnable> observers = new ArrayList<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     /**
+     * 【优化 P0-1】同帧 coalesce：多次 {@link #notifyObservers()} 只投递一条主线程任务。
+     * {@link #dispatchObservers} 跑完后清掉；与 {@link #observers} 同锁保护。
+     */
+    private boolean notifyPending;
+    private final Runnable notifyDispatch = this::dispatchObservers;
+    /**
      * 【code 1007】磁盘缓存的**串行写线程**。
      *
      * <p>为什么单线程：索引文件是「读改写」的，并发写会互相覆盖（且 {@link SubtitleCache}
@@ -910,6 +917,17 @@ public class SubtitleRepository implements LineSource {
             stageCacheToDisk(workKey, newCues.size(), maxEndSec);
         }
         notifyObservers();
+        // 【code 1078】SUB_TEXT 实时 HIT：浮窗/状态栏走 cue 库时宿主 TextView 常 liveLines=0，
+        //   旧口径（扫屏 text∈cues）与仅 HEALTH 查询时的代理都点不亮。cue 成功入库即证明
+        //   字幕语义链路可用（同 STATUSBAR 推 LINE / PREFETCH 索引加载的记账方式）。
+        if (!newCues.isEmpty()) {
+            try {
+                AdapterHealth.hit(AdapterHealth.Item.SUB_TEXT,
+                        "cues loaded (" + newCues.size()
+                                + (fromDisk ? ", disk)" : ")"));
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     // ======================================================================
@@ -2586,11 +2604,35 @@ public class SubtitleRepository implements LineSource {
         }
     }
 
+    /**
+     * 通知 UI 观察者（悬浮窗 / 状态栏桥 / 胶囊文案）。
+     *
+     * <p>【优化 P0-1】原先对每个 observer 单独 {@code mainHandler.post}，位置 tick
+     * 频繁时主线程消息队列会叠多条；现在合并为「最多一条 pending 投递」，
+     * 真正执行时同步拷贝列表再依次 {@code run()}，同一次状态变更只调度一轮。
+     */
     private void notifyObservers() {
         synchronized (observers) {
-            for (Runnable r : observers) {
-                mainHandler.post(r);
+            if (notifyPending) {
+                return;
             }
+            notifyPending = true;
+        }
+        mainHandler.post(notifyDispatch);
+    }
+
+    /** 主线程：清空 pending，快照 observers，依次回调（单条消息跑完全部观察者）。 */
+    private void dispatchObservers() {
+        final List<Runnable> snapshot;
+        synchronized (observers) {
+            notifyPending = false;
+            if (observers.isEmpty()) {
+                return;
+            }
+            snapshot = new ArrayList<>(observers);
+        }
+        for (int i = 0; i < snapshot.size(); i++) {
+            snapshot.get(i).run();
         }
     }
 }

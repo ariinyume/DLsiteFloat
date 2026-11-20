@@ -44,6 +44,7 @@ import io.github.ariinyume.dlsitesoundfloat.ui.SettingsPreviewBackdropLogic;
 import io.github.ariinyume.dlsitesoundfloat.ui.SettingsPreviewCollapseLogic;
 import io.github.ariinyume.dlsitesoundfloat.ui.SettingsResetLogic;
 import io.github.ariinyume.dlsitesoundfloat.util.HostInfo;
+import io.github.ariinyume.dlsitesoundfloat.window.WindowGeometry;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -2430,5 +2431,171 @@ public class GoldenVectorTest {
                 SCREEN_H, 166, 1799 + 166, 54, 1722 + 166, 0, 95, 95, 74, 60, 30, 27, 24);
         assertTrue("两条分支都要对窗口平移不敏感", a > 0);
         assertEquals(a, b);
+    }
+
+    // ─── 【code 1067】悬浮窗横竖屏几何夹取 ─────────────────────────────
+    // 真机取证（LSPosed_20261117_173827）：屏 1272×2772 ↔ 2772×1272；
+    // 横屏宽窗转到竖屏、竖屏高窗转到横屏时必须收回屏内。
+
+    /** 横屏拉到接近全宽 → 竖屏：宽压到竖屏宽，x 拉回可见区。 */
+    @Test
+    public void windowGeometry_landscapeWideFitsPortrait() {
+        // 横屏：2772×1272，窗宽 2356（约 85%）、x=200
+        WindowGeometry.Rect land = WindowGeometry.clampToScreen(
+                200, 100, 2356, 400, 2772, 1272, 140, 72, 50);
+        assertEquals(2356, land.width);
+        // 竖屏：1272×2772 —— 宽必须 ≤ 1272，右缘不越界
+        WindowGeometry.Rect port = WindowGeometry.clampToScreen(
+                land.x, land.y, land.width, land.height, 1272, 2772, 140, 72, 50);
+        assertEquals(1272, port.width);
+        assertTrue(port.x >= 0);
+        assertTrue(port.x + port.width <= 1272);
+        assertTrue(port.y >= 0);
+        assertTrue(port.y + port.height <= 2772);
+    }
+
+    /** 竖屏仍半高上限；横屏最大高度 = 屏高 − 状态栏，但顶缘可 y=0。 */
+    @Test
+    public void windowGeometry_portraitTallFitsLandscape() {
+        // 竖屏半高：2772/2 = 1386
+        WindowGeometry.Rect port = WindowGeometry.clampToScreen(
+                50, 200, 1000, 1386, 1272, 2772, 140, 72, 50);
+        assertEquals(1386, port.height);
+        // 横屏：旧口径 ratio=50 → 636（回归对照）
+        WindowGeometry.Rect landHalf = WindowGeometry.clampToScreen(
+                port.x, port.y, port.width, port.height, 2772, 1272, 140, 72, 50);
+        assertEquals(636, landHalf.height);
+        // 【code 1076】高度上限用「屏高−状态栏」，顶缘 inset=0 仍可到顶
+        final int screenH = 1272;
+        final int statusH = 141;
+        final int maxH = screenH - statusH;
+        WindowGeometry.Rect landPos = WindowGeometry.clampPosition(
+                95, 0, 1000, maxH, 2772, screenH, 0, 0, 0, 0);
+        assertEquals(0, landPos.y);
+        WindowGeometry.Rect landFull = WindowGeometry.clampToScreen(
+                0, 0, 1000, 9999, 2772, screenH, 140, 72, 100, 0, 0, 0, 0);
+        // clamp 本身不减状态栏；Manager 侧 applyLandscapeMaxHeight 再压到 maxH
+        assertEquals(screenH, landFull.height);
+        assertTrue(maxH < screenH);
+        assertTrue(landPos.y + landPos.height <= screenH);
+    }
+
+    /** 位置已越界时只夹位置、尺寸保持（拖动路径）。 */
+    @Test
+    public void windowGeometry_clampPositionOnly() {
+        WindowGeometry.Rect r = WindowGeometry.clampPosition(
+                2000, -50, 400, 300, 1272, 2772);
+        assertEquals(400, r.width);
+        assertEquals(300, r.height);
+        assertEquals(1272 - 400, r.x);
+        assertEquals(0, r.y);
+    }
+
+    /**
+     * 【code 1068】液态玻璃 R=28 时，角标直角进圆角的最小内收 ≈0.293R≈8.2；
+     * 再加描边余量后 INSET 必须 &gt; 10（现为 14）。
+     */
+    @Test
+    public void gripInset_clearsLiquidGlassCorner() {
+        final float cornerR = 28f;
+        final float minInside = cornerR * (1f - 1f / (float) Math.sqrt(2.0));
+        assertTrue("几何内接下限约 8.2dp", minInside > 8f && minInside < 9f);
+        assertTrue("INSET 须大于内接下限+描边",
+                io.github.ariinyume.dlsitesoundfloat.view.GripIndicatorView.INSET_DP
+                        >= minInside + 2f);
+        assertEquals(14f,
+                io.github.ariinyume.dlsitesoundfloat.view.GripIndicatorView.INSET_DP, 0.01f);
+    }
+
+    /** 【code 1071】竖屏四边 inset=0：可贴齐右边。 */
+    @Test
+    public void windowGeometry_allowsStickAllEdges() {
+        WindowGeometry.Rect right = WindowGeometry.clampPosition(
+                9999, 100, 400, 300, 1272, 2772, 0, 0, 0, 0);
+        assertEquals(1272 - 400, right.x);
+        assertEquals(100, right.y);
+
+        WindowGeometry.Rect fullPort = WindowGeometry.clampToScreen(
+                0, 0, 9999, 400, 1272, 2772, 140, 72, 50, 0, 0, 0, 0);
+        assertEquals(1272, fullPort.width);
+        assertEquals(0, fullPort.x);
+    }
+
+    /**
+     * 【code 1072/1073】横屏右缘 keep：拉宽到「屏宽 − keep」即停。
+     * 【code 1073】keep = max(状态栏高度, INSET+LEG)；此处用「状态栏 121 &gt; floor 95」验证取大。
+     */
+    @Test
+    public void windowGeometry_landscapeStopsWidenAtRightKeep() {
+        final int screenW = 2772;
+        final int screenH = 1272;
+        final float density = 3f;
+        final int floor = Math.round(
+                (io.github.ariinyume.dlsitesoundfloat.view.GripIndicatorView.INSET_DP
+                        + io.github.ariinyume.dlsitesoundfloat.view.GripIndicatorView.LEG_DP)
+                        * density);
+        final int statusBarH = 121; // 模拟本机状态栏高度 &gt; floor
+        final int keep = Math.max(statusBarH, floor);
+        assertTrue("1073：状态栏更高时 keep 应跟状态栏", keep == statusBarH && keep > floor);
+
+        WindowGeometry.Rect land = WindowGeometry.clampToScreen(
+                0, 80, 9999, 400, screenW, screenH, 140, 72, 50,
+                0, 0, keep, 0);
+        assertEquals(screenW - keep, land.width);
+        assertEquals(0, land.x);
+        assertTrue(land.x + land.width <= screenW - keep);
+
+        // 已贴右 keep 后再想加宽：宽度不得再涨
+        WindowGeometry.Rect stuck = WindowGeometry.clampToScreen(
+                land.x, land.y, land.width + 500, land.height, screenW, screenH, 140, 72, 50,
+                0, 0, keep, 0);
+        assertEquals(land.width, stuck.width);
+    }
+
+    // ── 优化 P0-2 / P1-4：稳态跳过全树 + DetectOrchestrator ───────────
+
+    @Test
+    public void stableScanSkip_requiresSettledPlayerWithAliveAnchor() {
+        final int player = PlayerPageScanner.PAGE_PLAYER;
+        final int settle = 4;
+        assertTrue(TestAccessBridge.stableScanShouldSkip(
+                false, player, player, settle, settle, true, true));
+        assertFalse("force 必须全扫", TestAccessBridge.stableScanShouldSkip(
+                true, player, player, settle, settle, true, true));
+        assertFalse("streak 未满", TestAccessBridge.stableScanShouldSkip(
+                false, player, player, settle - 1, settle, true, true));
+        assertFalse("非播放页结论", TestAccessBridge.stableScanShouldSkip(
+                false, PlayerPageScanner.PAGE_OTHER, player, settle, settle, true, true));
+        assertFalse("按钮不可见", TestAccessBridge.stableScanShouldSkip(
+                false, player, player, settle, settle, false, true));
+        assertFalse("锚点死", TestAccessBridge.stableScanShouldSkip(
+                false, player, player, settle, settle, true, false));
+    }
+
+    @Test
+    public void detectOrchestrator_pathsMatchGateThenStable() {
+        final int player = PlayerPageScanner.PAGE_PLAYER;
+        final long minInterval = 200L;
+        final long hold = 400L;
+        // 节流：距上次不足间隔且非 force
+        assertEquals(TestAccessBridge.detectPathSkipThrottle(),
+                TestAccessBridge.detectOrchestratorDecide(
+                        1000L, 900L, false, false, 0L, minInterval, hold,
+                        player, player, 4, 4, true, true));
+        // 跟手：force 绕过节流后仍可被跟手闸拦
+        assertEquals(TestAccessBridge.detectPathSkipFollowing(),
+                TestAccessBridge.detectOrchestratorDecide(
+                        1000L, 0L, true, true, 950L, minInterval, hold,
+                        player, player, 4, 4, true, true));
+        // 稳态跳过
+        assertEquals(TestAccessBridge.detectPathSkipStable(),
+                TestAccessBridge.detectOrchestratorDecide(
+                        1000L, 0L, false, false, 0L, minInterval, hold,
+                        player, player, 4, 4, true, true));
+        // 未稳态 → 全扫
+        assertEquals(TestAccessBridge.detectPathFullScan(),
+                TestAccessBridge.detectOrchestratorDecide(
+                        1000L, 0L, false, false, 0L, minInterval, hold,
+                        player, player, 1, 4, true, true));
     }
 }

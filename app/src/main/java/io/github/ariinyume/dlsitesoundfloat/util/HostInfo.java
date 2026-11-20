@@ -63,16 +63,20 @@ public final class HostInfo {
      *       静态锚点全过；2.23.0→2.23.1 仅 Pickup UI + MEDIA_BUTTON 小补丁，原生适配面等价，
      *       故 2.23.0 一并入列。CDN 字面量迁到 {@code *.dlsound.jp}，预取 Referer 改跟
      *       ziptree 同源（见 {@code ZiptreePrefetch#refererOf}）。</li>
+     *   <li>【code 1077】→ **2.24.0**：离线体检（{@code dl2.24.0/PLUGIN_ADAPTER_2.24.0.md}）
+     *       Float 静态锚点 17/17 HIT、反篡改全 MISS、CDN 与 2.23.1 一致、无新原生模块；
+     *       真机 LSPosed_20261120_181347 Health 7/7。2.23.1 降为历史项。
+     *       行为层建议项（删曲索引重排 / 缺文件停播留冻字幕）另记 CHANGELOG，本轮不改钩子。</li>
      * </ul>
      */
-    public static final String VERIFIED_VERSION = "2.23.1";
+    public static final String VERIFIED_VERSION = "2.24.0";
 
     /**
      * 已验证白名单（精确匹配）。宿主每发一版都要重新做一次离线体检才可入列 ——
      * 白名单的意义是「这一版的宿主结构我们真的看过」，不是「尽量显得兼容」。
      */
     private static final String[] VERIFIED_SET = {
-            "2.22.0", "2.22.1", "2.23.0", VERIFIED_VERSION
+            "2.22.0", "2.22.1", "2.23.0", "2.23.1", VERIFIED_VERSION
     };
 
     private static final String PREFS = "dlsitefloat_host";

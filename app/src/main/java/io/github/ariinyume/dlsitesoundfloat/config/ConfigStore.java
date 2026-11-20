@@ -253,6 +253,36 @@ public final class ConfigStore {
         }
     }
 
+    /**
+     * 【code 1077】「LSPosed 已给本模块勾过宿主作用域」的落盘证据。
+     *
+     * <p>证据来源：设置页 ScopeProbe 收到带 {@code tag=host} 的 HOST_PONG
+     * （只有宿主进程被注入才会回这条）。此后即使宿主没在跑，状态卡仍显示「模块已激活」。
+     * ⚠️ 只在探到宿主授权时置 true，不在探测失败时清掉 —— 宿主被划掉后台 ≠ 作用域被取消。
+     */
+    private static final String K_HOST_SCOPE_SEEN = "settings_host_scope_seen";
+
+    /** 【code 1077】是否曾确认过宿主作用域授权。 */
+    public boolean readHostScopeSeen() {
+        try {
+            SharedPreferences ui = appCtx.getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE);
+            return ui.getBoolean(K_HOST_SCOPE_SEEN, false);
+        } catch (Throwable t) {
+            Log.w(TAG, "readHostScopeSeen failed: " + t);
+            return false;
+        }
+    }
+
+    /** 【code 1077】记下「宿主作用域已确认授权」。 */
+    public void markHostScopeSeen() {
+        try {
+            appCtx.getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putBoolean(K_HOST_SCOPE_SEEN, true).apply();
+        } catch (Throwable t) {
+            Log.w(TAG, "markHostScopeSeen failed: " + t);
+        }
+    }
+
     public boolean loadResetHappened() {
         return loadResetHappened;
     }

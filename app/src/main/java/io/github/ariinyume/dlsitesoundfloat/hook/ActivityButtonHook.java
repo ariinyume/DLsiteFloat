@@ -3117,16 +3117,19 @@ public class ActivityButtonHook {
         // 被节流提前 return 也不会让检测链断掉。
         // 例外：切页动画期间的快速复检需要绕过节流（否则会被丢掉）。
         long now = SystemClock.uptimeMillis();
-        // 【code 1018 / 架构审查 2.2】两道前置闸（节流 + 跟手跳过）的判定已抽成
-        //   {@link DetectGatePolicy#decide}（零状态纯函数，可离线单测）——
-        //   判据顺序与阈值逐条照搬原实现；这里只执行它的结论、并推进那两个状态。
-        int gate = DetectGatePolicy.decide(now, sLastDetectMs, sForceNextDetect,
+        // 【优化 P1-4 / P0-2】前置路径（节流 / 跟手 / 稳态跳过全树）收口到
+        //   {@link DetectOrchestrator#decide}；本方法只按返回值推进状态或跑全扫。
+        //   ⚠️ 状态推进顺序与原实现一致：SKIP_THROTTLE 不写字段；其余先清 force、再记时刻。
+        boolean buttonVisible = sButtonGroup.getVisibility() == View.VISIBLE;
+        int path = DetectOrchestrator.decide(now, sLastDetectMs, sForceNextDetect,
                 sFollowing, sLastPageMotionMs,
-                DETECT_MIN_INTERVAL_MS, PAGE_MOTION_HOLD_MS);
-        if (gate == DetectGatePolicy.SKIP_THROTTLE) {
+                DETECT_MIN_INTERVAL_MS, PAGE_MOTION_HOLD_MS,
+                sLastVerdict, PlayerPageScanner.PAGE_PLAYER,
+                sStableStreak, SETTLE_STREAK,
+                buttonVisible, isPlayerAnchorAlive());
+        if (path == DetectOrchestrator.SKIP_THROTTLE) {
             return;
         }
-        // 节流闸放行 ⇒ 推进这两个状态（顺序与原实现一致：先清 force、再记时刻）。
         sForceNextDetect = false;
         sLastDetectMs = now;
 
@@ -3144,9 +3147,14 @@ public class ActivityButtonHook {
         //   · 基线采集要求「页面静止」，拖动中本来就采不到。
         // 所以直接跳过，只把心跳按 FOLLOW_QUIET_HEARTBEAT_MS（120ms）续上 ——
         // 页面一停，本条件立刻不成立，完整扫描自动恢复（含「页面被卸载」的判定）。
-        if (gate == DetectGatePolicy.SKIP_FOLLOWING) {
+        if (path == DetectOrchestrator.SKIP_FOLLOWING) {
             sQuietScanSkips++;
             sNextHeartbeatMs = FOLLOW_QUIET_HEARTBEAT_MS;
+            return;
+        }
+        // 【优化 P0-2】播放页已稳态：心跳只续期，全树扫描交给结构事件 / 锚点探针加急。
+        if (path == DetectOrchestrator.SKIP_STABLE) {
+            sNextHeartbeatMs = HEARTBEAT_MS;
             return;
         }
         if (sQuietScanSkips > 0) {

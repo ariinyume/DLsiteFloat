@@ -22,7 +22,10 @@ import android.widget.LinearLayout;
 
 import androidx.fragment.app.Fragment;
 
-/** 【code 1066 / 2.4.5 / B-2】液态玻璃卡 Fragment。 */
+/**
+ * 【code 1066 / 2.4.5 / B-2】液态玻璃卡 Fragment。
+ * 【优化 P1-5】行编排改由本 Fragment + {@link SettingsLiquidGlassRows} 拥有。
+ */
 public final class SettingsLiquidGlassFragment extends Fragment {
 
     public static final String TAG = "settings_liquid_glass";
@@ -38,6 +41,6 @@ public final class SettingsLiquidGlassFragment extends Fragment {
             return;
         }
         mGroup.removeAllViews();
-        host.buildLiquidGlassGroup(mGroup);
+        SettingsLiquidGlassRows.build(mGroup, host.liquidGlassRowOps());
     }
 }

@@ -4,8 +4,8 @@
 
 > An LSPosed / Xposed module that pins a **floating subtitle window** synced with playback progress onto the **playback page** of DLsiteSound (the DLsite audio app), and can also mirror subtitles to the **system status bar** (injected inside the SystemUI process).
 
-- Current version: **2.4.5** (`DLsiteFloat-2.4.5-code1066-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
-- 📦 Download APK: [Releases · v2.4.5](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.5)
+- Current version: **2.4.6** (`DLsiteFloat-2.4.6-code1079-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
+- 📦 Download APK: [Releases · v2.4.6](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.6)
 - 📝 Development progress: [DLsiteFloat 插件开发进度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh) (in Chinese)
 - ⭐ Xposed repository: [DLsiteFloat - DLsiteSound floating window / status bar subtitle module](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -61,7 +61,7 @@
 
 - **Visual settings page**: the module ships its own settings page; changes take effect as soon as you tap "Save settings".
   - **Three cards + three tabs**: the subtitle appearance settings are merged into **one** card, and the card is split into three tabs — **`Subtitles` / `Line state` / `Layout`** — switching only changes visibility, so no control is rebuilt and unsaved changes are not lost; "Liquid glass", "Experimental features" and "More" remain separate cards.
-  - **Status card (sticky)**: the three states — "whether the module is active / whether SystemUI is authorized / whether DLsiteSound is running" — each get their own guidance, and the whole page is disabled while the module is inactive; the card also shows the **host version and whether it has been verified** (e.g. "Host 2.23.1 · verified"); it **sticks to the top** while you scroll the page. **Tapping the status card five times in a row** unlocks the hidden "Experimental features" card — see below. Adapter health summaries are written to the **LSPosed debug log** (no small print on the status card).
+  - **Status card (sticky)**: the three states — "whether the module is active / whether SystemUI is authorized / whether DLsiteSound is running" — each get their own guidance, and the whole page is disabled while the module is inactive; the card also shows the **host version and whether it has been verified** (e.g. "Host 2.24.0 · verified"); it **sticks to the top** while you scroll the page. **Tapping the status card five times in a row** unlocks the hidden "Experimental features" card — see below. Adapter health summaries are written to the **LSPosed debug log** (no small print on the status card).
   - **Save and undo**: the bottom save bar **floats** permanently and shows "N unsaved changes"; after saving, the snackbar offers a **one-tap undo of the last save**; leaving the page with unsaved changes asks for confirmation (Save / Discard / Cancel).
   - **Main subtitle / active line**: subtitle color, shadow color, shadow strength, shadow radius, active line opacity, active line scale (up to ×1.8), and a **bold font** toggle.
   - **Inactive lines**: blur inactive lines + blur radius, scale inactive lines + scale ratio (×0.5–×1.8), **inactive line opacity** (20%–100%).
@@ -77,7 +77,7 @@
   - **More**: master switch for status bar subtitles, **hide the launcher icon** (off by default; once hidden you can still open the module from the LSPosed module list; **on unsupported devices the icon is restored automatically and you are notified**), the **debug log** toggle (off by default), subtitle config backup & restore (export / import JSON), restart SystemUI.
 
 - **In-process floating window**: the window hangs directly inside the DLsiteSound process (`WindowManager` + `TYPE_APPLICATION_OVERLAY`) and shares the same `SubtitleRepository` instance with all the hooks, so it needs **no cross-process IPC and no separate Service**.
-  - **Draggable / resizable**: press anywhere on the panel and drag to move it; drag the bottom-right handle to resize (default 85% screen width × 200dp, minimum 140×72dp, **never taller than half the screen**).
+  - **Draggable / resizable**: press anywhere on the panel and drag to move it; drag the bottom-right handle to resize (default 85% screen width × 200dp, minimum 140×72dp; **portrait** capped at half screen height, **landscape** can stretch near full height while clearing the status bar).
   - **Two ways to dismiss the in-panel close button**: tap the panel once and a ✕ appears; **it hides itself if you don't tap within 5 s**; while it is showing, **tapping an empty part of the panel retracts it immediately**.
   - **The floating window can be used on its own**: when the `com.android.systemui` scope is not authorized, the `Status ON / Status OFF` button on the left is not shown.
 
@@ -134,7 +134,7 @@
 
 ## Tested on
 
-- Software version: DLsiteSound **2.23.1** (verified set also includes 2.22.0 / 2.22.1 / 2.23.0)
+- Software version: DLsiteSound **2.24.0** (verified set also includes 2.22.0 / 2.22.1 / 2.23.0 / 2.23.1)
 
 - Device 1: OnePlus 15, ColorOS 17.0.0.105, KernelSU 3.3.1 (32680-5) · kernel 6.12 · LSPosed 2.2.1 (7912)
 - Device 2: OnePlus 12, ColorOS 16.0.10.501, SukiSU 4.2.1 (40994-5) · kernel 6.1 · LSPosed 2.2.1 (7912)

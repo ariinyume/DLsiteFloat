@@ -647,4 +647,41 @@ public Win(long needMs, long sinceMs, boolean goneStill, boolean hasEvidence) {
     public static int fitSettleSlack() {
         return ScrollFitRecheck.SETTLE_SLACK_PX;
     }
+
+    // ── DetectOrchestrator / StableScanSkipPolicy（优化 P0-2 / P1-4）──
+
+    public static int detectPathFullScan() {
+        return DetectOrchestrator.FULL_SCAN;
+    }
+
+    public static int detectPathSkipThrottle() {
+        return DetectOrchestrator.SKIP_THROTTLE;
+    }
+
+    public static int detectPathSkipFollowing() {
+        return DetectOrchestrator.SKIP_FOLLOWING;
+    }
+
+    public static int detectPathSkipStable() {
+        return DetectOrchestrator.SKIP_STABLE;
+    }
+
+    public static boolean stableScanShouldSkip(boolean forceNext, int lastVerdict,
+            int pagePlayerVerdict, int stableStreak, int settleStreak,
+            boolean buttonVisible, boolean anchorAlive) {
+        return StableScanSkipPolicy.shouldSkip(forceNext, lastVerdict, pagePlayerVerdict,
+                stableStreak, settleStreak, buttonVisible, anchorAlive);
+    }
+
+    public static int detectOrchestratorDecide(long now, long lastDetectMs, boolean forceNext,
+            boolean following, long lastPageMotionMs,
+            long minIntervalMs, long pageMotionHoldMs,
+            int lastVerdict, int pagePlayerVerdict,
+            int stableStreak, int settleStreak,
+            boolean buttonVisible, boolean anchorAlive) {
+        return DetectOrchestrator.decide(now, lastDetectMs, forceNext,
+                following, lastPageMotionMs, minIntervalMs, pageMotionHoldMs,
+                lastVerdict, pagePlayerVerdict, stableStreak, settleStreak,
+                buttonVisible, anchorAlive);
+    }
 }

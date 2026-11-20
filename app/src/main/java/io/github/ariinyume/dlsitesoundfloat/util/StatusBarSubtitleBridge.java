@@ -212,6 +212,14 @@ public final class StatusBarSubtitleBridge {
         boolean was = isSystemUiScopeAuthorized();
         sScopePongAtMs = SystemClock.uptimeMillis();
         sScopePongBuild = build;
+        // 【code 1079】STATUSBAR 实时 HIT：注入成功的证据在 SystemUI 进程的 AdapterHealth
+        //   表里，宿主读不到；PONG 到达 = SystemUI 侧模块活着，与「推过非空 LINE」同级。
+        try {
+            io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth.hit(
+                    io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth.Item.STATUSBAR,
+                    "systemui scope pong (build=" + build + ")");
+        } catch (Throwable ignored) {
+        }
         return !was;
     }
 
@@ -264,6 +272,16 @@ public final class StatusBarSubtitleBridge {
         sAppEnabled = !sAppEnabled;
         sendEnabled(ctx, effectiveEnabled());
         notifyEnabledChanged();
+        // 【code 1079】播放页打开状态栏会话且 SystemUI 已授权 → 宿主 Health 记 HIT。
+        //   暂停时 resend 会推空行，单靠「非空 LINE」点不亮；开关本身证明通路在用。
+        if (sAppEnabled && effectiveEnabled() && isSystemUiScopeAuthorized()) {
+            try {
+                io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth.hit(
+                        io.github.ariinyume.dlsitesoundfloat.hook.AdapterHealth.Item.STATUSBAR,
+                        "statusbar session on");
+            } catch (Throwable ignored) {
+            }
+        }
         return sAppEnabled;
     }
 
