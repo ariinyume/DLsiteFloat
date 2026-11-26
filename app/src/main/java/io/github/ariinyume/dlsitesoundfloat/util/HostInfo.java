@@ -67,16 +67,19 @@ public final class HostInfo {
      *       Float 静态锚点 17/17 HIT、反篡改全 MISS、CDN 与 2.23.1 一致、无新原生模块；
      *       真机 LSPosed_20261120_181347 Health 7/7。2.23.1 降为历史项。
      *       行为层建议项（删曲索引重排 / 缺文件停播留冻字幕）另记 CHANGELOG，本轮不改钩子。</li>
+     *   <li>【code 1080 / 2.5.0】→ **2.24.1**：离线体检（{@code _host241/ADAPTER_CHECK_2.24.1.md}）
+     *       静态闸门 9/9 PASS、反篡改全 MISS、{@code player-thumbnail}/CDN 与 2.24.0 一致；
+     *       Ari 真机功能面确认可用。2.24.0 留在白名单。</li>
      * </ul>
      */
-    public static final String VERIFIED_VERSION = "2.24.0";
+    public static final String VERIFIED_VERSION = "2.24.1";
 
     /**
      * 已验证白名单（精确匹配）。宿主每发一版都要重新做一次离线体检才可入列 ——
      * 白名单的意义是「这一版的宿主结构我们真的看过」，不是「尽量显得兼容」。
      */
     private static final String[] VERIFIED_SET = {
-            "2.22.0", "2.22.1", "2.23.0", "2.23.1", VERIFIED_VERSION
+            "2.22.0", "2.22.1", "2.23.0", "2.23.1", "2.24.0", VERIFIED_VERSION
     };
 
     private static final String PREFS = "dlsitefloat_host";

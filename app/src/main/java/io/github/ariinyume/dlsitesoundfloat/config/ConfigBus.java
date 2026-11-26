@@ -441,6 +441,8 @@ public final class ConfigBus {
             if ("host".equals(tag)) {
                 io.github.ariinyume.dlsitesoundfloat.window.FloatingWindowManager.getInstance()
                         .sync(ctx);
+                io.github.ariinyume.dlsitesoundfloat.window.FullscreenSubtitleManager.getInstance()
+                        .sync(ctx);
             } else if ("systemui".equals(tag)) {
                 io.github.ariinyume.dlsitesoundfloat.hook.StatusBarSubtitleHook
                         .reapplyCurrentLineStyle();

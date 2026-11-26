@@ -188,6 +188,12 @@ public enum Strings {
     /** 状态卡连点解锁成功后的提示。 */
     EXPERIMENTAL_UNLOCKED("已解锁「实验性功能」卡片（记得保存设置）", "已解鎖「實驗性功能」卡片（記得儲存設定）",
             "Experimental features unlocked — remember to save"),
+    /** 实验性子开关：全屏字幕显示。 */
+    FULLSCREEN_SUBTITLE("全屏字幕显示", "全螢幕字幕顯示", "Fullscreen subtitles"),
+    /** 全屏字幕独立对齐（三段：左/中/右）。 */
+    FULLSCREEN_ALIGN("全屏字幕对齐", "全螢幕字幕對齊", "Fullscreen alignment"),
+    /** 全屏右下角：跟随字幕（仅手滑后出现；文案三语固定，无「点击跟随」态）。 */
+    FOLLOW_SUBTITLES("跟随字幕", "跟隨字幕", "Follow subtitles"),
 
     // ── 其他（PRD §FR-07 / 备份恢复 / 常亮）────────────────────────────
     /**

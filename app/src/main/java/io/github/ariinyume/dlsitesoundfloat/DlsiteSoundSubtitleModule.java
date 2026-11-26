@@ -26,6 +26,7 @@ import io.github.ariinyume.dlsitesoundfloat.config.RemoteConfig;
 import io.github.ariinyume.dlsitesoundfloat.data.SubtitleRepository;
 import io.github.ariinyume.dlsitesoundfloat.hook.ActivityButtonHook;
 import io.github.ariinyume.dlsitesoundfloat.window.FloatingWindowManager;
+import io.github.ariinyume.dlsitesoundfloat.window.FullscreenSubtitleManager;
 import io.github.ariinyume.dlsitesoundfloat.hook.NetworkHook;
 import io.github.ariinyume.dlsitesoundfloat.hook.PlayerPositionHook;
 import io.github.ariinyume.dlsitesoundfloat.hook.PlayerSourceHook;
@@ -183,7 +184,15 @@ public class DlsiteSoundSubtitleModule extends XposedModule {
         //    下面这段 2.1.4 描述只用**功能性说法**（「按签名形状定位宿主对象」），
         //    绝不写出具体方法名或被移除的类名。
         // 版本核验锚点（**常开、只留这一行**）：详细变更历史已归入「调试日志」开关。
-        XposedCompat.log("[DLsiteSoundFloat] ==== BUILD 2.4.6 / code 1079");
+        XposedCompat.log("[DLsiteSoundFloat] ==== BUILD 2.5.0 / code 1087");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.5.0 / code 1087 （【code 1087 —— 首行不压灰】① 完全在显示区内的行保持 alpha=1。② 仅行顶裁进死区时按残留高度渐隐。③ 只升 code：2.5.0 / 1086→1087 / 1126.8。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.5.0 / code 1086 （【code 1086 —— 显示区钉返回钮下】① clipToPadding 硬裁切，字幕不进返回钮背后。② 柔隐只在裁切线以下 soft 带。③ 只升 code：2.5.0 / 1085→1086 / 1126.7。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.5.0 / code 1085 （【code 1085 —— 全屏空白回归】① 1084 的 DST_IN+硬件层在 ColorOS 上把字幕整层抹掉；改为按行可见 Y 调 alpha 做顶边渐隐。② 滚动条仍关。③ 只升 code：2.5.0 / 1084→1085 / 1126.6。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.5.0 / code 1084 （【code 1084 —— 全屏顶边渐隐 + 藏滚动条】① 顶边 DST_IN 下→上渐隐，去掉硬分割线。② vertical scrollbar 关闭。③ 只升 code：2.5.0 / 1083→1084 / 1126.5。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.5.0 / code 1083 （【code 1083 —— 全屏顶边死区 + Spicy 换行】① 顶 padding 改挂 ScrollView + clipToPadding。② 换行去掉 translationY 叠滚，只平滑 scrollY，字号重排后再滚，消除整页上下抖。③ 返回钮跟 statusBars inset。④ 只升 code：2.5.0 / 1082→1083 / 1126.4。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.5.0 / code 1082 （【code 1082 —— 全屏字幕交互返工】①「跟随字幕」仅手滑出现、文案固定三语、点按才回中、Spicy 显隐动效。② 返回移回左上；顶边=钮底+20dp 红框不显字幕。③ 全屏时强制隐藏状态栏/悬浮窗胶囊（防回前台叠层）。④ 左右 systemGesture 边缘不消费触摸。⑤ KIND_FROST Spicy 白半透霜面。⑥ 全屏显示/对齐两枚描边图标。⑦ 只升 code：2.5.0 / 1081→1082 / 1126.3。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.5.0 / code 1081 （【code 1081 —— 全屏字幕真机六修】① 改挂宿主 decor（非 overlay）⇒ 系统返回/上划桌面/最近任务随宿主缩放。② Expo 封面：tag 归一 + View.draw 主线程采样。③ 右上角液态玻璃返回；顶边距=钮底+20dp。④ 右下角跟随字幕液态玻璃 pill；手滑暂停、2s 自动回中。⑤ 换行 translationY 位移动画（对齐浮窗 travel）。⑥ 只升 code：2.5.0 / 1080→1081 / 1126.2。）");
+        LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.5.0 / code 1080 （【code 1080 —— 实验性全屏字幕 + 宿主 2.24.1】① 实验性开关「全屏字幕显示」+「全屏字幕对齐」；长按悬浮窗胶囊进入全屏叠加层（无字幕不可用）；字形沿用悬浮窗、对齐独立；封面 player-thumbnail 取色+模糊；跟随滚动；左上角返回；开全屏暂隐浮窗。② HostInfo 最新验证位 2.24.1，白名单保留 2.24.0；离线体检 _host241 静态闸门全过。③ versionName / tag 升 2.5.0，code 1079 → 1080，label 1126.1。）");
         LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.6 / code 1079 （【code 1079 —— STATUSBAR Health】① SystemUI scope PONG / 会话开即 HIT。② 只升 code：versionName 保持 2.4.6，code 1078 → 1079，label 1120.5。）");
         LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.6 / code 1076 （【code 1076 —— 横屏可移到顶】① 真机 175439：1075 insetT=141 状态栏下空一截。② insetT=0；maxH 仍=屏高−statusBarH。③ 只升 code：versionName 保持 2.4.6，code 1075 → 1076，label 1120.2。）");
         LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.4.6 / code 1075 （【code 1075 —— 竖屏过长转横屏高度=屏高−状态栏】① Ari：转横屏后高度收到屏高−状态栏。② 横屏 insetT=状态栏高度；右缘 keep 不变。③ 只升 code：versionName 保持 2.4.6，code 1074 → 1075，label 1120.1。）");
@@ -477,6 +486,7 @@ LogGate.debug("[DLsiteSoundFloat] ==== BUILD 2.3.5 / code 1035 （【code 1035 �
             Context c = SubtitleRepository.getInstance().getAppContext();
             if (c == null) c = sysCtx;
             FloatingWindowManager.getInstance().sync(c);
+            FullscreenSubtitleManager.getInstance().sync(c);
             // 【1.21.15 问题 1】这里原本还有一句
             // StatusBarSubtitleBridge.forceDisabledWhenNoSubtitles(c, repo) ——
             // 含义是「判定本音轨无字幕，就把

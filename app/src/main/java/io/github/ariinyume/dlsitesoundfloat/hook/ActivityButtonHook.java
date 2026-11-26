@@ -1484,6 +1484,12 @@ public class ActivityButtonHook {
     /** 持续不一致至少积累多少个样本才允许重新锁定（防抖）。 */
     private static final int DENSITY_RELOCK_SAMPLES = 100;
     private static Activity sActivity;
+    /**
+     * 封面采样等需要当前播放页 Activity 的入口（可能为 null：已销毁 / 未挂上）。
+     */
+    public static Activity currentPlayerActivity() {
+        return sActivity;
+    }
     private static ViewTreeObserver.OnGlobalLayoutListener sLayoutListener;
     private static long sLastDetectMs = 0L;
     // 【v57】sLastBtnText / sLastBtnBgMode 已合并为 sLastBtnSig（见其注释）。
@@ -3926,6 +3932,11 @@ public class ActivityButtonHook {
 
     private static void showButton(Activity activity, SubtitleRepository repo,
                                    int screenW, int screenH, int decorTop) {
+        // 全屏字幕打开时胶囊必须隐藏，否则从后台回前台的结构扫描会把它们叠到全屏之上。
+        if (repo != null && repo.isFullscreenOpen()) {
+            hideButton("fullscreen");
+            return;
+        }
         int btnW = sButtonGroup.getWidth() > 0 ? sButtonGroup.getWidth()
                 : dip2px(activity, CAPSULE_W_DP * 2 + CAPSULE_GAP_DP);
         int btnH = sButtonGroup.getHeight() > 0 ? sButtonGroup.getHeight()
@@ -4051,6 +4062,11 @@ public class ActivityButtonHook {
         }
     }
 
+    /** 全屏字幕壳挂上 / 卸下时显式收起播放页胶囊（与 showButton 闸门互补）。 */
+    public static void hideCapsulesForFullscreen() {
+        hideButton("fullscreen");
+    }
+
     /**
      * 【v57】创建**胶囊按钮组**：一个横向 LinearLayout 包着两个独立胶囊。
      *
@@ -4120,16 +4136,34 @@ public class ActivityButtonHook {
             repo.toggleFloatingWindow();
             updateButtonDrawable(repo);
         });
+        // 实验性「全屏字幕」开时：长按悬浮窗胶囊进入全屏（无字幕 / 未开实验 → no-op）。
+        // 短按仍只 toggle 悬浮窗；长按成功时消费事件，避免再触发 click。
+        sButton.setOnLongClickListener(v -> {
+            try {
+                io.github.ariinyume.dlsitesoundfloat.config.SubtitleConfig cfg =
+                        RemoteConfig.get();
+                if (cfg == null || !cfg.experimentalEnabled || !cfg.fullscreenSubtitleEnabled) {
+                    return false;
+                }
+                if (repo.shouldShowNoSubtitles()) {
+                    XposedCompat.log(TAG + " fullscreen long-press ignored (no subtitles)");
+                    return true;
+                }
+                if (repo.isFullscreenOpen()) {
+                    return true;
+                }
+                repo.setFullscreenOpen(true);
+                XposedCompat.log(TAG + " fullscreen subtitle OPEN (long-press)");
+                return true;
+            } catch (Throwable t) {
+                XposedCompat.log(TAG + " fullscreen long-press failed: " + t.getMessage());
+                return false;
+            }
+        });
 
         LinearLayout.LayoutParams lpFloat = new LinearLayout.LayoutParams(
                 dip2px(ctx, CAPSULE_W_DP), dip2px(ctx, CAPSULE_H_DP));
         group.addView(sButton, lpFloat);
-
-        // 【v57】长按逻辑整体删除 —— 需求确认「取消长按，只保留点击」。
-        // 旧版这里是 tv.setOnTouchListener + 1s postDelayed，两个副作用：
-        //   ① 长按会被系统当作「长按」而产生触感反馈，与新交互无关；
-        //   ② sLongPressFired 需要在 ACTION_UP 里回吞 click，状态机容易在
-        //      ACTION_CANCEL（手指滑出）时留下脏值。删掉后两个问题一起消失。
         return group;
     }
 

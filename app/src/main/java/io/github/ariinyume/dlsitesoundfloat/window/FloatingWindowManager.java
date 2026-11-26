@@ -177,7 +177,8 @@ public class FloatingWindowManager {
             this.appContext = ctx;
         }
         SubtitleRepository repo = SubtitleRepository.getInstance();
-        boolean wantOpen = repo.isFloatingWindowOpen();
+        // 全屏字幕打开时暂隐悬浮窗（会话态仍保留 floatingWindowOpen，退出全屏后自动恢复）。
+        boolean wantOpen = repo.isFloatingWindowOpen() && !repo.isFullscreenOpen();
         synchronized (lock) {
             if (wantOpen && !showing) {
                 show();

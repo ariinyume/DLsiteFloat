@@ -20,6 +20,7 @@ package io.github.ariinyume.dlsitesoundfloat;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -43,6 +44,7 @@ import io.github.ariinyume.dlsitesoundfloat.ui.SettingsLiquidGlassLogic;
 import io.github.ariinyume.dlsitesoundfloat.ui.SettingsPreviewBackdropLogic;
 import io.github.ariinyume.dlsitesoundfloat.ui.SettingsPreviewCollapseLogic;
 import io.github.ariinyume.dlsitesoundfloat.ui.SettingsResetLogic;
+import io.github.ariinyume.dlsitesoundfloat.util.CoverAmbientLogic;
 import io.github.ariinyume.dlsitesoundfloat.util.HostInfo;
 import io.github.ariinyume.dlsitesoundfloat.window.WindowGeometry;
 
@@ -263,9 +265,10 @@ public class GoldenVectorTest {
         assertFalse(HostInfo.versionAtLeast("", 2, 22, 1));
         assertFalse(HostInfo.versionAtLeast(null, 2, 22, 1));
 
-        // 【code 1049】2.23.1 已入白名单最新位；布局闸仍是 ≥2.22.1。
-        assertEquals("2.23.1", HostInfo.VERIFIED_VERSION);
-        assertTrue(HostInfo.versionAtLeast("2.23.1", 2, 22, 1));
+        // 【code 1080】2.24.1 已入白名单最新位；布局闸仍是 ≥2.22.1。
+        assertEquals("2.24.1", HostInfo.VERIFIED_VERSION);
+        assertTrue(HostInfo.versionAtLeast("2.24.1", 2, 22, 1));
+        assertTrue(HostInfo.versionAtLeast("2.24.0", 2, 22, 1));
     }
 
     /**
@@ -1239,6 +1242,59 @@ public class GoldenVectorTest {
         assertFalse(SettingsExperimentalLogic.cacheEnabledAfterMasterToggle(true, false));
         assertTrue(SettingsExperimentalLogic.childControlsEnabled(true));
         assertFalse(SettingsExperimentalLogic.childControlsEnabled(false));
+    }
+
+    @Test
+    public void experimental_fullscreenSubtitleRules() {
+        assertFalse(SettingsExperimentalLogic.fullscreenEnabledAfterMasterToggle(false, true));
+        assertTrue(SettingsExperimentalLogic.fullscreenEnabledAfterMasterToggle(true, true));
+        assertFalse(SettingsExperimentalLogic.fullscreenEnabledAfterMasterToggle(true, false));
+        assertTrue(SettingsExperimentalLogic.shouldShowFullscreenAlign(true, true));
+        assertFalse(SettingsExperimentalLogic.shouldShowFullscreenAlign(true, false));
+        assertFalse(SettingsExperimentalLogic.shouldShowFullscreenAlign(false, true));
+
+        SubtitleConfig c = SubtitleConfig.defaults();
+        c.experimentalEnabled = false;
+        c.fullscreenSubtitleEnabled = true;
+        c.fullscreenTextAlign = "bogus";
+        c.clamp();
+        assertFalse(c.fullscreenSubtitleEnabled);
+        assertEquals(SubtitleConfig.ALIGN_LEFT, c.fullscreenTextAlign);
+
+        c.experimentalEnabled = true;
+        c.fullscreenSubtitleEnabled = true;
+        c.fullscreenTextAlign = SubtitleConfig.ALIGN_RIGHT;
+        c.clamp();
+        assertTrue(c.fullscreenSubtitleEnabled);
+        assertEquals(SubtitleConfig.ALIGN_RIGHT, c.fullscreenTextAlign);
+
+        // JVM 单测不 mock JSONObject；用 copy/sameParametersAs 覆盖字段同步。
+        SubtitleConfig round = c.copy();
+        assertTrue(round.fullscreenSubtitleEnabled);
+        assertEquals(SubtitleConfig.ALIGN_RIGHT, round.fullscreenTextAlign);
+        assertTrue(c.sameParametersAs(round));
+
+        assertEquals(SubtitleConfig.ALIGN_LEFT, SettingsImportLogic.alignValueOf(0));
+        assertEquals(0, SettingsImportLogic.alignIndex(SubtitleConfig.ALIGN_LEFT));
+    }
+
+    @Test
+    public void coverAmbient_fallbackAndDominant() {
+        int[] fb = CoverAmbientLogic.fallbackPair(0);
+        assertEquals(CoverAmbientLogic.FALLBACK_TOP, fb[0]);
+        assertEquals(CoverAmbientLogic.FALLBACK_BOTTOM, fb[1]);
+        int[] accented = CoverAmbientLogic.fallbackPair(0xFFC387E8);
+        assertNotEquals(CoverAmbientLogic.FALLBACK_TOP, accented[0]);
+
+        int[] px = new int[16];
+        for (int i = 0; i < px.length; i++) {
+            px[i] = 0xFF224466;
+        }
+        int[] pair = CoverAmbientLogic.dominantPair(px);
+        assertNotNull(pair);
+        assertEquals(2, pair.length);
+        assertNull(CoverAmbientLogic.dominantPair(new int[0]));
+        assertNull(CoverAmbientLogic.dominantPair(null));
     }
 
     // ==================================================================

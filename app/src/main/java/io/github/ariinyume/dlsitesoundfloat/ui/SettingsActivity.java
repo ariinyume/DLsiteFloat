@@ -612,6 +612,12 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
     private SwitchRow mRowHideLauncher;
     /** 【code 1007】「其他」卡片里的「字幕缓存功能」开关行（摆在「调试日志」下方）。 */
     private SwitchRow mRowSubtitleCache;
+    /** 实验性：「全屏字幕显示」子开关。 */
+    private SwitchRow mRowFullscreenSubtitle;
+    /** 实验性：「全屏字幕对齐」三段控件（仅全屏子开关开时显示）。 */
+    private SegmentedRow mRowFullscreenAlign;
+    /** 全屏对齐标签+轨道的容器（用于整块显隐）。 */
+    private View mFullscreenAlignBlock;
     /**
      * 【code 1007】「字幕缓存」占用读数（{@code 已缓存 N 轨 · 占用 X MB / 256 MB}）。
      *
@@ -3037,18 +3043,16 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
      * 结构（自上而下）：
      *   ① 总开关「启用实验性功能」（配置键 {@code experimental_enabled}，默认**关**）；
      *   ② 常驻说明小字（解锁方式 + 关闭代价）；
-     *   ③ 卡内子功能 —— 当前只有「字幕缓存」整组（见 {@link #buildSubtitleCacheRow}）。
+     *   ③ 卡内子功能 —— 「全屏字幕」开关+对齐、「字幕缓存」整组。
      *
      * 🔴 解锁入口刻意**不做成开关**：它在状态卡上「连续点击五次」才打开
      *    （见 {@link #onStatusCardClicked}）。理由是卡内放的是尚未定型的实验功能，
      *    给普通用户一个显式入口只会徒增困惑。
      *
-     * 🔴 关闭总闸的三件后果（Ari 需求原文）：① 卡内所有子功能关掉；② 子开关置灰；
-     *    ③ 相关缓存全部清除。前两条由 {@link #onExperimentalToggled} 与
-     *    {@link #applyExperimentalChildEnabled} 当场兑现，第三条走既有的
-     *    「清除所有字幕缓存」显式广播（宿主执行、回执统计）。卡片本身在**保存配置之后**
-     *    才消失 —— {@link #applyExperimentalVisibility} 按 {@code draft || saved} 判，
-     *    只看草稿会让「关掉总闸」的瞬间就把入口抹掉，用户再也打不开它。
+     * 🔴 关闭总闸的后果：① 卡内所有子功能关掉；② 子开关置灰。
+     *    由 {@link #onExperimentalToggled} 与 {@link #applyExperimentalChildEnabled} 当场兑现。
+     *    卡片本身在**保存配置之后**才消失 —— {@link #applyExperimentalVisibility} 按
+     *    {@code draft || saved} 判，只看草稿会让「关掉总闸」的瞬间就把入口抹掉。
      * ─────────────────────────────────────────────────────────────────────
      */
     @Override
@@ -3058,6 +3062,7 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
 
         // 【code 1016】总开关下方原有一段说明小字，Ari 要求**整段删除**（需求 2）——
         //   于是这里直接从开关行接到卡内子功能，中间不再有任何文字。
+        buildFullscreenSubtitleRows(parent);
         // 卡内子功能：「字幕缓存」整组（code 1007 起原本挂在「其他」卡片里）。
         buildSubtitleCacheRow(parent);
         // 本卡最后一行是「清除…字幕」那排按钮所在的那个容器 —— 与其余卡片同一套底部收敛。
@@ -3066,6 +3071,44 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
             // 【code 1034 / Ari 第 4 条】末行是按钮条，补墨迹补偿才能与「恢复默认」行卡同高。
             pinCardLastBottom(parent, mExpLastRow, CARD_LAST_BTN_INSET_DP);
         }
+    }
+
+    /**
+     * 实验性：「全屏字幕显示」开关 +「全屏字幕对齐」三段（对齐仅在子开关开时可见）。
+     */
+    private void buildFullscreenSubtitleRows(LinearLayout parent) {
+        mRowFullscreenSubtitle = addSwitchRow(parent, Strings.FULLSCREEN_SUBTITLE,
+                this::onFullscreenSubtitleToggled);
+        LinearLayout alignWrap = new LinearLayout(this);
+        alignWrap.setOrientation(LinearLayout.VERTICAL);
+        mRowFullscreenAlign = addSegmentedRow(alignWrap, Strings.FULLSCREEN_ALIGN, new String[]{
+                Strings.ALIGN_LEFT.get(mLang), Strings.ALIGN_CENTER.get(mLang),
+                Strings.ALIGN_RIGHT.get(mLang)}, v -> {
+            if (mSyncing) {
+                return;
+            }
+            mDraft.fullscreenTextAlign = SettingsImportLogic.alignValueOf(v);
+            markDirty();
+        });
+        parent.addView(alignWrap);
+        mFullscreenAlignBlock = alignWrap;
+        applyFullscreenAlignVisibility();
+    }
+
+    private void onFullscreenSubtitleToggled(boolean enabled) {
+        mDraft.fullscreenSubtitleEnabled = enabled;
+        applyFullscreenAlignVisibility();
+        markDirty();
+    }
+
+    /** 全屏对齐行显隐：总闸开且全屏子开关开。 */
+    private void applyFullscreenAlignVisibility() {
+        if (mFullscreenAlignBlock == null) {
+            return;
+        }
+        boolean show = SettingsExperimentalLogic.shouldShowFullscreenAlign(
+                mDraft.experimentalEnabled, mDraft.fullscreenSubtitleEnabled);
+        mFullscreenAlignBlock.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
     /**
@@ -3109,6 +3152,8 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
         // 【code 1056 / B1】总闸 → 缓存子开关草稿值：{@link SettingsExperimentalLogic#cacheEnabledAfterMasterToggle}
         mDraft.subtitleCacheEnabled = SettingsExperimentalLogic.cacheEnabledAfterMasterToggle(
                 enabled, mDraft.subtitleCacheEnabled);
+        mDraft.fullscreenSubtitleEnabled = SettingsExperimentalLogic
+                .fullscreenEnabledAfterMasterToggle(enabled, mDraft.fullscreenSubtitleEnabled);
         applyExperimentalChildEnabled(
                 SettingsExperimentalLogic.childControlsEnabled(enabled));
         applyExperimentalVisibility();
@@ -3122,23 +3167,38 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
      * {@link SubtitleConfig#clamp()} 的不变式保证，两边不会打架。
      */
     private void applyExperimentalChildEnabled(boolean enabled) {
-        if (mRowSubtitleCache == null) {
-            return;
-        }
         mSyncing = true;
         try {
-            if (!enabled) {
-                mRowSubtitleCache.sw.setChecked(false);
-            } else {
-                mRowSubtitleCache.sw.setChecked(mDraft.subtitleCacheEnabled);
+            if (mRowSubtitleCache != null) {
+                if (!enabled) {
+                    mRowSubtitleCache.sw.setChecked(false);
+                } else {
+                    mRowSubtitleCache.sw.setChecked(mDraft.subtitleCacheEnabled);
+                }
+            }
+            if (mRowFullscreenSubtitle != null) {
+                if (!enabled) {
+                    mRowFullscreenSubtitle.sw.setChecked(false);
+                } else {
+                    mRowFullscreenSubtitle.sw.setChecked(mDraft.fullscreenSubtitleEnabled);
+                }
             }
         } finally {
             mSyncing = false;
         }
-        mRowSubtitleCache.sw.setEnabled(enabled);
-        if (mRowSubtitleCache.root != null) {
-            mRowSubtitleCache.root.setAlpha(enabled ? 1f : 0.45f);
+        if (mRowSubtitleCache != null) {
+            mRowSubtitleCache.sw.setEnabled(enabled);
+            if (mRowSubtitleCache.root != null) {
+                mRowSubtitleCache.root.setAlpha(enabled ? 1f : 0.45f);
+            }
         }
+        if (mRowFullscreenSubtitle != null) {
+            mRowFullscreenSubtitle.sw.setEnabled(enabled);
+            if (mRowFullscreenSubtitle.root != null) {
+                mRowFullscreenSubtitle.root.setAlpha(enabled ? 1f : 0.45f);
+            }
+        }
+        applyFullscreenAlignVisibility();
     }
 
     /**
@@ -4506,6 +4566,10 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
             // 【code 1007】字幕缓存功能开关（持久化配置；缓存占用读数不在这里回灌 ——
             //   它来自宿主广播，由 applyCacheStats 单独负责）
             setSwitch(mRowSubtitleCache, mDraft.subtitleCacheEnabled);
+            setSwitch(mRowFullscreenSubtitle, mDraft.fullscreenSubtitleEnabled);
+            setSegmented(mRowFullscreenAlign,
+                    SettingsImportLogic.alignIndex(mDraft.fullscreenTextAlign));
+            applyFullscreenAlignVisibility();
             // 【2.2.9】液态玻璃开关
             setSwitch(mRowLiquidGlass, mDraft.liquidGlass);
             // 【2.2.11b】模糊强度（0–100）
@@ -5069,6 +5133,12 @@ public class SettingsActivity extends AppCompatActivity implements SettingsHost 
         }
         if (label == Strings.EXPERIMENTAL_MASTER) {
             return R.drawable.ic_ui_flask;
+        }
+        if (label == Strings.FULLSCREEN_SUBTITLE) {
+            return R.drawable.ic_ui_fullscreen;
+        }
+        if (label == Strings.FULLSCREEN_ALIGN) {
+            return R.drawable.ic_ui_fullscreen_align;
         }
         return 0;
     }

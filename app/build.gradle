@@ -41,7 +41,7 @@ plugins {
 //                    只是仓库内可读别名 ⇒ 改它**不必重新出包**。
 //                 ⚠️ 2026-10-14 回溯：1013~1017 都构建于 10-14，label 已由 `1008.30`
 //                    回填为 `1014.1`~`1014.5`；10-13 及更早的条目**保留旧值**（历史记录）。
-def appVersionTag = '2.4.6'
+def appVersionTag = '2.5.0'
 // ⚠️ 写成 int 字面量 925（不要写 0925 —— Groovy 可能按八进制/前导零解析）：
 //    versionCode 的**数值**是 925，管理器里显示 925，可读语义看 appVersionCodeLabel。
 // ── 版本履历（code 994 / label 1008.15）──
@@ -788,6 +788,34 @@ def appVersionTag = '2.4.6'
 //   ① 预览面板渐变 alpha + 连续盒式模糊（blurTileInterpolated / lerpArgb）。
 //   ⚠️ 只升 code：versionName / tag 保持 2.4.4，versionCode 1060 → 1061、label 1113.2。
 //
+// 【code 1087 / 2.5.0】全屏首行不压灰：完全在显示区内的行 alpha=1；仅裁进顶边的行按残留比例渐隐。
+//   ⚠️ 只升 code：versionName / tag 保持 2.5.0，versionCode 1086 → 1087、label 1126.8。
+//
+// 【code 1086 / 2.5.0】全屏显示区钉在返回钮下：clipToPadding 硬裁切；柔隐只在裁切线以下 soft 带。
+//   ⚠️ 只升 code：versionName / tag 保持 2.5.0，versionCode 1085 → 1086、label 1126.7。
+//
+// 【code 1085 / 2.5.0】全屏空白回归：DST_IN+硬件层在 ColorOS 抹字 → 改按行 alpha 顶边渐隐；滚动条仍关。
+//   ⚠️ 只升 code：versionName / tag 保持 2.5.0，versionCode 1084 → 1085、label 1126.6。
+//
+// 【code 1084 / 2.5.0】全屏顶边渐隐 + 藏滚动条：DST_IN 上柔边替代硬切；vertical scrollbar 关闭。
+//   ⚠️ 只升 code：versionName / tag 保持 2.5.0，versionCode 1083 → 1084、label 1126.5。
+//
+// 【code 1083 / 2.5.0】全屏顶边死区 + Spicy 换行：ScrollView clip 顶边；换行只平滑 scrollY（去掉 translationY 叠抖）。
+//   ⚠️ 只升 code：versionName / tag 保持 2.5.0，versionCode 1082 → 1083、label 1126.4。
+//
+// 【code 1082 / 2.5.0】全屏字幕交互返工：跟随钮仅手滑出现（Spicy 动效/霜面色）、不自动回中、
+//   返回左上+顶边红框留白、全屏时隐藏胶囊、边缘手势放行、设置页全屏两枚图标。
+//   ⚠️ 只升 code：versionName / tag 保持 2.5.0，versionCode 1081 → 1082、label 1126.3。
+//
+// 【code 1081 / 2.5.0】全屏字幕真机六修：decor 注入（系统手势/最近任务）、Expo 封面采样、
+//   右上角液态玻璃返回、右下角跟随字幕、2s 回中、换行位移动画；顶边距=返回钮底+20dp。
+//   ⚠️ 只升 code：versionName / tag 保持 2.5.0，versionCode 1080 → 1081、label 1126.2。
+//
+// 【code 1080 / 2.5.0】实验性全屏字幕 + 宿主 2.24.1 入白名单：
+//   ① 全屏字幕：实验开关、长按悬浮窗胶囊、独立对齐、封面取色模糊、跟随滚动、左上角返回。
+//   ② HostInfo.VERIFIED_VERSION → 2.24.1（_host241 静态闸门全过）。
+//   ⚠️ 升语义版本：versionName / tag 2.4.6 → 2.5.0，versionCode 1079 → 1080、label 1126.1。
+//
 // 【code 1079 / 2.4.6】STATUSBAR Health：SystemUI scope PONG / 会话开即 HIT。
 //   ⚠️ 只升 code：versionName / tag 保持 2.4.6，versionCode 1078 → 1079、label 1120.5。
 //
@@ -834,9 +862,9 @@ def appVersionTag = '2.4.6'
 //   ① 真机 184943：1069 四边 keep 导致竖屏难贴边、横屏左上贴不了。
 //   ② insetL/T=0；insetR/B=EDGE_KEEP。
 //   ⚠️ 只升 code：versionName / tag 保持 2.4.5，versionCode 1069 → 1070、label 1117.4。
-def appVersionCode = 1079
-def appVersionCodeLabel = '1120.5'
-def appVersionName = '2.4.6'
+def appVersionCode = 1087
+def appVersionCodeLabel = '1126.8'
+def appVersionName = '2.5.0'
 
 android {
     namespace 'io.github.ariinyume.dlsitesoundfloat'
@@ -896,6 +924,12 @@ android {
             // 沿用 debug 签名（storeFile / 口令由 AGP 指向 ~/.android/debug.keystore）；
             // 【code 1025】显式绑定，避免「signingConfigs.debug 改了、buildType 用的却是另一份」。
             signingConfig signingConfigs.debug
+        }
+        release {
+            // 无独立 release keystore：交付包与 debug 同签，保证覆盖安装；minify 关闭以免改行为。
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
         }
     }
 

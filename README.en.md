@@ -4,8 +4,8 @@
 
 > An LSPosed / Xposed module that pins a **floating subtitle window** synced with playback progress onto the **playback page** of DLsiteSound (the DLsite audio app), and can also mirror subtitles to the **system status bar** (injected inside the SystemUI process).
 
-- Current version: **2.4.6** (`DLsiteFloat-2.4.6-code1079-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
-- 📦 Download APK: [Releases · v2.4.6](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.4.6)
+- Current version: **2.5.0** (`DLsiteFloat-2.5.0-code1087-debug.apk`, package `io.github.ariinyume.dlsitesoundfloat`)
+- 📦 Download APK: [Releases · v2.5.0](https://github.com/ariinyume/DLsiteFloat/releases/tag/v2.5.0)
 - 📝 Development progress: [DLsiteFloat 插件开发进度管理](https://my.feishu.cn/wiki/CQoMwY4nFilzLkkrzG4cy44fnoh) (in Chinese)
 - ⭐ Xposed repository: [DLsiteFloat - DLsiteSound floating window / status bar subtitle module](https://github.com/Xposed-Modules-Repo/io.github.ariinyume.dlsitesoundfloat)
 
@@ -61,7 +61,7 @@
 
 - **Visual settings page**: the module ships its own settings page; changes take effect as soon as you tap "Save settings".
   - **Three cards + three tabs**: the subtitle appearance settings are merged into **one** card, and the card is split into three tabs — **`Subtitles` / `Line state` / `Layout`** — switching only changes visibility, so no control is rebuilt and unsaved changes are not lost; "Liquid glass", "Experimental features" and "More" remain separate cards.
-  - **Status card (sticky)**: the three states — "whether the module is active / whether SystemUI is authorized / whether DLsiteSound is running" — each get their own guidance, and the whole page is disabled while the module is inactive; the card also shows the **host version and whether it has been verified** (e.g. "Host 2.24.0 · verified"); it **sticks to the top** while you scroll the page. **Tapping the status card five times in a row** unlocks the hidden "Experimental features" card — see below. Adapter health summaries are written to the **LSPosed debug log** (no small print on the status card).
+  - **Status card (sticky)**: the three states — "whether the module is active / whether SystemUI is authorized / whether DLsiteSound is running" — each get their own guidance, and the whole page is disabled while the module is inactive; the card also shows the **host version and whether it has been verified** (e.g. "Host 2.24.1 · verified"); it **sticks to the top** while you scroll the page. **Tapping the status card five times in a row** unlocks the hidden "Experimental features" card — see below. Adapter health summaries are written to the **LSPosed debug log** (no small print on the status card).
   - **Save and undo**: the bottom save bar **floats** permanently and shows "N unsaved changes"; after saving, the snackbar offers a **one-tap undo of the last save**; leaving the page with unsaved changes asks for confirmation (Save / Discard / Cancel).
   - **Main subtitle / active line**: subtitle color, shadow color, shadow strength, shadow radius, active line opacity, active line scale (up to ×1.8), and a **bold font** toggle.
   - **Inactive lines**: blur inactive lines + blur radius, scale inactive lines + scale ratio (×0.5–×1.8), **inactive line opacity** (20%–100%).
@@ -74,6 +74,7 @@
   - **Experimental features**: a home for capabilities that are **still being validated, not yet performance-stable, or carry potential copyright risk**, and it is **hidden by default**. **Tap the status card five times in a row** on the settings page (no more than 3 s between consecutive taps) to unlock it; even after unlocking, you still have to tap "Save settings" for it to be written into the config.
     - **Its master switch**: when off, every sub-feature under it is **turned off**, but the related caches still have to be cleared **by yourself** — by tapping the relevant buttons *before* switching the feature off (a guard against fat fingers).
     - **Subtitle cache**: the "Offline subtitle cache" and "Subtitle prefetch" described above. The card gives **four readouts** (N tracks cached / X of Y used / X of Y hits / X works · Y tracks prefetched, plus one extra line for on-screen line consistency); the clearing entry points are split into **"Clear cached subtitles" and "Clear prefetched subtitles"**. **What each readout means, when it resets to zero, and common misreadings** are explained in [docs/字幕缓存读数说明.md](docs/字幕缓存读数说明.md).
+    - **Fullscreen subtitles** (off by default): when on, **long-press** the playback-page "Popup" capsule to enter the fullscreen lyrics layer (unavailable when there are no subtitles). Typography follows the floating window; alignment can be set independently (left / center / right); cover-art palette + blur backdrop; follow-scroll; top-left back; after a manual scroll a "Follow subtitles" chip appears — tap to re-center; the top edge is clipped below the back button with a soft fade. While fullscreen is open the floating window and playback capsules are temporarily hidden.
   - **More**: master switch for status bar subtitles, **hide the launcher icon** (off by default; once hidden you can still open the module from the LSPosed module list; **on unsupported devices the icon is restored automatically and you are notified**), the **debug log** toggle (off by default), subtitle config backup & restore (export / import JSON), restart SystemUI.
 
 - **In-process floating window**: the window hangs directly inside the DLsiteSound process (`WindowManager` + `TYPE_APPLICATION_OVERLAY`) and shares the same `SubtitleRepository` instance with all the hooks, so it needs **no cross-process IPC and no separate Service**.
@@ -134,7 +135,7 @@
 
 ## Tested on
 
-- Software version: DLsiteSound **2.24.0** (verified set also includes 2.22.0 / 2.22.1 / 2.23.0 / 2.23.1)
+- Software version: DLsiteSound **2.24.1** (verified set also includes 2.22.0 / 2.22.1 / 2.23.0 / 2.23.1 / 2.24.0)
 
 - Device 1: OnePlus 15, ColorOS 17.0.0.105, KernelSU 3.3.1 (32680-5) · kernel 6.12 · LSPosed 2.2.1 (7912)
 - Device 2: OnePlus 12, ColorOS 16.0.10.501, SukiSU 4.2.1 (40994-5) · kernel 6.1 · LSPosed 2.2.1 (7912)

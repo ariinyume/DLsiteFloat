@@ -133,7 +133,9 @@ public final class SettingsDraftPolicy {
                 || draft.hotReload != saved.hotReload
                 || draft.debugLog != saved.debugLog
                 || draft.subtitleCacheEnabled != saved.subtitleCacheEnabled
-                || draft.experimentalEnabled != saved.experimentalEnabled) {
+                || draft.experimentalEnabled != saved.experimentalEnabled
+                || draft.fullscreenSubtitleEnabled != saved.fullscreenSubtitleEnabled
+                || !eq(draft.fullscreenTextAlign, saved.fullscreenTextAlign)) {
             n++;
         }
         return n;

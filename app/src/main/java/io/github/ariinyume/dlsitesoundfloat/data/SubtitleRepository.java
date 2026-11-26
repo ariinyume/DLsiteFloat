@@ -133,6 +133,8 @@ public class SubtitleRepository implements LineSource {
     private List<String> currentSubtitles = new ArrayList<>();
     private boolean subtitlesVisible = false;
     private boolean floatingWindowOpen = false;
+    /** 会话级：全屏字幕叠加层是否打开（不持久化）。 */
+    private boolean fullscreenOpen = false;
     private boolean playerPageVisible = false;
 
     /** 最近一次成功加载字幕 JSON 的时刻（uptimeMillis）。 */
@@ -2590,6 +2592,27 @@ public class SubtitleRepository implements LineSource {
 
     public void toggleFloatingWindow() {
         setFloatingWindowOpen(!isFloatingWindowOpen());
+    }
+
+    /** 当前 cues 归属的作品键（可能为 null）。全屏封面刷新用。 */
+    public String getCuesWorkKey() {
+        return cuesWorkKey;
+    }
+
+    public void setFullscreenOpen(boolean open) {
+        synchronized (lock) {
+            if (fullscreenOpen == open) {
+                return;
+            }
+            fullscreenOpen = open;
+        }
+        notifyObservers();
+    }
+
+    public boolean isFullscreenOpen() {
+        synchronized (lock) {
+            return fullscreenOpen;
+        }
     }
 
     public void addObserver(Runnable observer) {

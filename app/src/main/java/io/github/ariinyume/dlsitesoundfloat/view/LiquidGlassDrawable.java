@@ -79,16 +79,19 @@ import java.util.Random;
  * ⑤ **本类禁止引用任何模块资源 ID**（运行在目标进程，那里的 Resources 里没有本模块资源）。
  * ─────────────────────────────────────────────────────────────────────
  *
- * ── 三种形态（{@link #KIND_*}）───────────────────────────────────────
+ * ── 四种形态（{@link #KIND_*}）───────────────────────────────────────
  *   · {@link #KIND_PANEL}       —— 悬浮窗面板：烟熏中性玻璃，配白色字幕；
  *   · {@link #KIND_CAPSULE_ON}  —— 播放页胶囊「开」态：紫玻璃；
- *   · {@link #KIND_CAPSULE_OFF} —— 播放页胶囊「关」态：深紫黑玻璃。
+ *   · {@link #KIND_CAPSULE_OFF} —— 播放页胶囊「关」态：深紫黑玻璃；
+ *   · {@link #KIND_FROST}       —— SpicyEX 风透明霜面（白半透 + 白边），全屏返回/跟随用。
  */
 public class LiquidGlassDrawable extends Drawable {
 
     public static final int KIND_PANEL = 0;
     public static final int KIND_CAPSULE_ON = 1;
     public static final int KIND_CAPSULE_OFF = 2;
+    /** SpicyEX 透明玻璃：浅白霜面，不吃 Mori 强调色。 */
+    public static final int KIND_FROST = 3;
 
     // ==================================================================
     // 调色（每形态一组；alpha 已按各层叠加后的最终观感调好）
@@ -287,6 +290,13 @@ public class LiquidGlassDrawable extends Drawable {
     private static final int COFF_RIM_TOP = 0x56FFFFFF;
     private static final int COFF_RIM_BOTTOM = 0x14FFFFFF;
 
+    // —— SpicyEX 透明霜面（截图标定：白半透圆钮 / pill，边光偏亮）——
+    private static final int FROST_BASE_TOP = 0x38FFFFFF;
+    private static final int FROST_BASE_BOTTOM = 0x28FFFFFF;
+    private static final int FROST_GLOSS = 0x55FFFFFF;
+    private static final int FROST_RIM_TOP = 0x8AFFFFFF;
+    private static final int FROST_RIM_BOTTOM = 0x3CFFFFFF;
+
     // ── 【code 1046】强调色注入用的亮度比（由上面四档常量实测反推）────────
     //
     //   加权亮度 = (0.2126R + 0.7152G + 0.0722B) / 255
@@ -476,6 +486,11 @@ public class LiquidGlassDrawable extends Drawable {
     public static LiquidGlassDrawable capsule(float radiusPx, float density, boolean on, int accent) {
         return new LiquidGlassDrawable(on ? KIND_CAPSULE_ON : KIND_CAPSULE_OFF,
                 radiusPx, density, 0f, accent);
+    }
+
+    /** SpicyEX 风透明霜面玻璃（全屏返回圆钮 / 「跟随字幕」pill）。 */
+    public static LiquidGlassDrawable frostChip(float radiusPx, float density) {
+        return new LiquidGlassDrawable(KIND_FROST, radiusPx, density, 0f, 0);
     }
 
     /**
@@ -956,6 +971,8 @@ public class LiquidGlassDrawable extends Drawable {
                 return tinted(CON_BASE_TOP);
             case KIND_CAPSULE_OFF:
                 return tinted(COFF_BASE_TOP);
+            case KIND_FROST:
+                return FROST_BASE_TOP;
             case KIND_PANEL:
             default:
                 return P_BASE_TOP;
@@ -968,6 +985,8 @@ public class LiquidGlassDrawable extends Drawable {
                 return tinted(CON_BASE_BOTTOM);
             case KIND_CAPSULE_OFF:
                 return tinted(COFF_BASE_BOTTOM);
+            case KIND_FROST:
+                return FROST_BASE_BOTTOM;
             case KIND_PANEL:
             default:
                 return P_BASE_BOTTOM;
@@ -1018,6 +1037,8 @@ public class LiquidGlassDrawable extends Drawable {
                 return CON_GLOSS;
             case KIND_CAPSULE_OFF:
                 return COFF_GLOSS;
+            case KIND_FROST:
+                return FROST_GLOSS;
             case KIND_PANEL:
             default:
                 return P_GLOSS;
@@ -1030,6 +1051,8 @@ public class LiquidGlassDrawable extends Drawable {
                 return CON_RIM_TOP;
             case KIND_CAPSULE_OFF:
                 return COFF_RIM_TOP;
+            case KIND_FROST:
+                return FROST_RIM_TOP;
             case KIND_PANEL:
             default:
                 return P_RIM_TOP;
@@ -1042,6 +1065,8 @@ public class LiquidGlassDrawable extends Drawable {
                 return CON_RIM_BOTTOM;
             case KIND_CAPSULE_OFF:
                 return COFF_RIM_BOTTOM;
+            case KIND_FROST:
+                return FROST_RIM_BOTTOM;
             case KIND_PANEL:
             default:
                 return P_RIM_BOTTOM;

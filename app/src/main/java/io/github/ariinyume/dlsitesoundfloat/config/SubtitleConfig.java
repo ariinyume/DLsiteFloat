@@ -211,12 +211,26 @@ public final class SubtitleConfig {
      * **覆盖安装升级后依旧保持**，直到用户自己把总闸关掉。
      *
      * <p>不变式（见 {@link #clamp()}）：总闸关 ⇒ 卡内子功能一律关
-     * （目前只有 {@link #subtitleCacheEnabled}）。这样即便配置文件被手工编辑、
-     * 或由旧版本导入，也不会出现「卡片已关、缓存却还开着」的错位。
+     * （{@link #subtitleCacheEnabled}、{@link #fullscreenSubtitleEnabled}）。这样即便配置文件被手工编辑、
+     * 或由旧版本导入，也不会出现「卡片已关、子功能却还开着」的错位。
      *
      * <p>⚠️ 键名冻结（PRD §FR-09 规则 4）：本键为新增键，旧配置读不到时回落默认值（关），天然兼容。
      */
     public static final String K_EXPERIMENTAL_ENABLED = "experimental_enabled";
+
+    /**
+     * 「全屏字幕显示」实验性子开关（默认**关**）。
+     *
+     * <p>不变式（见 {@link #clamp()}）：总闸关 ⇒ 本键强制关。
+     * 开启后，播放页悬浮窗胶囊可长按进入全屏字幕叠加层。
+     */
+    public static final String K_FULLSCREEN_SUBTITLE_ENABLED = "fullscreen_subtitle_enabled";
+
+    /**
+     * 「全屏字幕对齐」（仅全屏壳；取值同 {@link #ALIGN_LEFT}/{@link #ALIGN_CENTER}/{@link #ALIGN_RIGHT}）。
+     * 默认左对齐；不改写悬浮窗的 {@link #K_TEXT_ALIGN}。
+     */
+    public static final String K_FULLSCREEN_TEXT_ALIGN = "fullscreen_text_align";
 
     /**
      * 【code 1044 / 2.4.3】「字幕字体跟随系统设定」开关（默认**关**）。
@@ -438,6 +452,16 @@ public final class SubtitleConfig {
     public boolean experimentalEnabled = false;
 
     /**
+     * 「全屏字幕显示」实验性子开关（默认关）。语义见 {@link #K_FULLSCREEN_SUBTITLE_ENABLED}。
+     */
+    public boolean fullscreenSubtitleEnabled = false;
+
+    /**
+     * 全屏字幕对齐（默认左对齐）。语义见 {@link #K_FULLSCREEN_TEXT_ALIGN}。
+     */
+    public String fullscreenTextAlign = ALIGN_LEFT;
+
+    /**
      * 【code 1044 / 2.4.3】「字幕字体跟随系统设定」（默认**关**）。
      * 语义见 {@link #K_SUBTITLE_FONT_FOLLOW_SYSTEM}；渲染侧换算见 {@code SubtitleStyle}。
      */
@@ -490,6 +514,8 @@ public final class SubtitleConfig {
         c.debugLog = debugLog;
         c.subtitleCacheEnabled = subtitleCacheEnabled;
         c.experimentalEnabled = experimentalEnabled;
+        c.fullscreenSubtitleEnabled = fullscreenSubtitleEnabled;
+        c.fullscreenTextAlign = fullscreenTextAlign;
         c.subtitleFontFollowSystem = subtitleFontFollowSystem;
         c.subtitleBold = subtitleBold;
         return c;
@@ -527,6 +553,8 @@ public final class SubtitleConfig {
                 && debugLog == o.debugLog
                 && subtitleCacheEnabled == o.subtitleCacheEnabled
                 && experimentalEnabled == o.experimentalEnabled
+                && fullscreenSubtitleEnabled == o.fullscreenSubtitleEnabled
+                && eq(fullscreenTextAlign, o.fullscreenTextAlign)
                 && subtitleFontFollowSystem == o.subtitleFontFollowSystem
                 && subtitleBold == o.subtitleBold
                 && eq(uiLanguage, o.uiLanguage);
@@ -551,6 +579,8 @@ public final class SubtitleConfig {
                 WEIGHT_SYSTEM, WEIGHT_REGULAR, WEIGHT_MEDIUM, WEIGHT_BOLD);
         textAlign = normalizeEnum(textAlign, ALIGN_CENTER,
                 ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT);
+        fullscreenTextAlign = normalizeEnum(fullscreenTextAlign, ALIGN_LEFT,
+                ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT);
 
         shadowStrength = clampInt(shadowStrength, SHADOW_STRENGTH_MIN, SHADOW_STRENGTH_MAX);
         shadowRadius = clampInt(shadowRadius, SHADOW_RADIUS_MIN, SHADOW_RADIUS_MAX);
@@ -572,11 +602,12 @@ public final class SubtitleConfig {
         wrapExtraSpacingDp = clampFloat(wrapExtraSpacingDp, WRAP_SPACING_MIN, WRAP_SPACING_MAX);
 
         // 【code 1015 / 2.3.2】不变式：实验性功能总闸关闭 ⇒ 卡内子功能一律关。
-        //   目前卡内只有「字幕缓存」一项。放在 clamp 里而不是只放在设置页的点击回调里，
+        //   卡内：字幕缓存、全屏字幕。放在 clamp 里而不是只放在设置页的点击回调里，
         //   是为了让**任何**读配置的路径都遵守同一条规则 —— 包括手工编辑过的配置 JSON、
         //   旧版本导出的配置，以及宿主进程自己读配置的那一侧（它也该少做一份无用功）。
         if (!experimentalEnabled) {
             subtitleCacheEnabled = false;
+            fullscreenSubtitleEnabled = false;
         }
     }
 
@@ -640,6 +671,8 @@ public final class SubtitleConfig {
             o.put(K_DEBUG_LOG, debugLog);
             o.put(K_SUBTITLE_CACHE_ENABLED, subtitleCacheEnabled);
             o.put(K_EXPERIMENTAL_ENABLED, experimentalEnabled);
+            o.put(K_FULLSCREEN_SUBTITLE_ENABLED, fullscreenSubtitleEnabled);
+            o.put(K_FULLSCREEN_TEXT_ALIGN, fullscreenTextAlign);
             o.put(K_SUBTITLE_FONT_FOLLOW_SYSTEM, subtitleFontFollowSystem);
             o.put(K_SUBTITLE_BOLD, subtitleBold);
         } catch (Throwable ignored) {
@@ -691,6 +724,9 @@ public final class SubtitleConfig {
         c.debugLog = o.optBoolean(K_DEBUG_LOG, c.debugLog);
         c.subtitleCacheEnabled = o.optBoolean(K_SUBTITLE_CACHE_ENABLED, c.subtitleCacheEnabled);
         c.experimentalEnabled = o.optBoolean(K_EXPERIMENTAL_ENABLED, c.experimentalEnabled);
+        c.fullscreenSubtitleEnabled = o.optBoolean(K_FULLSCREEN_SUBTITLE_ENABLED,
+                c.fullscreenSubtitleEnabled);
+        c.fullscreenTextAlign = o.optString(K_FULLSCREEN_TEXT_ALIGN, c.fullscreenTextAlign);
         c.subtitleFontFollowSystem = o.optBoolean(K_SUBTITLE_FONT_FOLLOW_SYSTEM,
                 c.subtitleFontFollowSystem);
         c.subtitleBold = o.optBoolean(K_SUBTITLE_BOLD, c.subtitleBold);
@@ -734,6 +770,8 @@ public final class SubtitleConfig {
         e.putBoolean(K_DEBUG_LOG, debugLog);
         e.putBoolean(K_SUBTITLE_CACHE_ENABLED, subtitleCacheEnabled);
         e.putBoolean(K_EXPERIMENTAL_ENABLED, experimentalEnabled);
+        e.putBoolean(K_FULLSCREEN_SUBTITLE_ENABLED, fullscreenSubtitleEnabled);
+        e.putString(K_FULLSCREEN_TEXT_ALIGN, fullscreenTextAlign);
         e.putBoolean(K_SUBTITLE_FONT_FOLLOW_SYSTEM, subtitleFontFollowSystem);
         e.putBoolean(K_SUBTITLE_BOLD, subtitleBold);
     }
@@ -776,6 +814,9 @@ public final class SubtitleConfig {
         c.debugLog = p.getBoolean(K_DEBUG_LOG, c.debugLog);
         c.subtitleCacheEnabled = p.getBoolean(K_SUBTITLE_CACHE_ENABLED, c.subtitleCacheEnabled);
         c.experimentalEnabled = p.getBoolean(K_EXPERIMENTAL_ENABLED, c.experimentalEnabled);
+        c.fullscreenSubtitleEnabled = p.getBoolean(K_FULLSCREEN_SUBTITLE_ENABLED,
+                c.fullscreenSubtitleEnabled);
+        c.fullscreenTextAlign = p.getString(K_FULLSCREEN_TEXT_ALIGN, c.fullscreenTextAlign);
         c.subtitleFontFollowSystem = p.getBoolean(K_SUBTITLE_FONT_FOLLOW_SYSTEM,
                 c.subtitleFontFollowSystem);
         c.subtitleBold = p.getBoolean(K_SUBTITLE_BOLD, c.subtitleBold);
@@ -852,6 +893,8 @@ public final class SubtitleConfig {
                 //   它带行尾分号 ⇒ 任何追加都只能接在这行前面，否则那条锚会静默失效。
                 + " fontFollowSystem=" + subtitleFontFollowSystem
                 + " bold=" + subtitleBold
+                + " fullscreen=" + fullscreenSubtitleEnabled
+                + "/" + fullscreenTextAlign
                 + " experimental=" + experimentalEnabled;
     }
 

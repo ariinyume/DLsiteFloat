@@ -5345,3 +5345,64 @@ versionName / tag 2.4.4、versionCode 1047 → 1048、label 1029.1 → 1104.1。
 - **激活（Ari）**：LSPosed 勾了宿主作用域 ⇒ 状态卡「模块已激活」。`ConfigStore` 落盘 `hostScopeSeen`（仅 `tag=host` 的 PONG 可置位）；本轮未探到时仍可读落盘。
 - **delta 交叉**：2.24.0 无新原生模块 / 无 RN 大版本；期間限定無料不影响字幕 JSON 正文判定；字体迁 `res/font` 属 MoriMod 面。
 - 口径：只升 code —— versionName / tag 保持 2.4.6，versionCode 1076 → 1077、label 1120.3。
+
+### 1126.8 code 1086 → 1087：全屏首行不压灰
+
+- 完全落在显示区内的行不再被顶边柔隐压成灰色；仅行顶滚进裁切区时按残留可见比例渐隐。
+- 口径：只升 code —— versionName / tag 保持 2.5.0，versionCode 1086 → **1087**、label **1126.8**。
+
+### 1126.7 code 1085 → 1086：全屏显示区钉在返回钮下方
+
+- `clipToPadding=true`：字幕硬裁切在返回钮底 + 20dp 以下，不再穿到按钮背后。
+- 顶边柔隐只作用在裁切线以下的 soft 带。
+- 口径：只升 code —— versionName / tag 保持 2.5.0，versionCode 1085 → **1086**、label **1126.7**。
+
+### 1126.6 code 1084 → 1085：全屏空白回归（顶边渐隐改按行 alpha）
+
+- 1084 的 `DST_IN` + 硬件层在 ColorOS 上把字幕整层抹掉；改为按块可见 Y 调 `alpha` 做顶边下→上渐隐。
+- 滚动条保持关闭。
+- 口径：只升 code —— versionName / tag 保持 2.5.0，versionCode 1084 → **1085**、label **1126.6**。
+
+### 1126.5 code 1083 → 1084：全屏顶边渐隐 + 藏滚动条
+
+- 顶边硬 `clipToPadding` 改为 `dispatchDraw` + `DST_IN` 线性渐隐（下不透明 → 上透明）。
+- 关闭垂直滚动条（含 Q+ thumb/track drawable）。
+- 口径：只升 code —— versionName / tag 保持 2.5.0，versionCode 1083 → **1084**、label **1126.5**。
+
+### 1126.4 code 1082 → 1083：全屏顶边死区 + Spicy 换行
+
+- 顶边距改挂 `ScrollView` + `clipToPadding=true`，滚动也不进返回钮/状态栏。
+- 换行：去掉 `scrollTo`+`translationY` 叠动；字号重排完成后再只平滑 `scrollY`，消除整页上下抖。
+- 返回钮 `topMargin` 跟 statusBars inset。
+- 口径：只升 code —— versionName / tag 保持 2.5.0，versionCode 1082 → **1083**、label **1126.4**。
+
+### 1126.3 code 1081 → 1082：全屏字幕交互返工
+
+- 「跟随字幕」仅手滑出现；文案固定跟随字幕 / 跟隨字幕 / Follow subtitles；点按才回中；Spicy 显隐动效。
+- 返回移回左上；字幕顶 = 返回钮底 + 20dp（红框区不显字幕）。
+- 全屏时强制隐藏播放页胶囊，sync 时 bringToFront，避免回前台叠层。
+- 左右 systemGesture 边缘不消费触摸；根 View 不再 clickable。
+- `LiquidGlassDrawable.KIND_FROST`：Spicy 白半透霜面（返回圆钮 / 跟随 pill）。
+- 设置页 `ic_ui_fullscreen` / `ic_ui_fullscreen_align` 描边图标。
+- 口径：只升 code —— versionName / tag 保持 2.5.0，versionCode 1081 → **1082**、label **1126.3**。
+
+### 1126.2 code 1080 → 1081：全屏字幕真机六修
+
+- decor 注入替代系统 overlay ⇒ 左右返回手势 / 上划桌面 / 最近任务随宿主变小。
+- 封面：`player-thumbnail` 归一 + Expo View.draw 主线程采样；挂壳前先 `refreshSync`。
+- 右上角液态玻璃返回；字幕顶边 = 返回钮底 + 20dp。
+- 右下角「跟随字幕」液态玻璃 pill；手滑暂停，停滑约 2s 自动回中。
+- 换行位移动画（container translationY，对齐浮窗 travel）。
+- 口径：只升 code —— versionName / tag 保持 2.5.0，versionCode 1080 → **1081**、label **1126.2**。
+
+### 1126.1 code 1079 → 1080 / versionName 2.4.6 → **2.5.0**：实验性全屏字幕 + 宿主 2.24.1
+
+- **全屏字幕（实验性）**：
+  - 配置键 `fullscreen_subtitle_enabled` / `fullscreen_text_align`；总闸关时 clamp 强制关。
+  - 设置页实验卡：开关 + 左/中/右对齐三段（对齐仅在子开关开时显示）。
+  - 长按播放页悬浮窗胶囊进入全屏 overlay（需实验总闸+子开关；无字幕 no-op）；短按逻辑不变。
+  - 壳：`FullscreenSubtitleManager` + `FullscreenSubtitleView`；开全屏时浮窗暂隐（会话态保留，退出恢复）。
+  - 背景：`CoverArtSampler` 抠 `player-thumbnail` → 模糊取色；失败走 MoriAccent/深色兜底。
+  - 跟随滚动（手滑暂停约 2s 恢复）；左上角返回；字形沿用悬浮窗 `SubtitleStyle`，对齐独立。
+- **宿主 2.24.1**：`_host241/ADAPTER_CHECK_2.24.1.md` 静态闸门 9/9 PASS；`HostInfo.VERIFIED_VERSION` → `2.24.1`，白名单保留 `2.24.0`。钩子面无需改动。
+- 口径：升语义版本 —— versionName / tag **2.5.0**，versionCode 1079 → **1080**、label **1126.1**。

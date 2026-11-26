@@ -22,7 +22,7 @@ package io.github.ariinyume.dlsitesoundfloat.ui;
  * 【code 1056 / 架构优化 B1 续】「实验性功能」卡的**零状态纯逻辑** —— 从
  * {@link SettingsActivity} 抽出。
  *
- * <p>只管：状态卡连点解锁 FSM、卡片显隐判据、总闸对缓存子开关的草稿影响、
+ * <p>只管：状态卡连点解锁 FSM、卡片显隐判据、总闸对子开关的草稿影响、
  * 子控件是否可交互。View / toast / markDirty 仍在 Activity。
  */
 public final class SettingsExperimentalLogic {
@@ -102,6 +102,20 @@ public final class SettingsExperimentalLogic {
     public static boolean cacheEnabledAfterMasterToggle(boolean masterEnabled,
             boolean currentCacheEnabled) {
         return masterEnabled && currentCacheEnabled;
+    }
+
+    /**
+     * 总闸切换后全屏字幕子开关的草稿值（口径同缓存子开关）。
+     */
+    public static boolean fullscreenEnabledAfterMasterToggle(boolean masterEnabled,
+            boolean currentFullscreenEnabled) {
+        return masterEnabled && currentFullscreenEnabled;
+    }
+
+    /** 全屏对齐行是否显示：总闸开且全屏子开关开。 */
+    public static boolean shouldShowFullscreenAlign(boolean masterEnabled,
+            boolean fullscreenEnabled) {
+        return masterEnabled && fullscreenEnabled;
     }
 
     /** 子开关是否可交互（= 总闸开）。 */
